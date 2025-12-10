@@ -12,10 +12,13 @@ const loadRazorpayScript = () => {
 
 const getEnv = (key: string) => {
   try {
-    return process.env[key];
+    if (typeof process !== 'undefined' && process.env) {
+      return process.env[key];
+    }
   } catch (e) {
-    return undefined;
+    console.error(e);
   }
+  return undefined;
 };
 
 interface PaymentProps {

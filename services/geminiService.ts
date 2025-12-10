@@ -5,10 +5,13 @@ import { ChartDataPoint } from "../types";
 // Safe environment variable access
 const getApiKey = () => {
   try {
-    return process.env.API_KEY;
+    if (typeof process !== 'undefined' && process.env) {
+      return process.env.API_KEY;
+    }
   } catch (e) {
-    return undefined;
+    console.error("Error accessing env vars", e);
   }
+  return undefined;
 };
 
 // Initialize Gemini

@@ -140,13 +140,18 @@ const OnboardingPayment = () => {
                   </ul>
 
                   <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedPlanId(plan.id);
+                      handlePayment();
+                    }}
                     className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-300 ${
                       isSelected 
                         ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/30 hover:bg-primary-700' 
                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                     }`}
                   >
-                    {isSelected ? 'Selected' : 'Select Plan'}
+                    {isSelected ? 'Proceed to Payment' : 'Select & Pay'}
                   </button>
                 </div>
               </div>

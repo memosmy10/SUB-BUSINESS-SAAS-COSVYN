@@ -27,50 +27,110 @@ import AdminPlans from './pages/admin/AdminPlans';
 import AdminLogin from './pages/admin/AdminLogin';
 
 import { 
-  Menu, X, Zap, LogOut, Bell, AlertTriangle, Loader2, Clock, User
+  Menu, X, Zap, LogOut, Bell, AlertTriangle, Loader2, Clock, User, CheckCircle, ShieldCheck
 } from 'lucide-react';
 import { INITIAL_BUSINESS_PROFILE, getDaysDifference } from './services/store';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ADMIN_EMAIL } from './services/adminStore';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from './services/firebase';
 import { useStreamCollection } from './services/dbService';
 import { SHARED_SAAS_PLANS } from './services/saasStore';
 
-// --- GLOBAL PAYMENT LISTENER ---
-const GlobalPaymentListener = () => {
-  const location = useLocation();
+// --- ROBUST SUBSCRIPTION MANAGER ---
+// 1. Captures payment params from URL -> LocalStorage -> Firestore (Direct Payment)
+// 2. Checks 'pending_activations' Firestore collection -> Firestore (Marketing Site Payment)
+const SubscriptionManager = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
 
   useEffect(() => {
-    const processPayment = async () => {
-      const params = new URLSearchParams(location.search);
-      const status = params.get('status');
-      const planId = params.get('plan_id'); // 'plan_monthly', 'plan_6months', 'plan_yearly'
-      const paymentId = params.get('payment_id');
-
-      // STRICT CHECK as requested
-      if (status === 'success' && currentUser) {
+    // 1. URL CAPTURE (Run on every mount to catch redirects)
+    const capturePaymentParams = () => {
+      const rawParams = new URLSearchParams(window.location.search);
+      const urlStatus = rawParams.get('status');
+      
+      if (urlStatus === 'success') {
+        const planId = rawParams.get('plan_id');
+        const paymentId = rawParams.get('payment_id');
         
-        let durationMonths = 1;
-        let internalPlanName = 'Monthly';
+        console.log("Payment detected in URL. Persisting to storage...", { planId, paymentId });
 
-        // Map gateway plan_id to internal duration
-        if (planId === 'plan_6months') {
-          durationMonths = 6;
-          internalPlanName = '6 Months';
-        } else if (planId === 'plan_yearly') {
-          durationMonths = 12;
-          internalPlanName = 'Yearly';
-        } else {
-          // Default to monthly if plan_id is missing or 'plan_monthly'
-          durationMonths = 1;
-          internalPlanName = 'Monthly';
+        if (planId) {
+          localStorage.setItem('pending_subscription', JSON.stringify({
+            planId,
+            paymentId: paymentId || 'manual_entry',
+            timestamp: Date.now()
+          }));
+          
+          const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + window.location.hash;
+          window.history.replaceState({}, document.title, cleanUrl);
         }
-        
+      }
+    };
+
+    capturePaymentParams();
+
+    // HELPER: Plan Logic
+    const getPlanDetails = (planId: string) => {
+      let durationMonths = 1;
+      let internalPlanName = 'Monthly';
+
+      // Handle various plan ID formats from different gateways/sources
+      const pid = planId.toLowerCase();
+      if (pid.includes('6months') || pid.includes('6 months') || pid.includes('half')) {
+        durationMonths = 6;
+        internalPlanName = '6 Months';
+      } else if (pid.includes('yearly') || pid.includes('annual') || pid.includes('12months')) {
+        durationMonths = 12;
+        internalPlanName = 'Yearly';
+      }
+
+      return { durationMonths, internalPlanName };
+    };
+
+    // 2. PROCESS ACTIVATION (Run when user logs in)
+    const processActivation = async () => {
+      if (!currentUser || status !== 'idle') return;
+
+      // PATH A: LocalStorage (Redirected from Gateway directly to App)
+      const pendingStr = localStorage.getItem('pending_subscription');
+      
+      // PATH B: Firestore 'pending_activations' (Paid on Marketing Site, redirected to Login)
+      let pendingFirestoreData = null;
+      if (!pendingStr && currentUser.email) {
+         try {
+            const docRef = doc(db, 'pending_activations', currentUser.email);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+               pendingFirestoreData = { ...docSnap.data(), ref: docRef };
+            }
+         } catch (e) {
+            console.error("Error checking pending activations:", e);
+         }
+      }
+
+      // Execute Activation if either path has data
+      if (pendingStr || pendingFirestoreData) {
+        setStatus('processing');
+        console.log("Processing Activation for:", currentUser.email);
+
         try {
-          // Calculate New Expiry
+          let planId, paymentId;
+
+          if (pendingStr) {
+             const parsed = JSON.parse(pendingStr);
+             planId = parsed.planId;
+             paymentId = parsed.paymentId;
+          } else {
+             planId = pendingFirestoreData.planId;
+             paymentId = pendingFirestoreData.paymentId || 'marketing_site_checkout';
+          }
+
+          const { durationMonths, internalPlanName } = getPlanDetails(planId);
+
+          // Calculate Expiry
           const now = new Date();
           now.setMonth(now.getMonth() + durationMonths);
           const newExpiryDate = now.toISOString().split('T')[0];
@@ -81,34 +141,82 @@ const GlobalPaymentListener = () => {
             planName: `COSVYN ONE (${internalPlanName})`,
             planStatus: 'Active',
             planExpiryDate: newExpiryDate,
-            lastPaymentId: paymentId || 'manual_entry',
+            lastPaymentId: paymentId,
             updatedAt: new Date().toISOString()
           });
 
-          // Store State in LocalStorage as requested
-          localStorage.setItem('isProUser', 'true');
+          // Cleanup
+          if (pendingStr) {
+             localStorage.removeItem('pending_subscription');
+          }
+          if (pendingFirestoreData) {
+             await deleteDoc(pendingFirestoreData.ref);
+          }
           
-          // Clear pending intent
-          localStorage.removeItem('pending_plan_id');
-          localStorage.removeItem('pending_renew_plan_id');
+          setStatus('success');
 
-          // Success Message & Redirect
-          alert(`Payment Successful! Your ${internalPlanName} subscription is now active.`);
-          
-          // Navigate to dashboard and replace URL to remove query params
-          navigate('/app/dashboard', { replace: true });
-          
+          // Redirect
+          setTimeout(() => {
+            setStatus('idle');
+            navigate('/app/dashboard', { replace: true });
+          }, 2000);
+
         } catch (error) {
-          console.error("Payment Activation Error:", error);
-          alert("Payment received but activation failed. Please contact support.");
+          console.error("Subscription Activation Failed:", error);
+          setStatus('error');
         }
       }
     };
 
-    processPayment();
-  }, [location, currentUser, navigate]);
+    processActivation();
+  }, [currentUser, navigate, status]);
 
-  return null;
+  if (status === 'idle') return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform transition-all scale-100">
+        
+        {status === 'processing' && (
+          <div className="flex flex-col items-center">
+            <Loader2 className="animate-spin text-primary-600 mb-4" size={48} />
+            <h2 className="text-xl font-bold text-slate-900 mb-2">Activating Subscription...</h2>
+            <p className="text-slate-500 text-sm">Syncing your payment with your account.</p>
+          </div>
+        )}
+
+        {status === 'success' && (
+          <div className="flex flex-col items-center animate-in zoom-in duration-300">
+            <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-green-500/20">
+              <CheckCircle size={32} strokeWidth={3} />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">You're All Set!</h2>
+            <p className="text-slate-500 text-sm mb-6">Subscription activated successfully.</p>
+            <div className="w-full bg-slate-100 rounded-lg h-1.5 overflow-hidden">
+              <div className="h-full bg-green-500 animate-[progress_2s_ease-in-out_forwards] w-full origin-left"></div>
+            </div>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="flex flex-col items-center">
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-6">
+              <AlertTriangle size={32} />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2">Activation Issue</h2>
+            <p className="text-slate-500 text-sm mb-6">We recorded the payment but update failed. Contact support with your email.</p>
+            <button 
+              onClick={() => setStatus('idle')} 
+              className="bg-slate-900 text-white px-6 py-2 rounded-xl font-bold hover:bg-slate-800 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
 };
 
 // Protected Route for Business Owners
@@ -442,7 +550,7 @@ const App = () => {
   return (
     <AuthProvider>
       <HashRouter>
-        <GlobalPaymentListener />
+        <SubscriptionManager />
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />

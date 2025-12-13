@@ -14,6 +14,15 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [hasPendingSubscription, setHasPendingSubscription] = useState(false);
+
+  useEffect(() => {
+    // Check for pending subscription from redirected payment
+    const pending = localStorage.getItem('pending_subscription');
+    if (pending) {
+      setHasPendingSubscription(true);
+    }
+  }, []);
 
   // The logic to route user based on subscription status and role
   const handleAuthSuccess = async (user: any) => {
@@ -140,6 +149,16 @@ const Login = () => {
               <h3 className="text-2xl font-bold text-slate-900 mb-2">Welcome Back</h3>
               <p className="text-slate-500">Log in to access your dashboard.</p>
             </div>
+
+            {hasPendingSubscription && (
+              <div className="bg-green-50 text-green-700 p-4 rounded-lg text-sm font-medium border border-green-200 mb-6 flex flex-col gap-2 shadow-sm animate-in fade-in slide-in-from-top-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle size={20} className="shrink-0 text-green-600" />
+                  <span className="font-bold text-lg">Payment Successful!</span>
+                </div>
+                <p className="text-slate-600 ml-7">Please log in to activate your plan immediately.</p>
+              </div>
+            )}
 
             {error && (
               <div className="bg-red-50 text-red-600 p-4 rounded-lg text-sm font-medium border border-red-100 mb-6 flex flex-col gap-2">

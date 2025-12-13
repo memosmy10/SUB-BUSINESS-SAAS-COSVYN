@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Zap, CheckCircle, ArrowRight, Loader2, MapPin, Building, User as UserIcon, Mail, Lock, Phone, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,6 +12,15 @@ const Signup = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [hasPendingSubscription, setHasPendingSubscription] = useState(false);
+
+  useEffect(() => {
+    // Check for pending subscription from redirected payment
+    const pending = localStorage.getItem('pending_subscription');
+    if (pending) {
+      setHasPendingSubscription(true);
+    }
+  }, []);
 
   const [formData, setFormData] = useState({
     businessName: '',
@@ -65,7 +74,8 @@ const Signup = () => {
         planStatus: 'Inactive' // Crucial: This forces the payment flow next
       });
 
-      // 3. Redirect to Payment Onboarding
+      // 3. Redirect to Onboarding (or Dashboard if pending sub exists)
+      // The SubscriptionManager in App.tsx will handle the pending sub on navigation/load
       navigate('/onboarding');
 
     } catch (err: any) {
@@ -124,6 +134,16 @@ const Signup = () => {
             <h2 className="text-3xl font-bold text-slate-900">Create your account</h2>
             <p className="text-slate-500 mt-2">Start your 14-day free trial. No credit card required.</p>
           </div>
+
+          {hasPendingSubscription && (
+            <div className="bg-green-50 text-green-700 p-4 rounded-lg text-sm font-medium border border-green-200 flex flex-col gap-2 shadow-sm animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle size={20} className="shrink-0 text-green-600" />
+                <span className="font-bold text-lg">Payment Received!</span>
+              </div>
+              <p className="text-slate-600 ml-7">Create your account below to instantly activate your subscription.</p>
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium border border-red-100">

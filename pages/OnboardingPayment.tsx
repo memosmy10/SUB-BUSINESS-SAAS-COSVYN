@@ -35,7 +35,8 @@ const OnboardingPayment = () => {
     // 1. The ID of this specific SaaS tool (Matches Cosvyn configuration)
     const PRODUCT_ID = 'saas_1'; 
 
-    // 2. The URL where the user should return after paying
+    // 2. Use pure origin (e.g. https://domain.com) to avoid HashRouter # issues in redirect
+    // The GlobalPaymentListener in App.tsx detects ?status=success on the root/any URL.
     const CALLBACK_URL = window.location.origin; 
 
     // 3. Construct the Product Page URL with the callback param

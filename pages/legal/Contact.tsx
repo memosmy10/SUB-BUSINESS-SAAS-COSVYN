@@ -44,11 +44,11 @@ const Contact = () => {
                 <MapPin size={24} />
               </div>
               <div>
-                <h3 className="font-bold text-lg text-slate-900">Registered Office</h3>
+                <h3 className="font-bold text-lg text-slate-900">Office</h3>
                 <p className="text-slate-500 mb-1">Cosvyn Solutions</p>
                 <p className="text-slate-600">
-                  Sector 48, Sohna Road<br/>
-                  Gurugram, Haryana, 122018<br/>
+                  Sai Nagar 2nd Line<br/>
+                  Narasaraopet, Andhra Pradesh<br/>
                   India
                 </p>
               </div>
@@ -61,7 +61,7 @@ const Contact = () => {
               <div>
                 <h3 className="font-bold text-lg text-slate-900">Phone</h3>
                 <p className="text-slate-500 mb-1">Mon-Fri, 9am to 6pm</p>
-                <p className="text-slate-600">+91 98765 43210</p>
+                <p className="text-slate-600">+91 77026 67567</p>
               </div>
             </div>
           </div>

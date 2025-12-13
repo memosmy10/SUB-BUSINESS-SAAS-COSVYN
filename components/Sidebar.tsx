@@ -45,7 +45,7 @@ const Sidebar = () => {
           <div className="w-8 h-8 bg-gradient-to-br from-primary-600 to-violet-600 rounded-lg flex items-center justify-center text-white font-bold shadow-md">
             <Zap size={18} fill="currentColor" />
           </div>
-          <span className="text-xl font-bold text-slate-900 tracking-tight">COSVYN</span>
+          <span className="text-xl font-bold text-slate-900 tracking-tight">ScaleKitchen</span>
         </div>
       </div>
 

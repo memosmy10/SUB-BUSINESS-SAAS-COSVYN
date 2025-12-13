@@ -98,10 +98,10 @@ const Signup = () => {
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-violet-500 rounded-xl flex items-center justify-center shadow-lg">
               <Zap size={24} fill="currentColor" />
             </div>
-            <span className="text-2xl font-bold tracking-tight">COSVYN</span>
+            <span className="text-2xl font-bold tracking-tight">ScaleKitchen</span>
           </div>
           <h1 className="text-5xl font-bold leading-tight mb-6">Scale your kitchen.<br/>Simplify your life.</h1>
-          <p className="text-slate-400 text-lg max-w-md">Join thousands of tiffin services and cloud kitchens managing their entire business on Cosvyn.</p>
+          <p className="text-slate-400 text-lg max-w-md">Join thousands of tiffin services and cloud kitchens managing their entire business on ScaleKitchen.</p>
         </div>
 
         <div className="space-y-4 relative z-10">

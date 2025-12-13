@@ -80,7 +80,7 @@ const AdminLayout = () => {
               </div>
               {isSidebarOpen && (
                 <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-                  COSVYN Admin
+                  ScaleKitchen Admin
                 </span>
               )}
            </div>
@@ -123,7 +123,7 @@ const AdminLayout = () => {
            >
               <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800/50">
                  <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-                    COSVYN Admin
+                    ScaleKitchen Admin
                  </span>
                  <button onClick={() => setIsMobileNavOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
               </div>

@@ -118,7 +118,7 @@ const Login = () => {
               <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-violet-500 rounded-xl flex items-center justify-center shadow-lg">
                 <Zap size={24} fill="currentColor" />
               </div>
-              <span className="text-2xl font-bold tracking-tight">COSVYN</span>
+              <span className="text-2xl font-bold tracking-tight">ScaleKitchen</span>
             </div>
             <h2 className="text-4xl font-bold mb-6 leading-tight">Run your meal prep business on autopilot.</h2>
             <p className="text-slate-400 text-lg">Manage subscriptions, deliveries, and payments in one unified dashboard.</p>

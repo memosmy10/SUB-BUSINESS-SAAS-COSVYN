@@ -9,7 +9,7 @@ const Terms = () => {
       <header className="border-b border-slate-100 py-4 sticky top-0 bg-white/80 backdrop-blur-md z-10">
         <div className="max-w-4xl mx-auto px-6 flex justify-between items-center">
           <Link to="/" className="flex items-center gap-2 font-bold text-xl">
-            <Zap size={24} className="text-primary-600" fill="currentColor" /> COSVYN
+            <Zap size={24} className="text-primary-600" fill="currentColor" /> ScaleKitchen
           </Link>
           <Link to="/" className="text-sm font-medium text-slate-500 hover:text-primary-600 flex items-center gap-1">
             <ArrowLeft size={16} /> Back to Home
@@ -24,7 +24,7 @@ const Terms = () => {
         <div className="space-y-8 text-slate-700 leading-relaxed">
           <section>
             <h2 className="text-xl font-bold text-slate-900 mb-3">1. Introduction</h2>
-            <p>Welcome to COSVYN. By accessing our website and using our SaaS platform for meal subscription businesses, you agree to be bound by these Terms and Conditions.</p>
+            <p>Welcome to ScaleKitchen. By accessing our website and using our SaaS platform for meal subscription businesses, you agree to be bound by these Terms and Conditions.</p>
           </section>
 
           <section>
@@ -39,12 +39,12 @@ const Terms = () => {
 
           <section>
             <h2 className="text-xl font-bold text-slate-900 mb-3">4. Intellectual Property</h2>
-            <p>The COSVYN platform, including its code, design, and branding, is the intellectual property of Cosvyn Solutions. You are granted a limited, non-exclusive license to use the software while your subscription is active.</p>
+            <p>The ScaleKitchen platform, including its code, design, and branding, is the intellectual property of Cosvyn Solutions. You are granted a limited, non-exclusive license to use the software while your subscription is active.</p>
           </section>
 
           <section>
             <h2 className="text-xl font-bold text-slate-900 mb-3">5. Limitation of Liability</h2>
-            <p>COSVYN shall not be liable for any indirect, incidental, or consequential damages resulting from your use or inability to use the service, including loss of business data or revenue.</p>
+            <p>ScaleKitchen shall not be liable for any indirect, incidental, or consequential damages resulting from your use or inability to use the service, including loss of business data or revenue.</p>
           </section>
 
           <section>

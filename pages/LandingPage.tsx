@@ -48,7 +48,7 @@ const LandingPage = () => {
               <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-violet-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-500/30 group-hover:scale-105 transition-transform duration-300">
                 <Zap size={22} fill="currentColor" />
               </div>
-              <span className="text-2xl font-extrabold tracking-tight text-slate-900">COSVYN</span>
+              <span className="text-2xl font-extrabold tracking-tight text-slate-900">ScaleKitchen</span>
             </div>
 
             {/* Desktop Nav */}
@@ -116,7 +116,7 @@ const LandingPage = () => {
               </h1>
               
               <p className="text-lg md:text-xl text-slate-500 mb-10 leading-relaxed font-medium">
-                COSVYN is a SaaS platform for subscription meal businesses that centralizes customer management, deliveries, payments, expenses, and analytics into one dashboard.
+                ScaleKitchen is a SaaS platform for subscription meal businesses that centralizes customer management, deliveries, payments, expenses, and analytics into one dashboard.
               </p>
               
               <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
@@ -150,7 +150,7 @@ const LandingPage = () => {
                     <div className="w-3 h-3 rounded-full bg-yellow-400/80" />
                     <div className="w-3 h-3 rounded-full bg-green-400/80" />
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400">dashboard.cosvyn.com</div>
+                  <div className="text-[10px] font-mono text-slate-400">dashboard.scalekitchen.in</div>
                 </div>
 
                 {/* Dashboard Grid */}
@@ -397,7 +397,7 @@ const LandingPage = () => {
           <div className="grid md:grid-cols-3 gap-8">
             {[
               { brand: "FitFuel Meals", quote: "Revenue increased by 22% in just 60 days. Absolute game changer.", author: "Founder, FitFuel Meals" },
-              { brand: "NutriGrams", quote: "We stopped losing money on overpacking. COSVYN saves us every day.", author: "Ops Lead, NutriGrams" },
+              { brand: "NutriGrams", quote: "We stopped losing money on overpacking. ScaleKitchen saves us every day.", author: "Ops Lead, NutriGrams" },
               { brand: "HealthyTiffin Co.", quote: "Finally a system that understands how subscription meal businesses actually work.", author: "Owner, HealthyTiffin Co." }
             ].map((t, idx) => (
               <div key={idx} className="bg-slate-50 p-8 rounded-3xl hover:bg-white hover:shadow-xl border border-transparent hover:border-slate-100 transition-all duration-300">
@@ -499,7 +499,7 @@ const LandingPage = () => {
           </div>
           
           <div className="max-w-3xl mx-auto mt-12 text-center">
-             <h4 className="text-slate-400 font-bold uppercase text-xs mb-4">Included in COSVYN ONE</h4>
+             <h4 className="text-slate-400 font-bold uppercase text-xs mb-4">Included in ScaleKitchen ONE</h4>
              <div className="flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm text-slate-300">
                 <span className="flex items-center gap-2"><Check size={14} className="text-primary-400"/> Customer Management</span>
                 <span className="flex items-center gap-2"><Check size={14} className="text-primary-400"/> Smart Delivery Routes</span>
@@ -525,7 +525,7 @@ const LandingPage = () => {
                Ready to run your subscription meal business on autopilot?
              </h2>
              <p className="text-lg text-slate-300 mb-10 max-w-2xl mx-auto relative z-10">
-               Join the fastest growing meal prep brands using COSVYN to save time and boost profits.
+               Join the fastest growing meal prep brands using ScaleKitchen to save time and boost profits.
              </p>
              
              <div className="flex flex-col sm:flex-row gap-4 justify-center items-center relative z-10">
@@ -554,7 +554,7 @@ const LandingPage = () => {
               <div className="w-8 h-8 bg-gradient-to-br from-slate-800 to-slate-900 rounded-lg flex items-center justify-center text-white font-bold">
                 <Zap size={18} fill="currentColor" />
               </div>
-              <span className="text-xl font-bold text-slate-900 tracking-tight">COSVYN</span>
+              <span className="text-xl font-bold text-slate-900 tracking-tight">ScaleKitchen</span>
             </div>
             
             <div className="flex flex-wrap justify-center gap-8 text-sm font-bold text-slate-600">
@@ -568,7 +568,7 @@ const LandingPage = () => {
           
           <div className="mt-12 text-center text-xs font-medium text-slate-400">
             <p>
-              © 2025 COSVYN. All rights reserved. SaaS for Subscription Meal{' '}
+              © 2025 ScaleKitchen. All rights reserved. SaaS for Subscription Meal{' '}
               <Link to="/admin/login" className="hover:text-slate-600 transition-colors cursor-pointer">
                 Businesses
               </Link>

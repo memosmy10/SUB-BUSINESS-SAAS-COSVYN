@@ -9,7 +9,7 @@ const Refunds = () => {
       <header className="border-b border-slate-100 py-4 sticky top-0 bg-white/80 backdrop-blur-md z-10">
         <div className="max-w-4xl mx-auto px-6 flex justify-between items-center">
           <Link to="/" className="flex items-center gap-2 font-bold text-xl">
-            <Zap size={24} className="text-primary-600" fill="currentColor" /> COSVYN
+            <Zap size={24} className="text-primary-600" fill="currentColor" /> ScaleKitchen
           </Link>
           <Link to="/" className="text-sm font-medium text-slate-500 hover:text-primary-600 flex items-center gap-1">
             <ArrowLeft size={16} /> Back to Home

@@ -558,10 +558,11 @@ const LandingPage = () => {
             </div>
             
             <div className="flex flex-wrap justify-center gap-8 text-sm font-bold text-slate-600">
-              <a href="#" className="hover:text-primary-600 transition-colors">About</a>
-              <a href="#" className="hover:text-primary-600 transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-primary-600 transition-colors">Terms</a>
-              <a href="#" className="hover:text-primary-600 transition-colors">Contact</a>
+              <Link to="/contact" className="hover:text-primary-600 transition-colors">Contact Us</Link>
+              <Link to="/terms" className="hover:text-primary-600 transition-colors">Terms and Conditions</Link>
+              <Link to="/privacy" className="hover:text-primary-600 transition-colors">Privacy Policy</Link>
+              <Link to="/refunds" className="hover:text-primary-600 transition-colors">Cancellation & Refunds</Link>
+              <Link to="/shipping" className="hover:text-primary-600 transition-colors">Shipping Policy</Link>
             </div>
           </div>
           

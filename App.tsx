@@ -26,6 +26,13 @@ import AdminProfile from './pages/admin/AdminProfile';
 import AdminPlans from './pages/admin/AdminPlans';
 import AdminLogin from './pages/admin/AdminLogin';
 
+// Legal Pages
+import Terms from './pages/legal/Terms';
+import Privacy from './pages/legal/Privacy';
+import Shipping from './pages/legal/Shipping';
+import Refunds from './pages/legal/Refunds';
+import Contact from './pages/legal/Contact';
+
 import { 
   Menu, X, Zap, LogOut, Bell, AlertTriangle, Loader2, Clock, User, CheckCircle, ShieldCheck
 } from 'lucide-react';
@@ -557,6 +564,13 @@ const App = () => {
           <Route path="/signup" element={<Signup />} />
           <Route path="/onboarding" element={<OnboardingPayment />} />
           
+          {/* Legal Pages */}
+          <Route path="/terms" element={<Terms />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/shipping" element={<Shipping />} />
+          <Route path="/refunds" element={<Refunds />} />
+          <Route path="/contact" element={<Contact />} />
+
           {/* Admin Login Route */}
           <Route path="/admin/login" element={<AdminLogin />} />
 

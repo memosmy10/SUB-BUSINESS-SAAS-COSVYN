@@ -32,6 +32,49 @@ const StatCard = ({ title, value, change, icon: Icon, isPositive, colorClass }: 
   </div>
 );
 
+const KitchenPrepWidget = ({ title, date, metrics, isTomorrow }: any) => (
+  <div className={`p-6 rounded-xl border shadow-sm flex flex-col h-full ${isTomorrow ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200'}`}>
+     <div className="flex justify-between items-start mb-4">
+        <div>
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+               <Utensils className={isTomorrow ? "text-slate-500" : "text-orange-500"} size={20} /> {title}
+            </h2>
+            <p className="text-sm text-slate-500 font-bold ml-7 flex items-center gap-1">
+               <Calendar size={12}/> {date}
+            </p>
+        </div>
+        <div className={`${isTomorrow ? 'bg-slate-200 text-slate-700' : 'bg-orange-50 text-orange-700'} px-3 py-1 rounded-full text-xs font-bold border ${isTomorrow ? 'border-slate-300' : 'border-orange-100'}`}>
+           {metrics.Total} Boxes
+        </div>
+     </div>
+     
+     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+        {['Breakfast', 'Lunch', 'Dinner'].map((meal) => (
+            <div key={meal} className="bg-white rounded-xl p-3 border border-slate-100 shadow-sm flex flex-col">
+               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-100">
+                  {meal === 'Breakfast' && <Sunrise size={16} className="text-yellow-500" />}
+                  {meal === 'Lunch' && <Sun size={16} className="text-orange-500" />}
+                  {meal === 'Dinner' && <Moon size={16} className="text-indigo-500" />}
+                  <span className="font-bold text-slate-700 text-xs">{meal}</span>
+                  <span className="ml-auto bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                    {metrics[meal].count}
+                  </span>
+               </div>
+               <div className="space-y-1 overflow-y-auto max-h-32 custom-scrollbar">
+                  {Object.entries(metrics[meal].plans).map(([plan, count]) => (
+                     <div key={plan} className="flex justify-between text-xs">
+                        <span className="text-slate-500 truncate pr-1" title={plan as string}>{plan as string}</span>
+                        <span className="font-bold text-slate-900">{count as number}</span>
+                     </div>
+                  ))}
+                  {metrics[meal].count === 0 && <div className="text-[10px] text-slate-300 italic">No orders</div>}
+               </div>
+            </div>
+        ))}
+     </div>
+  </div>
+);
+
 const Dashboard = () => {
   // Fetch Real Data
   const { data: customers, loading: l1 } = useStreamCollection<any>('customers');
@@ -53,17 +96,12 @@ const Dashboard = () => {
   }, [customers, selectedBranch]);
 
   const filteredPayments = useMemo(() => {
-    // 1. Get Set of ALL valid customer IDs currently in system
     const allCustomerIds = new Set(customers.map((c: any) => c.id));
-
-    // 2. Filter payments: Must have a valid customer ID (Strict Cleanup for Deleted Customers)
     const validPayments = payments.filter((p: any) => allCustomerIds.has(p.customerId));
 
-    // 3. Apply Branch Logic
     if (selectedBranch === 'All') {
         return validPayments;
     } else {
-        // If branch selected, only include payments for customers in that branch
         const branchCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
         return validPayments.filter((p: any) => branchCustomerIds.has(p.customerId));
     }
@@ -80,59 +118,76 @@ const Dashboard = () => {
   const kpis = useMemo(() => {
     if (isLoading) return { revenue: 0, pending: 0, expenses: 0, activeUsers: 0, deliveriesToday: 0, renewalRate: 0 };
 
-    const revenue = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+    const revenue = filteredCustomers.reduce((acc: number, c: any) => acc + (c.planPrice || 0), 0);
     const expensesTotal = filteredExpenses.reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
     
-    // Active customers with days left
     const activeCusts = filteredCustomers.filter((c: any) => c.isActive && c.daysLeft > 0);
     const activeUsers = activeCusts.length;
 
-    // Total Pending from all customers
     const pending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
 
-    // Today's Deliveries: 
-    const todayDayId = new Date().getDay(); // 0 = Sun, 1 = Mon...
+    const todayDayId = new Date().getDay();
     const deliveriesToday = activeCusts.filter((c: any) => {
       const plan = plans.find((p: any) => p.id === c.planId);
       return plan && plan.weekdays ? plan.weekdays.includes(todayDayId) : true;
     }).length;
 
-    // Renewal Rate
     const totalRenewals = filteredCustomers.reduce((acc: number, c: any) => acc + (c.renewalCount || 0), 0);
     const totalUnique = filteredCustomers.length;
     const renewalRate = totalUnique > 0 ? Math.round((totalRenewals / (totalUnique + totalRenewals)) * 100) : 0;
 
     return { revenue, pending, expenses: expensesTotal, activeUsers, deliveriesToday, renewalRate };
-  }, [filteredCustomers, filteredPayments, filteredExpenses, plans, isLoading]);
+  }, [filteredCustomers, filteredExpenses, plans, isLoading]);
 
-  // --- DAILY KITCHEN PREP METRICS ---
+  // --- DAILY & TOMORROW KITCHEN PREP METRICS ---
   const kitchenMetrics = useMemo(() => {
-    const todayDayId = new Date().getDay();
-    const activeToday = filteredCustomers.filter((c: any) => {
-       if (!c.isActive || c.daysLeft <= 0) return false;
-       const plan = plans.find((p: any) => p.id === c.planId);
-       return plan && plan.weekdays ? plan.weekdays.includes(todayDayId) : true;
-    });
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const breakdown = {
-       Breakfast: { count: 0, plans: {} as Record<string, number> },
-       Lunch: { count: 0, plans: {} as Record<string, number> },
-       Dinner: { count: 0, plans: {} as Record<string, number> },
-       Total: activeToday.length
+    const getBreakdown = (targetDate: Date) => {
+        const targetDayId = targetDate.getDay();
+        // Reset hours for date comparison
+        const targetDateZero = new Date(targetDate);
+        targetDateZero.setHours(0,0,0,0);
+
+        const activeForDay = filteredCustomers.filter((c: any) => {
+           if (!c.isActive) return false;
+           
+           // Check if subscription covers this date
+           const endDate = new Date(c.endDate);
+           endDate.setHours(0,0,0,0);
+           
+           if (targetDateZero > endDate) return false;
+
+           const plan = plans.find((p: any) => p.id === c.planId);
+           return plan && plan.weekdays ? plan.weekdays.includes(targetDayId) : true;
+        });
+
+        const breakdown = {
+           Breakfast: { count: 0, plans: {} as Record<string, number> },
+           Lunch: { count: 0, plans: {} as Record<string, number> },
+           Dinner: { count: 0, plans: {} as Record<string, number> },
+           Total: activeForDay.length
+        };
+
+        activeForDay.forEach((c: any) => {
+           const meal = c.mealTime || 'Lunch'; 
+           const planName = plans.find((p: any) => p.id === c.planId)?.name || 'Unknown Plan';
+           
+           if (breakdown[meal as keyof typeof breakdown]) {
+              const target = breakdown[meal as keyof typeof breakdown] as { count: number, plans: Record<string, number> };
+              target.count++;
+              target.plans[planName] = (target.plans[planName] || 0) + 1;
+           }
+        });
+        return breakdown;
     };
 
-    activeToday.forEach((c: any) => {
-       const meal = c.mealTime || 'Lunch'; // Default to Lunch if missing
-       const planName = plans.find((p: any) => p.id === c.planId)?.name || 'Unknown Plan';
-       
-       if (breakdown[meal as keyof typeof breakdown]) {
-          const target = breakdown[meal as keyof typeof breakdown] as { count: number, plans: Record<string, number> };
-          target.count++;
-          target.plans[planName] = (target.plans[planName] || 0) + 1;
-       }
-    });
-
-    return breakdown;
+    return {
+        today: getBreakdown(today),
+        tomorrow: getBreakdown(tomorrow)
+    };
   }, [filteredCustomers, plans]);
 
 
@@ -157,7 +212,6 @@ const Dashboard = () => {
     const map: Record<string, number> = {};
     filteredCustomers.forEach((c: any) => {
       if (c.isActive && c.planPrice) {
-        // Try to find plan name
         const plan = plans.find((p: any) => p.id === c.planId);
         const name = plan ? plan.name : 'Unknown Plan';
         map[name] = (map[name] || 0) + (c.planPrice);
@@ -167,7 +221,12 @@ const Dashboard = () => {
   }, [filteredCustomers, plans]);
 
   // Current Date Formatter
-  const todayDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const todayDateObj = new Date();
+  const todayDate = todayDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  
+  const tomorrowDateObj = new Date(todayDateObj);
+  tomorrowDateObj.setDate(tomorrowDateObj.getDate() + 1);
+  const tomorrowDate = tomorrowDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
   if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
 
@@ -196,7 +255,7 @@ const Dashboard = () => {
         </select>
       </div>
 
-      {/* 6 Widgets Grid: 2 columns on mobile, 3 on desktop */}
+      {/* 6 Widgets Grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard 
           title="Total Revenue" 
@@ -242,78 +301,26 @@ const Dashboard = () => {
         />
       </div>
 
-      {/* NEW: KITCHEN PREP WIDGET */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-         <div className="flex justify-between items-start mb-6">
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-               <Utensils className="text-orange-500" size={20} /> Daily Kitchen Prep
-            </h2>
-            <div className="bg-orange-50 text-orange-700 px-3 py-1 rounded-full text-xs font-bold border border-orange-100">
-               {kitchenMetrics.Total} Boxes Total
-            </div>
-         </div>
-         
-         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Breakfast Column */}
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-               <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200/50">
-                  <Sunrise size={18} className="text-yellow-500" />
-                  <span className="font-bold text-slate-700">Breakfast</span>
-                  <span className="ml-auto bg-white px-2 py-0.5 rounded text-xs font-bold shadow-sm">{kitchenMetrics.Breakfast.count}</span>
-               </div>
-               <div className="space-y-2">
-                  {Object.entries(kitchenMetrics.Breakfast.plans).map(([plan, count]) => (
-                     <div key={plan} className="flex justify-between text-sm">
-                        <span className="text-slate-600 truncate pr-2">{plan}</span>
-                        <span className="font-bold text-slate-900">{count}</span>
-                     </div>
-                  ))}
-                  {kitchenMetrics.Breakfast.count === 0 && <div className="text-xs text-slate-400 italic">No orders</div>}
-               </div>
-            </div>
-
-            {/* Lunch Column */}
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-               <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200/50">
-                  <Sun size={18} className="text-orange-500" />
-                  <span className="font-bold text-slate-700">Lunch</span>
-                  <span className="ml-auto bg-white px-2 py-0.5 rounded text-xs font-bold shadow-sm">{kitchenMetrics.Lunch.count}</span>
-               </div>
-               <div className="space-y-2">
-                  {Object.entries(kitchenMetrics.Lunch.plans).map(([plan, count]) => (
-                     <div key={plan} className="flex justify-between text-sm">
-                        <span className="text-slate-600 truncate pr-2">{plan}</span>
-                        <span className="font-bold text-slate-900">{count}</span>
-                     </div>
-                  ))}
-                  {kitchenMetrics.Lunch.count === 0 && <div className="text-xs text-slate-400 italic">No orders</div>}
-               </div>
-            </div>
-
-            {/* Dinner Column */}
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-               <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200/50">
-                  <Moon size={18} className="text-indigo-500" />
-                  <span className="font-bold text-slate-700">Dinner</span>
-                  <span className="ml-auto bg-white px-2 py-0.5 rounded text-xs font-bold shadow-sm">{kitchenMetrics.Dinner.count}</span>
-               </div>
-               <div className="space-y-2">
-                  {Object.entries(kitchenMetrics.Dinner.plans).map(([plan, count]) => (
-                     <div key={plan} className="flex justify-between text-sm">
-                        <span className="text-slate-600 truncate pr-2">{plan}</span>
-                        <span className="font-bold text-slate-900">{count}</span>
-                     </div>
-                  ))}
-                  {kitchenMetrics.Dinner.count === 0 && <div className="text-xs text-slate-400 italic">No orders</div>}
-               </div>
-            </div>
-         </div>
+      {/* KITCHEN PREP WIDGETS (Today & Tomorrow) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+         <KitchenPrepWidget 
+            title="Daily Kitchen Prep" 
+            date={`Today, ${todayDate}`}
+            metrics={kitchenMetrics.today}
+            isTomorrow={false}
+         />
+         <KitchenPrepWidget 
+            title="Tomorrow's Plan" 
+            date={`Tomorrow, ${tomorrowDate}`}
+            metrics={kitchenMetrics.tomorrow}
+            isTomorrow={true}
+         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Revenue vs Expenses Bar Chart */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 mb-6">Revenue vs Expenses</h2>
+          <h2 className="text-lg font-bold text-slate-900 mb-6">Cash Flow (Collections vs Expenses)</h2>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barChartData}>
@@ -325,7 +332,7 @@ const Dashboard = () => {
                   cursor={{ fill: '#f1f5f9' }}
                   formatter={(value: number) => [`₹${value.toLocaleString()}`, '']}
                 />
-                <Bar dataKey="value" name="Revenue" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="value" name="Collections" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="secondaryValue" name="Expenses" fill="#cbd5e1" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

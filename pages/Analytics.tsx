@@ -55,7 +55,8 @@ const Analytics = () => {
 
   // --- KPIS ---
   
-  const totalRevenue = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+  // Total Revenue = Sum of Plan Prices (Contract Value)
+  const totalRevenue = filteredCustomers.reduce((acc: number, c: any) => acc + (c.planPrice || 0), 0);
   const totalExpenses = filteredExpenses.reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
   const netProfit = totalRevenue - totalExpenses;
   const activeCustomers = filteredCustomers.filter((c: any) => c.isActive && c.daysLeft > 0).length;
@@ -63,6 +64,7 @@ const Analytics = () => {
   // --- CHART DATA PREPARATION ---
 
   // 1. Financial Trends (Line Chart)
+  // For charts we use COLLECTIONS (Actual Payments) to show Cash Flow timing
   const financialTrendData = useMemo(() => {
     if (selectedMonth === 'All') {
       // Group by Month
@@ -99,54 +101,35 @@ const Analytics = () => {
 
   // 3. Customer Growth (Bar) - REVISED LOGIC
   const customerGrowthData = useMemo(() => {
-    // We want to count distinct customers active in each month.
-    // A customer is active in a month if they have a valid subscription period overlapping that month.
-    // Sources of periods:
-    // A. Payments (Historical & Current): Each payment implies a subscription start.
-    // B. Current Customer State: For pending payments or manually active users without payments.
-
     const activeByMonth = new Map<string, Set<string>>();
     MONTHS.forEach(m => activeByMonth.set(m, new Set()));
 
-    // Helper to add customer to months
     const markActiveMonths = (customerId: string, startStr: string, endStr: string) => {
        const start = new Date(startStr);
        const end = new Date(endStr);
        if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
 
-       // Iterate month by month
        let current = new Date(start);
-       // Normalize to 1st of month to avoid skipping feb 28 etc when adding months
        current.setDate(1); 
        
-       // Cap loop to 1 year to prevent infinite loops on bad data
        let safety = 0;
        while (current <= end && safety < 24) {
-          // If the current month iteration overlaps with the [start, end] range
-          // Actually simpler: if a month M is touched by [start, end], add.
-          // Since we iterate M from start month to end month, we just check if it's in our MONTHS array
           const mName = current.toLocaleString('default', { month: 'short' });
           if (activeByMonth.has(mName)) {
-             // Check if this specific instance of 'current' (year) matches the visualized year?
-             // The dashboard currently aggregates by "Jan", "Feb" irrespective of year (simplified annual view).
-             // We will stick to that behavior.
              activeByMonth.get(mName)?.add(customerId);
           }
           current.setMonth(current.getMonth() + 1);
           safety++;
        }
        
-       // Explicitly check the exact end month in case the loop stepped over it due to date math quirks
        const endMName = end.toLocaleString('default', { month: 'short' });
        if (activeByMonth.has(endMName)) {
           activeByMonth.get(endMName)?.add(customerId);
        }
     };
 
-    // A. Process Payments (History)
     filteredPayments.forEach((p: any) => {
-       // Estimate Duration based on amount matched to plan
-       const matchedPlan = plans.find((plan: any) => Math.abs(plan.price - p.amount) < 10); // tolerance
+       const matchedPlan = plans.find((plan: any) => Math.abs(plan.price - p.amount) < 10);
        let endDateStr = p.date;
        
        if (matchedPlan) {
@@ -154,16 +137,13 @@ const Analytics = () => {
           const days = matchedPlan.numberOfDeliveryDays || 30;
           endDateStr = calculateEndDate(p.date, days, weekdays);
        } else {
-          // Default 30 days if unknown
           const d = new Date(p.date);
           d.setDate(d.getDate() + 30);
           endDateStr = d.toISOString();
        }
-       
        markActiveMonths(p.customerId, p.date, endDateStr);
     });
 
-    // B. Process Current Customer State (For those without payments or extended manually)
     filteredCustomers.forEach((c: any) => {
        if (c.isActive && c.startDate && c.endDate) {
           markActiveMonths(c.id, c.startDate, c.endDate);
@@ -194,7 +174,7 @@ const Analytics = () => {
     return Object.keys(map).map(k => ({ name: k, value: map[k].revenue, count: map[k].count }));
   }, [filteredCustomers, plans]);
 
-  // 5. NEW: Meal Time vs Plan Distribution (Stacked Bar)
+  // 5. Meal Time vs Plan Distribution
   const mealTimePlanData = useMemo(() => {
     const rawData = {
       Breakfast: {} as Record<string, number>,
@@ -205,7 +185,7 @@ const Analytics = () => {
     const allPlanNames = new Set<string>();
 
     filteredCustomers.forEach((c: any) => {
-      if (!c.isActive || c.daysLeft <= 0) return; // Only count active subs
+      if (!c.isActive || c.daysLeft <= 0) return; 
       
       const meal = (c.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner';
       const plan = plans.find((p: any) => p.id === c.planId);
@@ -218,7 +198,6 @@ const Analytics = () => {
       }
     });
 
-    // Format for Recharts: [{ name: 'Breakfast', 'Plan A': 10, 'Plan B': 5 }, ...]
     return {
       data: [
          { name: 'Breakfast', ...rawData.Breakfast },
@@ -240,14 +219,12 @@ const Analytics = () => {
       insights.push("Renewal rate is below 30%. Consider offering a loyalty discount to expiring customers.");
     }
     
-    // FIX: Clone array using spread syntax before sorting to avoid mutating read-only array
     const topExpense = [...expenseBreakdownData].sort((a,b) => b.value - a.value)[0];
     
     if (topExpense && topExpense.value > totalExpenses * 0.4) {
       insights.push(`'${topExpense.name}' accounts for over 40% of expenses. Look for alternative suppliers or cost-saving measures.`);
     }
     
-    // FIX: Clone array using spread syntax before sorting
     const topPlan = [...planPerformance].sort((a,b) => b.value - a.value)[0];
     
     if (topPlan && topPlan.value > totalRevenue * 0.5) {
@@ -313,7 +290,7 @@ const Analytics = () => {
         <KpiCard 
           title="Total Revenue" 
           value={`₹${totalRevenue.toLocaleString()}`} 
-          subtext="Gross income"
+          subtext="Total Contract Value"
           icon={DollarSign} 
           colorClass="bg-green-600 text-green-600"
         />
@@ -343,7 +320,7 @@ const Analytics = () => {
       {/* 3. Financial Trends (Line Chart) */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-          <Activity size={20} className="text-primary-600" /> Financial Trends
+          <Activity size={20} className="text-primary-600" /> Cash Flow Trends (Collections)
         </h3>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
@@ -391,7 +368,6 @@ const Analytics = () => {
                 </ResponsiveContainer>
               </div>
               <div className="w-full md:w-1/2 space-y-3">
-                 {/* FIX: Clone before sort to avoid mutation */}
                  {[...expenseBreakdownData].sort((a,b) => b.value - a.value).map((entry, idx) => (
                    <div key={idx} className="flex justify-between items-center text-sm">
                       <div className="flex items-center gap-2">

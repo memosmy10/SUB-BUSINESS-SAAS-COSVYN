@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users, UserCheck, RefreshCw, Plus, PauseCircle, Store,
-  Search, Filter, Calendar, MapPin, X, AlertCircle, Loader2, Edit, Trash2, Pause, Clock, ArrowRight, CheckCircle
+  Search, Filter, Calendar, MapPin, X, AlertCircle, Loader2, Edit, Trash2, Pause, Clock, ArrowRight, CheckCircle, Calculator
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -54,18 +54,43 @@ const Customers = () => {
   }, [currentUser]);
 
   // Actions
-  const handleAddOrEditCustomer = async (data: GlobalCustomer) => {
+  const handleAddOrEditCustomer = async (data: any) => {
     if (!currentUser) return;
     
     if (activeCustomer) {
-       // Edit Mode
+       // --- EDIT MODE ---
+       // 1. Calculate Difference in Payment (Revenue Logic)
+       const oldPaid = activeCustomer.amountPaid || 0;
+       const newPaid = Number(data.amountPaid);
+       const difference = newPaid - oldPaid;
+
+       // 2. Update Customer Record
        await updateItem(currentUser.uid, 'customers', activeCustomer.id, data);
+
+       // 3. Record Revenue Spike if paid amount increased (Collecting Dues)
+       if (difference > 0) {
+          await addItem(currentUser.uid, 'payments', {
+             amount: difference,
+             customerId: activeCustomer.id,
+             customerName: data.name,
+             date: new Date().toISOString(), // Record collection date as TODAY
+             type: 'Income',
+             note: 'Balance Collection'
+          });
+       } else if (difference < 0) {
+          // Optional: Handle refunds or corrections? For now, we just update the customer record.
+          console.log("Reduced amount paid - check if refund logic needed");
+       }
+
        setActiveCustomer(null);
     } else {
-       // Add Mode
+       // --- ADD MODE ---
        const newId = await addItem(currentUser.uid, 'customers', data);
+       
+       // Record Initial Revenue
        if (data.amountPaid > 0) {
-         // Use the selected Start Date for revenue tracking, adding time to ensure it hits the correct day in most timezones
+         // Use the selected Start Date for revenue tracking to match the subscription month
+         // Or use Today if you prefer cash basis. For "added in Oct", sticking to StartDate ensures it appears in Oct graphs.
          const revenueDate = new Date(data.startDate + 'T12:00:00').toISOString();
          
          await addItem(currentUser.uid, 'payments', {
@@ -451,21 +476,37 @@ const Customers = () => {
 
 const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState<any>({
-      branchId: branches[0]?.id || '', name: '', mobile: '', address: '', area: '', 
-      planId: '', paymentStatus: 'Paid', amountPaid: 0, startDate: new Date().toISOString().split('T')[0], deliveryBoyId: '',
-      mealTime: 'Lunch', // Default
+      branchId: branches[0]?.id || '', 
+      name: '', mobile: '', address: '', area: '', 
+      planId: '', 
+      paymentStatus: 'Paid', 
+      amountPaid: 0, 
+      pendingAmount: 0,
+      planPrice: 0,
+      startDate: new Date().toISOString().split('T')[0], 
+      deliveryBoyId: '',
+      mealTime: 'Lunch', 
       ...initialData
    });
    
    const branchPlans = useMemo(() => plans.filter((p: any) => p.branchId === formData.branchId), [plans, formData.branchId]);
    const branchStaff = useMemo(() => staff.filter((s: any) => s.branchId === formData.branchId), [staff, formData.branchId]);
 
-   // Default plan selection if invalid
+   // Initialize or Reset Plan Data
    useEffect(() => {
+      // If adding new, select first available plan by default
       if (!initialData) {
          const isValidPlan = branchPlans.find((p:any) => p.id === formData.planId);
          if (!isValidPlan && branchPlans.length > 0) {
-            setFormData((prev:any) => ({...prev, planId: branchPlans[0].id}));
+            const firstPlan = branchPlans[0];
+            setFormData((prev:any) => ({
+                ...prev, 
+                planId: firstPlan.id,
+                planPrice: firstPlan.price,
+                amountPaid: firstPlan.price, // Default to full paid
+                pendingAmount: 0,
+                paymentStatus: 'Paid'
+            }));
          }
          
          const isValidStaff = branchStaff.find((s:any) => s.id === formData.deliveryBoyId);
@@ -473,7 +514,52 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
             setFormData((prev:any) => ({...prev, deliveryBoyId: branchStaff[0].id}));
          }
       }
-   }, [formData.branchId, branchPlans, branchStaff, initialData, formData.planId, formData.deliveryBoyId]); 
+   }, [formData.branchId, branchPlans, branchStaff, initialData]); 
+
+   // --- AUTO CALCULATION LOGIC ---
+
+   const handlePlanChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const newPlanId = e.target.value;
+      const selectedPlan = plans.find((p:any) => p.id === newPlanId);
+      
+      if (selectedPlan) {
+         setFormData({
+            ...formData,
+            planId: newPlanId,
+            planPrice: selectedPlan.price,
+            // Auto-fill payment fields
+            amountPaid: selectedPlan.price,
+            pendingAmount: 0,
+            paymentStatus: 'Paid'
+         });
+      }
+   };
+
+   const handlePaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newPaid = Number(e.target.value);
+      const newPending = Math.max(0, formData.planPrice - newPaid);
+      const newStatus = newPending > 0 ? 'Pending' : 'Paid';
+
+      setFormData({
+         ...formData,
+         amountPaid: newPaid,
+         pendingAmount: newPending,
+         paymentStatus: newStatus
+      });
+   };
+
+   const handlePendingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newPending = Number(e.target.value);
+      const newPaid = Math.max(0, formData.planPrice - newPending);
+      const newStatus = newPending > 0 ? 'Pending' : 'Paid';
+
+      setFormData({
+         ...formData,
+         amountPaid: newPaid,
+         pendingAmount: newPending,
+         paymentStatus: newStatus
+      });
+   };
 
    const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
@@ -490,60 +576,116 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
          isActive: true, 
          daysLeft,
          endDate,
-         planPrice: selectedPlan.price,
-         pendingAmount: formData.paymentStatus === 'Pending' ? (selectedPlan.price - Number(formData.amountPaid)) : 0,
+         planPrice: formData.planPrice, // Ensure we save the specific price snapshot
+         amountPaid: Number(formData.amountPaid),
+         pendingAmount: Number(formData.pendingAmount),
+         paymentStatus: formData.paymentStatus,
          renewalCount: initialData ? initialData.renewalCount : 0,
          routeOrder: initialData ? initialData.routeOrder : 999
       });
    };
 
    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-         <div className="bg-white w-full max-w-lg rounded-2xl p-6 overflow-y-auto max-h-[90vh]">
-            <h3 className="font-bold text-lg mb-4 text-slate-900">{initialData ? 'Edit Customer' : 'Add Customer'}</h3>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
+         <div className="bg-white w-full max-w-lg rounded-2xl p-6 overflow-y-auto max-h-[90vh] shadow-2xl">
+            <h3 className="font-bold text-lg mb-4 text-slate-900 border-b pb-2">{initialData ? 'Edit Customer' : 'Add New Customer'}</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
+               {/* Branch & Plan */}
                <div className="grid grid-cols-2 gap-4">
-                  <select disabled={!!initialData} className="p-2 border border-slate-300 rounded bg-white text-slate-900 disabled:bg-slate-100" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>
-                     {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                  <select className="p-2 border border-slate-300 rounded bg-white text-slate-900" value={formData.planId} onChange={e => setFormData({...formData, planId: e.target.value})}>
-                     {branchPlans.map((p:any) => <option key={p.id} value={p.id}>{p.name} (₹{p.price})</option>)}
-                  </select>
-               </div>
-               <input required placeholder="Name" value={formData.name} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, name: e.target.value})} />
-               <input required placeholder="Mobile" value={formData.mobile} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, mobile: e.target.value})} />
-               <input required placeholder="Address" value={formData.address} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, address: e.target.value})} />
-               <div className="grid grid-cols-2 gap-4">
-                  <input required placeholder="Area" value={formData.area} className="p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, area: e.target.value})} />
-                  <input required type="date" value={formData.startDate} className="p-2 border border-slate-300 rounded bg-white text-slate-900" onChange={e => setFormData({...formData, startDate: e.target.value})} />
-               </div>
-               <div className="grid grid-cols-2 gap-4">
-                  <select className="p-2 border border-slate-300 rounded bg-white text-slate-900" value={formData.deliveryBoyId} onChange={e => setFormData({...formData, deliveryBoyId: e.target.value})}>
-                     <option value="">Select Delivery Boy</option>
-                     {branchStaff.map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                  <div className="relative">
-                     <Clock size={16} className="absolute left-3 top-3 text-slate-400" />
-                     <select 
-                       className="w-full p-2 pl-9 border border-slate-300 rounded bg-white text-slate-900" 
-                       value={formData.mealTime || 'Lunch'} 
-                       onChange={e => setFormData({...formData, mealTime: e.target.value})}
-                     >
-                        <option value="Breakfast">Breakfast</option>
-                        <option value="Lunch">Lunch</option>
-                        <option value="Dinner">Dinner</option>
+                  <div>
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Branch</label>
+                     <select disabled={!!initialData} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 disabled:bg-slate-100 outline-none focus:ring-2 focus:ring-blue-500" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>
+                        {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                     </select>
+                  </div>
+                  <div>
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select Plan</label>
+                     <select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" value={formData.planId} onChange={handlePlanChange}>
+                        {branchPlans.map((p:any) => <option key={p.id} value={p.id}>{p.name} (₹{p.price})</option>)}
                      </select>
                   </div>
                </div>
-               <div className="grid grid-cols-2 gap-4 bg-slate-50 p-2 rounded border border-slate-100">
-                  <select className="p-2 border border-slate-300 rounded bg-white text-slate-900" value={formData.paymentStatus} onChange={e => setFormData({...formData, paymentStatus: e.target.value as any})}>
-                     <option value="Paid">Paid</option><option value="Pending">Pending</option>
-                  </select>
-                  <input type="number" placeholder="Paid Amount" value={formData.amountPaid} className="p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, amountPaid: Number(e.target.value)})} />
+
+               {/* Personal Info */}
+               <div className="grid grid-cols-2 gap-4">
+                  <input required placeholder="Full Name" value={formData.name} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, name: e.target.value})} />
+                  <input required placeholder="Mobile Number" value={formData.mobile} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, mobile: e.target.value})} />
                </div>
-               <div className="flex gap-2">
-                  <button type="button" onClick={onClose} className="flex-1 py-2 border border-slate-300 rounded text-slate-700 bg-white hover:bg-slate-50">Cancel</button>
-                  <button type="submit" className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold transition-colors">Save</button>
+               
+               <input required placeholder="Full Address" value={formData.address} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, address: e.target.value})} />
+               
+               <div className="grid grid-cols-2 gap-4">
+                  <input required placeholder="Area / Locality" value={formData.area} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, area: e.target.value})} />
+                  <div>
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Start Date</label>
+                     <input required type="date" value={formData.startDate} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, startDate: e.target.value})} />
+                  </div>
+               </div>
+
+               {/* Delivery Details */}
+               <div className="grid grid-cols-2 gap-4">
+                  <div>
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Delivery Boy</label>
+                     <select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" value={formData.deliveryBoyId} onChange={e => setFormData({...formData, deliveryBoyId: e.target.value})}>
+                        <option value="">Select Staff</option>
+                        {branchStaff.map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                     </select>
+                  </div>
+                  <div className="relative">
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Meal Time</label>
+                     <div className="relative">
+                        <Clock size={16} className="absolute left-3 top-3 text-slate-400" />
+                        <select 
+                          className="w-full p-2.5 pl-9 border border-slate-300 rounded-lg bg-white text-slate-900" 
+                          value={formData.mealTime || 'Lunch'} 
+                          onChange={e => setFormData({...formData, mealTime: e.target.value})}
+                        >
+                           <option value="Breakfast">Breakfast</option>
+                           <option value="Lunch">Lunch</option>
+                           <option value="Dinner">Dinner</option>
+                        </select>
+                     </div>
+                  </div>
+               </div>
+
+               {/* PAYMENT SECTION - ENHANCED */}
+               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <div className="flex justify-between items-center mb-3">
+                     <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Calculator size={14}/> Payment Details</span>
+                     <span className={`text-xs font-bold px-2 py-1 rounded ${formData.paymentStatus === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        Status: {formData.paymentStatus}
+                     </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                     <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">Amount Paid (₹)</label>
+                        <input 
+                           type="number" 
+                           min="0"
+                           className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 font-bold text-green-600 focus:ring-2 focus:ring-green-500 outline-none" 
+                           value={formData.amountPaid} 
+                           onChange={handlePaidChange}
+                        />
+                     </div>
+                     <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">Pending Amount (₹)</label>
+                        <input 
+                           type="number" 
+                           min="0"
+                           className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 font-bold text-red-600 focus:ring-2 focus:ring-red-500 outline-none" 
+                           value={formData.pendingAmount} 
+                           onChange={handlePendingChange}
+                        />
+                     </div>
+                  </div>
+                  <div className="mt-2 text-right text-xs text-slate-400">
+                     Total Plan Price: <b>₹{formData.planPrice}</b>
+                  </div>
+               </div>
+
+               <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={onClose} className="flex-1 py-3 border border-slate-300 rounded-xl text-slate-700 bg-white hover:bg-slate-50 font-bold">Cancel</button>
+                  <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-colors shadow-lg shadow-blue-500/30">Save Customer</button>
                </div>
             </form>
          </div>

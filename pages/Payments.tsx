@@ -41,14 +41,12 @@ const Payments = () => {
   const metrics = useMemo(() => {
     const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
     
-    const totalReceivedLifetime = validPayments.reduce((acc: number, tx: any) => {
-       if (selectedBranch !== 'All') {
-          const cust = customers.find((c:any) => c.id === tx.customerId);
-          if (cust?.branchId !== selectedBranch) return acc;
-       }
-       return acc + (tx.amount || 0);
-    }, 0);
+    // Total Revenue = Sum of all Plan Prices (Contract Value)
+    const totalRevenue = filteredCustomers.reduce((acc: number, c: any) => acc + (c.planPrice || 0), 0);
     
+    // Total Collected = Sum of Amount Paid fields (or we could sum payments collection, but using customer fields for consistency with pie chart)
+    const totalCollected = filteredCustomers.reduce((acc: number, c: any) => acc + (c.amountPaid || 0), 0);
+
     // Calculate pending explicitly for expired customers
     const expiredPending = filteredCustomers
       .filter((c:any) => {
@@ -68,7 +66,7 @@ const Payments = () => {
       })
       .reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
 
-    return { totalPending, totalReceivedLifetime, expiredPending };
+    return { totalPending, totalRevenue, totalCollected, expiredPending };
   }, [filteredCustomers, selectedBranch, validPayments, customers, plans]);
 
   // Branch-wise Pending Data
@@ -81,7 +79,7 @@ const Payments = () => {
     }).filter((d: any) => d.value > 0);
   }, [branches, customers]);
 
-  // Chart Data: Revenue Over Time (Line)
+  // Chart Data: Collections Over Time (Line)
   const revenueData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return months.map(m => {
@@ -99,8 +97,6 @@ const Payments = () => {
   }, [selectedBranch, validPayments, customers]);
 
   // Chart Data: Monthly Pending Dues (Bar)
-  // Logic: Sum pending amounts based on the customer's End Date month. 
-  // This tells us "Which month's revenue is stuck?"
   const pendingByMonthData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const data = months.map(m => ({ name: m, value: 0 }));
@@ -120,7 +116,7 @@ const Payments = () => {
 
   // Chart Data: Paid vs Pending (Pie)
   const pieData = [
-    { name: 'Paid', value: metrics.totalReceivedLifetime, color: '#16a34a' }, // green-600
+    { name: 'Paid', value: metrics.totalCollected, color: '#16a34a' }, // green-600
     { name: 'Pending', value: metrics.totalPending, color: '#dc2626' } // red-600
   ];
 
@@ -171,8 +167,8 @@ const Payments = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard 
           title="Total Revenue" 
-          value={`₹${metrics.totalReceivedLifetime.toLocaleString()}`} 
-          subtext="Lifetime collected" 
+          value={`₹${metrics.totalRevenue.toLocaleString()}`} 
+          subtext="Total Contract Value" 
           icon={DollarSign} 
           colorClass="bg-green-600 text-green-600" 
         />
@@ -209,7 +205,7 @@ const Payments = () => {
         {/* Revenue Line Chart */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <h3 className="font-bold text-slate-900 mb-6 flex items-center gap-2">
-            <TrendingUp size={18} className="text-primary-600"/> Revenue Growth
+            <TrendingUp size={18} className="text-primary-600"/> Cash Flow (Collections)
           </h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -225,7 +221,7 @@ const Payments = () => {
                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(val) => `₹${val}`} />
                 <Tooltip 
                    contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}
-                   formatter={(val: number) => [`₹${val}`, 'Revenue']}
+                   formatter={(val: number) => [`₹${val}`, 'Collected']}
                 />
                 <Area type="monotone" dataKey="revenue" stroke="#7c3aed" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
               </AreaChart>
@@ -235,7 +231,7 @@ const Payments = () => {
 
         {/* Paid vs Pending Pie */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h3 className="font-bold text-slate-900 mb-6">Payment Status Ratio</h3>
+          <h3 className="font-bold text-slate-900 mb-6">Revenue Realization</h3>
           <div className="h-64 relative">
              <ResponsiveContainer width="100%" height="100%">
                <PieChart>
@@ -257,7 +253,7 @@ const Payments = () => {
              {/* Center Text */}
              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
                 <div className="text-xs text-slate-400 font-bold uppercase">Total</div>
-                <div className="text-xl font-extrabold text-slate-900">₹{(metrics.totalReceivedLifetime + metrics.totalPending).toLocaleString()}</div>
+                <div className="text-xl font-extrabold text-slate-900">₹{metrics.totalRevenue.toLocaleString()}</div>
              </div>
           </div>
         </div>

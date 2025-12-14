@@ -15,7 +15,7 @@ import {
   getDaysDifference,
   GlobalCustomer 
 } from '../services/store';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 const Customers = () => {
@@ -120,8 +120,28 @@ const Customers = () => {
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    if (currentUser && window.confirm('Delete customer? This cannot be undone.')) {
-      await deleteItem(currentUser.uid, 'customers', id);
+    if (currentUser && window.confirm('Delete customer? This action will also delete all revenue records associated with this customer. This cannot be undone.')) {
+      try {
+        const batch = writeBatch(db);
+
+        // 1. Delete Customer
+        const customerRef = doc(db, 'businesses', currentUser.uid, 'customers', id);
+        batch.delete(customerRef);
+
+        // 2. Find and Delete Payments associated with this customer
+        const paymentsRef = collection(db, 'businesses', currentUser.uid, 'payments');
+        const q = query(paymentsRef, where('customerId', '==', id));
+        const paymentSnap = await getDocs(q);
+
+        paymentSnap.forEach((pDoc) => {
+           batch.delete(pDoc.ref);
+        });
+
+        await batch.commit();
+      } catch (error) {
+        console.error("Error deleting customer and payments:", error);
+        alert("Failed to delete customer completely.");
+      }
     }
   };
 

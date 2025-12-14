@@ -53,12 +53,21 @@ const Dashboard = () => {
   }, [customers, selectedBranch]);
 
   const filteredPayments = useMemo(() => {
-    // Payments don't always store branchId, so we infer from customer if possible
-    // For MVP, assuming if customer linked to payment is in filteredCustomers, include payment
-    if (selectedBranch === 'All') return payments;
-    const customerIds = new Set(filteredCustomers.map((c: any) => c.id));
-    return payments.filter((p: any) => customerIds.has(p.customerId));
-  }, [payments, filteredCustomers, selectedBranch]);
+    // 1. Get Set of ALL valid customer IDs currently in system
+    const allCustomerIds = new Set(customers.map((c: any) => c.id));
+
+    // 2. Filter payments: Must have a valid customer ID (Strict Cleanup for Deleted Customers)
+    const validPayments = payments.filter((p: any) => allCustomerIds.has(p.customerId));
+
+    // 3. Apply Branch Logic
+    if (selectedBranch === 'All') {
+        return validPayments;
+    } else {
+        // If branch selected, only include payments for customers in that branch
+        const branchCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
+        return validPayments.filter((p: any) => branchCustomerIds.has(p.customerId));
+    }
+  }, [payments, customers, filteredCustomers, selectedBranch]);
 
   const filteredExpenses = useMemo(() => {
     return selectedBranch === 'All'

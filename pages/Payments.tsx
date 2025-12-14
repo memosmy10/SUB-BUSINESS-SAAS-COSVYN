@@ -5,17 +5,19 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { 
-  DollarSign, AlertCircle, TrendingUp, Calendar, Filter, Search, ArrowRight, Loader2
+  DollarSign, AlertCircle, TrendingUp, Calendar, Filter, Search, ArrowRight, Loader2, Phone, UserX
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
+import { calculateRemainingDeliveries } from '../services/store';
 
 const Payments = () => {
   // Real Data
   const { data: customers, loading: l1 } = useStreamCollection<any>('customers');
   const { data: payments, loading: l2 } = useStreamCollection<any>('payments');
   const { data: branches, loading: l3 } = useStreamCollection<any>('branches');
+  const { data: plans, loading: l4 } = useStreamCollection<any>('plans');
 
-  const isLoading = l1 || l2 || l3;
+  const isLoading = l1 || l2 || l3 || l4;
 
   const [selectedBranch, setSelectedBranch] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -29,13 +31,17 @@ const Payments = () => {
       : customers.filter((c:any) => c.branchId === selectedBranch);
   }, [selectedBranch, customers]);
 
+  // Valid Payments (filtered by existing customers)
+  const validPayments = useMemo(() => {
+     const custIds = new Set(customers.map((c:any) => c.id));
+     return payments.filter((p:any) => custIds.has(p.customerId));
+  }, [payments, customers]);
+
   // Metrics Calculation
   const metrics = useMemo(() => {
     const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
     
-    // Filter payment history based on selected branch
-    // Note: payments collection currently doesn't store branchId directly, so we filter if customer matches
-    const totalReceivedLifetime = payments.reduce((acc: number, tx: any) => {
+    const totalReceivedLifetime = validPayments.reduce((acc: number, tx: any) => {
        if (selectedBranch !== 'All') {
           const cust = customers.find((c:any) => c.id === tx.customerId);
           if (cust?.branchId !== selectedBranch) return acc;
@@ -43,10 +49,27 @@ const Payments = () => {
        return acc + (tx.amount || 0);
     }, 0);
     
-    const pendingThisMonth = totalPending; // Simplified
+    // Calculate pending explicitly for expired customers
+    const expiredPending = filteredCustomers
+      .filter((c:any) => {
+         if ((c.pendingAmount || 0) <= 0) return false;
 
-    return { totalPending, totalReceivedLifetime, pendingThisMonth };
-  }, [filteredCustomers, selectedBranch, payments, customers]);
+         // 1. Check explicit inactive flag
+         if (!c.isActive) return true;
+
+         // 2. Check calculated expiry (active flag might be stale)
+         const plan = plans.find((p:any) => p.id === c.planId);
+         // If no plan found, assume default weekdays to calculate. If no end date, it handles gracefully.
+         const weekdays = plan?.weekdays || [0,1,2,3,4,5,6];
+         const daysLeft = calculateRemainingDeliveries(c.endDate, weekdays);
+         
+         // If days are exhausted, they are effectively expired for payment purposes
+         return daysLeft <= 0;
+      })
+      .reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
+
+    return { totalPending, totalReceivedLifetime, expiredPending };
+  }, [filteredCustomers, selectedBranch, validPayments, customers, plans]);
 
   // Branch-wise Pending Data
   const branchPendingData = useMemo(() => {
@@ -62,7 +85,7 @@ const Payments = () => {
   const revenueData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return months.map(m => {
-       const total = payments
+       const total = validPayments
          .filter((tx: any) => new Date(tx.date).toLocaleString('default', { month: 'short' }) === m)
          .reduce((acc: number, tx: any) => {
             if (selectedBranch !== 'All') {
@@ -73,7 +96,27 @@ const Payments = () => {
          }, 0);
        return { name: m, revenue: total };
     });
-  }, [selectedBranch, payments, customers]);
+  }, [selectedBranch, validPayments, customers]);
+
+  // Chart Data: Monthly Pending Dues (Bar)
+  // Logic: Sum pending amounts based on the customer's End Date month. 
+  // This tells us "Which month's revenue is stuck?"
+  const pendingByMonthData = useMemo(() => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const data = months.map(m => ({ name: m, value: 0 }));
+
+    filteredCustomers.forEach((c: any) => {
+       if ((c.pendingAmount || 0) > 0 && c.endDate) {
+          const date = new Date(c.endDate);
+          const m = date.toLocaleString('default', { month: 'short' });
+          const idx = months.indexOf(m);
+          if (idx !== -1) {
+             data[idx].value += c.pendingAmount;
+          }
+       }
+    });
+    return data;
+  }, [filteredCustomers]);
 
   // Chart Data: Paid vs Pending (Pie)
   const pieData = [
@@ -136,16 +179,16 @@ const Payments = () => {
         <MetricCard 
           title="Total Pending" 
           value={`₹${metrics.totalPending.toLocaleString()}`} 
-          subtext="across all active plans" 
+          subtext="From Active & Expired" 
           icon={AlertCircle} 
           colorClass="bg-red-600 text-red-600" 
         />
         <MetricCard 
-          title="Pending (Month)" 
-          value={`₹${metrics.pendingThisMonth.toLocaleString()}`} 
-          subtext="Due this cycle" 
-          icon={Calendar} 
-          colorClass="bg-orange-500 text-orange-500" 
+          title="Expired & Pending" 
+          value={`₹${metrics.expiredPending.toLocaleString()}`} 
+          subtext="Due from inactive users" 
+          icon={UserX} 
+          colorClass="bg-slate-700 text-slate-700" 
         />
         <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm flex flex-col relative overflow-hidden h-32">
            <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-2">Branch-wise Pending</h4>
@@ -207,7 +250,7 @@ const Payments = () => {
                      <Cell key={`cell-${index}`} fill={entry.color} />
                    ))}
                  </Pie>
-                 <Tooltip />
+                 <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
                  <Legend verticalAlign="bottom" height={36}/>
                </PieChart>
              </ResponsiveContainer>
@@ -221,11 +264,33 @@ const Payments = () => {
 
       </div>
 
-      {/* 4. PENDING PAYMENTS TABLE */}
+      {/* 4. NEW: MONTHLY PENDING DUES CHART */}
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+         <h3 className="font-bold text-slate-900 mb-6 flex items-center gap-2">
+            <AlertCircle size={18} className="text-red-500"/> Month-on-Month Pending Dues
+         </h3>
+         <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+               <BarChart data={pendingByMonthData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(val) => `₹${val}`} />
+                  <Tooltip 
+                     cursor={{fill: '#fee2e2'}}
+                     contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                     formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Pending Amount']}
+                  />
+                  <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={40} />
+               </BarChart>
+            </ResponsiveContainer>
+         </div>
+      </div>
+
+      {/* 5. PENDING PAYMENTS TABLE */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50/50">
            <h3 className="font-bold text-slate-900 flex items-center gap-2">
-             <AlertCircle size={18} className="text-red-500" /> Pending Payments List
+             <AlertCircle size={18} className="text-red-500" /> Outstanding Payments List
            </h3>
            <div className="relative w-full sm:w-64">
              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -246,7 +311,7 @@ const Payments = () => {
                 <th className="px-6 py-4">Customer</th>
                 <th className="px-6 py-4">Branch</th>
                 <th className="px-6 py-4">Plan</th>
-                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Subscription</th>
                 <th className="px-6 py-4 text-right">Paid</th>
                 <th className="px-6 py-4 text-right">Pending Amount</th>
                 <th className="px-6 py-4 text-center">Action</th>
@@ -259,28 +324,44 @@ const Payments = () => {
                 .sort((a: any, b: any) => (b.pendingAmount || 0) - (a.pendingAmount || 0)) // Highest pending first
                 .map((c: any) => {
                    const branchName = branches.find((b: any) => b.id === c.branchId)?.name;
-                   // Assuming plans data is fetched or passed down, but for now we can infer or leave empty if not available in this scope.
-                   // To make it perfect, we should fetch 'plans' via hook here too.
+                   const plan = plans.find((p:any) => p.id === c.planId);
+                   const planName = plan?.name || 'Unknown Plan';
                    
+                   // Recalculate expiry status to be sure
+                   const weekdays = plan?.weekdays || [0,1,2,3,4,5,6];
+                   const daysLeft = calculateRemainingDeliveries(c.endDate, weekdays);
+                   const isExpired = !c.isActive || daysLeft <= 0;
+
                    return (
-                     <tr key={c.id} className="hover:bg-red-50/10 transition-colors">
+                     <tr key={c.id} className={`hover:bg-red-50/10 transition-colors ${isExpired ? 'bg-red-50/20' : ''}`}>
                        <td className="px-6 py-4">
                          <div className="font-bold text-slate-900">{c.name}</div>
                          <div className="text-xs text-slate-500">{c.mobile}</div>
                        </td>
                        <td className="px-6 py-4 text-sm text-slate-600">{branchName || 'Unknown'}</td>
-                       <td className="px-6 py-4 text-sm text-slate-600">Subscribed</td>
+                       <td className="px-6 py-4 text-sm text-slate-600">{planName}</td>
                        <td className="px-6 py-4">
-                         <span className="inline-flex px-2 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">
-                           Pending
-                         </span>
+                         {isExpired ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                               <UserX size={12} /> Expired
+                            </span>
+                         ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                               <div className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse"/> Active
+                            </span>
+                         )}
                        </td>
                        <td className="px-6 py-4 text-right font-medium text-slate-500">₹{c.amountPaid}</td>
-                       <td className="px-6 py-4 text-right font-bold text-red-600">₹{c.pendingAmount}</td>
+                       <td className="px-6 py-4 text-right">
+                          <span className="font-bold text-red-600 text-lg">₹{c.pendingAmount}</span>
+                       </td>
                        <td className="px-6 py-4 text-center">
-                          <button className="text-xs font-bold text-primary-600 hover:text-primary-800 hover:underline flex items-center justify-center gap-1 mx-auto">
-                            Send Reminder <ArrowRight size={12} />
-                          </button>
+                          <a 
+                            href={`tel:${c.mobile}`}
+                            className="inline-flex items-center gap-1 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            <Phone size={12} /> Call
+                          </a>
                        </td>
                      </tr>
                    );

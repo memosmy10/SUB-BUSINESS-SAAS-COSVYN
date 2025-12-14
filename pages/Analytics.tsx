@@ -8,6 +8,7 @@ import {
   TrendingUp, TrendingDown, Users, DollarSign, Activity, Lightbulb, ArrowUpRight, ArrowDownRight, Loader2, Utensils
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
+import { calculateEndDate } from '../services/store';
 
 const COLORS = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -35,9 +36,12 @@ const Analytics = () => {
     
     // Payments needs manual branch filtering via customer lookup since payment record usually has customerId
     const fPayments = payments.filter((p: any) => {
-      if (selectedBranch === 'All') return true;
+      // STRICT FILTER: Payment must belong to an existing customer
       const c = customers.find((cust: any) => cust.id === p.customerId);
-      return c?.branchId === selectedBranch;
+      if (!c) return false;
+
+      if (selectedBranch === 'All') return true;
+      return c.branchId === selectedBranch;
     });
 
     const fExpenses = selectedBranch === 'All' ? expenses : expenses.filter((e: any) => e.branchId === selectedBranch);
@@ -93,17 +97,84 @@ const Analytics = () => {
     return Object.keys(map).map(k => ({ name: k, value: map[k] }));
   }, [filteredExpenses]);
 
-  // 3. Customer Growth (Bar)
+  // 3. Customer Growth (Bar) - REVISED LOGIC
   const customerGrowthData = useMemo(() => {
-    return MONTHS.map(m => {
-      const count = filteredCustomers.filter((c: any) => {
-        const startMonth = new Date(c.startDate).toLocaleString('default', { month: 'short' });
-        // Simple logic: if they started in or before this month
-        return startMonth === m || (c.isActive && MONTHS.indexOf(startMonth) <= MONTHS.indexOf(m));
-      }).length;
-      return { name: m, Active: count };
+    // We want to count distinct customers active in each month.
+    // A customer is active in a month if they have a valid subscription period overlapping that month.
+    // Sources of periods:
+    // A. Payments (Historical & Current): Each payment implies a subscription start.
+    // B. Current Customer State: For pending payments or manually active users without payments.
+
+    const activeByMonth = new Map<string, Set<string>>();
+    MONTHS.forEach(m => activeByMonth.set(m, new Set()));
+
+    // Helper to add customer to months
+    const markActiveMonths = (customerId: string, startStr: string, endStr: string) => {
+       const start = new Date(startStr);
+       const end = new Date(endStr);
+       if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+
+       // Iterate month by month
+       let current = new Date(start);
+       // Normalize to 1st of month to avoid skipping feb 28 etc when adding months
+       current.setDate(1); 
+       
+       // Cap loop to 1 year to prevent infinite loops on bad data
+       let safety = 0;
+       while (current <= end && safety < 24) {
+          // If the current month iteration overlaps with the [start, end] range
+          // Actually simpler: if a month M is touched by [start, end], add.
+          // Since we iterate M from start month to end month, we just check if it's in our MONTHS array
+          const mName = current.toLocaleString('default', { month: 'short' });
+          if (activeByMonth.has(mName)) {
+             // Check if this specific instance of 'current' (year) matches the visualized year?
+             // The dashboard currently aggregates by "Jan", "Feb" irrespective of year (simplified annual view).
+             // We will stick to that behavior.
+             activeByMonth.get(mName)?.add(customerId);
+          }
+          current.setMonth(current.getMonth() + 1);
+          safety++;
+       }
+       
+       // Explicitly check the exact end month in case the loop stepped over it due to date math quirks
+       const endMName = end.toLocaleString('default', { month: 'short' });
+       if (activeByMonth.has(endMName)) {
+          activeByMonth.get(endMName)?.add(customerId);
+       }
+    };
+
+    // A. Process Payments (History)
+    filteredPayments.forEach((p: any) => {
+       // Estimate Duration based on amount matched to plan
+       const matchedPlan = plans.find((plan: any) => Math.abs(plan.price - p.amount) < 10); // tolerance
+       let endDateStr = p.date;
+       
+       if (matchedPlan) {
+          const weekdays = matchedPlan.weekdays || [0,1,2,3,4,5,6];
+          const days = matchedPlan.numberOfDeliveryDays || 30;
+          endDateStr = calculateEndDate(p.date, days, weekdays);
+       } else {
+          // Default 30 days if unknown
+          const d = new Date(p.date);
+          d.setDate(d.getDate() + 30);
+          endDateStr = d.toISOString();
+       }
+       
+       markActiveMonths(p.customerId, p.date, endDateStr);
     });
-  }, [filteredCustomers]);
+
+    // B. Process Current Customer State (For those without payments or extended manually)
+    filteredCustomers.forEach((c: any) => {
+       if (c.isActive && c.startDate && c.endDate) {
+          markActiveMonths(c.id, c.startDate, c.endDate);
+       }
+    });
+
+    return MONTHS.map(m => ({
+       name: m,
+       Active: activeByMonth.get(m)?.size || 0
+    }));
+  }, [filteredCustomers, filteredPayments, plans]);
 
   const uniqueCustomers = filteredCustomers.length;
   const renewals = filteredCustomers.reduce((acc: number, c: any) => acc + (c.renewalCount || 0), 0);

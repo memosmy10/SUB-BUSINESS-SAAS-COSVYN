@@ -41,12 +41,17 @@ const Payments = () => {
   const metrics = useMemo(() => {
     const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
     
-    // Total Revenue = Sum of all Plan Prices (Contract Value)
-    const totalRevenue = filteredCustomers.reduce((acc: number, c: any) => acc + (c.planPrice || 0), 0);
-    
-    // Total Collected = Sum of Amount Paid fields (or we could sum payments collection, but using customer fields for consistency with pie chart)
-    const totalCollected = filteredCustomers.reduce((acc: number, c: any) => acc + (c.amountPaid || 0), 0);
+    // Total Revenue Logic: Total Collected (Payments) + Total Pending (Customers)
+    // 1. Filter payments for the selected branch's customers
+    const filteredCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
+    const totalCollected = validPayments
+       .filter((p: any) => filteredCustomerIds.has(p.customerId))
+       .reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
 
+    // 2. Sum up pending dues from current customers state
+    // Total Revenue (Lifetime Value) = Collected + Pending
+    const totalRevenue = totalCollected + totalPending;
+    
     // Calculate pending explicitly for expired customers
     const expiredPending = filteredCustomers
       .filter((c:any) => {

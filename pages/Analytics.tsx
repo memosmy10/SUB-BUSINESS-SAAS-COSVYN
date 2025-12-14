@@ -55,8 +55,11 @@ const Analytics = () => {
 
   // --- KPIS ---
   
-  // Total Revenue = Sum of Plan Prices (Contract Value)
-  const totalRevenue = filteredCustomers.reduce((acc: number, c: any) => acc + (c.planPrice || 0), 0);
+  // Total Revenue = Total Collected + Total Pending
+  const totalCollected = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+  const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
+  const totalRevenue = totalCollected + totalPending;
+
   const totalExpenses = filteredExpenses.reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
   const netProfit = totalRevenue - totalExpenses;
   const activeCustomers = filteredCustomers.filter((c: any) => c.isActive && c.daysLeft > 0).length;
@@ -99,82 +102,75 @@ const Analytics = () => {
     return Object.keys(map).map(k => ({ name: k, value: map[k] }));
   }, [filteredExpenses]);
 
-  // 3. Customer Growth (Bar) - REVISED LOGIC
+  // 3. Customer Growth (Bar) - REVISED LOGIC (Starts + Renewals)
   const customerGrowthData = useMemo(() => {
-    const activeByMonth = new Map<string, Set<string>>();
-    MONTHS.forEach(m => activeByMonth.set(m, new Set()));
+    const monthlyActive = new Map<string, Set<string>>();
+    MONTHS.forEach(m => monthlyActive.set(m, new Set()));
 
-    const markActiveMonths = (customerId: string, startStr: string, endStr: string) => {
-       const start = new Date(startStr);
-       const end = new Date(endStr);
-       if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
-
-       let current = new Date(start);
-       current.setDate(1); 
-       
-       let safety = 0;
-       while (current <= end && safety < 24) {
-          const mName = current.toLocaleString('default', { month: 'short' });
-          if (activeByMonth.has(mName)) {
-             activeByMonth.get(mName)?.add(customerId);
-          }
-          current.setMonth(current.getMonth() + 1);
-          safety++;
-       }
-       
-       const endMName = end.toLocaleString('default', { month: 'short' });
-       if (activeByMonth.has(endMName)) {
-          activeByMonth.get(endMName)?.add(customerId);
-       }
-    };
-
+    // A. Use Payment History (Excluding balance collection) to find Subscription Start events
     filteredPayments.forEach((p: any) => {
-       const matchedPlan = plans.find((plan: any) => Math.abs(plan.price - p.amount) < 10);
-       let endDateStr = p.date;
+       if (p.note === 'Balance Collection') return; 
        
-       if (matchedPlan) {
-          const weekdays = matchedPlan.weekdays || [0,1,2,3,4,5,6];
-          const days = matchedPlan.numberOfDeliveryDays || 30;
-          endDateStr = calculateEndDate(p.date, days, weekdays);
-       } else {
-          const d = new Date(p.date);
-          d.setDate(d.getDate() + 30);
-          endDateStr = d.toISOString();
+       const date = new Date(p.date);
+       if (isNaN(date.getTime())) return;
+       
+       const mName = date.toLocaleString('default', { month: 'short' });
+       if (monthlyActive.has(mName)) {
+          monthlyActive.get(mName)?.add(p.customerId);
        }
-       markActiveMonths(p.customerId, p.date, endDateStr);
     });
 
+    // B. Use Current Customer Data to capture the latest start date (covers missing payments/manual entry)
     filteredCustomers.forEach((c: any) => {
-       if (c.isActive && c.startDate && c.endDate) {
-          markActiveMonths(c.id, c.startDate, c.endDate);
+       if (c.startDate) {
+          const date = new Date(c.startDate);
+          if (!isNaN(date.getTime())) {
+             const mName = date.toLocaleString('default', { month: 'short' });
+             if (monthlyActive.has(mName)) {
+                monthlyActive.get(mName)?.add(c.id);
+             }
+          }
        }
     });
 
     return MONTHS.map(m => ({
        name: m,
-       Active: activeByMonth.get(m)?.size || 0
+       Active: monthlyActive.get(m)?.size || 0
     }));
-  }, [filteredCustomers, filteredPayments, plans]);
+  }, [filteredCustomers, filteredPayments]);
 
   const uniqueCustomers = filteredCustomers.length;
   const renewals = filteredCustomers.reduce((acc: number, c: any) => acc + (c.renewalCount || 0), 0);
   const renewalRate = uniqueCustomers ? Math.round((renewals / (uniqueCustomers + renewals)) * 100) : 0;
 
-  // 4. Plan Performance (Pie)
+  // 4. Plan Performance (Pie) - UPDATED: Uses Payments to track actual revenue in period
   const planPerformance = useMemo(() => {
     const map: Record<string, { revenue: number, count: number }> = {};
-    filteredCustomers.forEach((c: any) => {
-       const plan = plans.find((p: any) => p.id === c.planId);
-       if (!plan) return;
-       if (!map[plan.name]) map[plan.name] = { revenue: 0, count: 0 };
-       
-       map[plan.name].revenue += (c.planPrice || 0);
-       map[plan.name].count += 1;
+    
+    filteredPayments.forEach((p: any) => {
+       // Match payment to customer to find Plan Name
+       // Limitation: If customer changed plans, older payments might misattribute to new plan. 
+       // For MVP, using current customer plan is acceptable approximation.
+       const c = customers.find((cust: any) => cust.id === p.customerId);
+       if (c) {
+          const plan = plans.find((pl: any) => pl.id === c.planId);
+          const planName = plan ? plan.name : 'Unknown Plan';
+          
+          if (!map[planName]) map[planName] = { revenue: 0, count: 0 };
+          
+          map[planName].revenue += (p.amount || 0);
+          
+          // Only increment count if it's a subscription start/renew (not balance collection)
+          if (p.note !== 'Balance Collection') {
+             map[planName].count += 1;
+          }
+       }
     });
-    return Object.keys(map).map(k => ({ name: k, value: map[k].revenue, count: map[k].count }));
-  }, [filteredCustomers, plans]);
 
-  // 5. Meal Time vs Plan Distribution
+    return Object.keys(map).map(k => ({ name: k, value: map[k].revenue, count: map[k].count }));
+  }, [filteredPayments, customers, plans]);
+
+  // 5. Meal Time vs Plan Distribution - UPDATED: Uses Payments to track volume in period
   const mealTimePlanData = useMemo(() => {
     const rawData = {
       Breakfast: {} as Record<string, number>,
@@ -184,17 +180,21 @@ const Analytics = () => {
 
     const allPlanNames = new Set<string>();
 
-    filteredCustomers.forEach((c: any) => {
-      if (!c.isActive || c.daysLeft <= 0) return; 
-      
-      const meal = (c.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner';
-      const plan = plans.find((p: any) => p.id === c.planId);
-      const planName = plan ? plan.name : 'Unknown';
-      
-      allPlanNames.add(planName);
+    filteredPayments.forEach((p: any) => {
+      // Exclude balance collections to avoid double counting volume
+      if (p.note === 'Balance Collection') return;
 
-      if (rawData[meal]) {
-        rawData[meal][planName] = (rawData[meal][planName] || 0) + 1;
+      const c = customers.find((cust: any) => cust.id === p.customerId);
+      if (c) {
+         const meal = (c.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner';
+         const plan = plans.find((pl: any) => pl.id === c.planId);
+         const planName = plan ? plan.name : 'Unknown';
+         
+         allPlanNames.add(planName);
+
+         if (rawData[meal]) {
+           rawData[meal][planName] = (rawData[meal][planName] || 0) + 1;
+         }
       }
     });
 
@@ -206,7 +206,7 @@ const Analytics = () => {
       ],
       keys: Array.from(allPlanNames)
     };
-  }, [filteredCustomers, plans]);
+  }, [filteredPayments, customers, plans]);
 
   // --- AI INSIGHTS LOGIC ---
   const aiInsights = useMemo(() => {
@@ -385,7 +385,7 @@ const Analytics = () => {
         {/* Customer Growth */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
            <div className="flex justify-between items-start mb-6">
-              <h3 className="text-lg font-bold text-slate-900">Customer Insights</h3>
+              <h3 className="text-lg font-bold text-slate-900">Customer Growth</h3>
               <div className="text-right">
                  <p className="text-xs text-slate-500 uppercase font-bold">Renewal Rate</p>
                  <p className={`text-xl font-bold ${renewalRate > 50 ? 'text-green-600' : 'text-orange-500'}`}>{renewalRate}%</p>
@@ -397,7 +397,11 @@ const Analytics = () => {
                <BarChart data={customerGrowthData}>
                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} />
-                 <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '8px' }} />
+                 <Tooltip 
+                    cursor={{fill: '#f8fafc'}} 
+                    contentStyle={{ borderRadius: '8px' }} 
+                    formatter={(val: number) => [val, 'Starts & Renewals']}
+                 />
                  <Bar dataKey="Active" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                </BarChart>
              </ResponsiveContainer>

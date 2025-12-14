@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users, UserCheck, RefreshCw, Plus, PauseCircle, Store,
-  Search, Filter, Calendar, MapPin, X, AlertCircle, Loader2, Edit, Trash2, Pause, Clock, ArrowRight, CheckCircle, Calculator
+  Search, Filter, Calendar, MapPin, X, AlertCircle, Loader2, Edit, Trash2, Pause, Clock, ArrowRight, CheckCircle, Calculator, Phone, Building
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -121,10 +121,11 @@ const Customers = () => {
       startDate: data.startDate,
       endDate: data.endDate,
       daysLeft: daysLeft,
-      planPrice: data.planPrice,
-      amountPaid: data.amountPaid,
+      planPrice: data.planPrice, // Update to new plan price
+      amountPaid: data.amountPaid, // Reset/Update amount paid for this new cycle
       paymentStatus: data.paymentStatus,
-      pendingAmount: data.paymentStatus === 'Pending' ? (data.planPrice - data.amountPaid) : 0,
+      pendingAmount: data.pendingAmount,
+      deliveryBoyId: data.deliveryBoyId, // Update Delivery Boy
       renewalCount: (cust.renewalCount || 0) + 1
     });
 
@@ -137,7 +138,8 @@ const Customers = () => {
          customerId: customerId,
          customerName: cust.name,
          date: revenueDate,
-         type: 'Income'
+         type: 'Income',
+         note: 'Subscription Renewal'
       });
     }
 
@@ -442,6 +444,8 @@ const Customers = () => {
          <RenewCustomerModal
             customer={activeCustomer}
             plans={plans.filter((p: any) => p.branchId === activeCustomer.branchId)}
+            staff={deliveryBoys.filter((s: any) => s.branchId === activeCustomer.branchId)}
+            branchName={branches.find((b: any) => b.id === activeCustomer.branchId)?.name || ''}
             onClose={() => { setIsRenewModalOpen(false); setActiveCustomer(null); }}
             onSubmit={(data: any) => handleRenewCustomer(activeCustomer.id, data)}
          />
@@ -693,11 +697,74 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
    )
 }
 
-const RenewCustomerModal = ({ customer, plans, onClose, onSubmit }: any) => {
+const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState({
-      planId: customer.planId, startDate: new Date().toISOString().split('T')[0], paymentStatus: 'Paid', amountPaid: 0
+      planId: customer.planId, 
+      startDate: new Date().toISOString().split('T')[0], 
+      paymentStatus: 'Paid', 
+      amountPaid: 0,
+      pendingAmount: 0,
+      planPrice: 0,
+      deliveryBoyId: customer.deliveryBoyId || ''
    });
+
+   // Init with current plan price default
+   useEffect(() => {
+      const plan = plans.find((p:any) => p.id === customer.planId);
+      if(plan) {
+         setFormData(prev => ({
+            ...prev,
+            planPrice: plan.price,
+            amountPaid: plan.price, // Default full paid
+            pendingAmount: 0,
+            paymentStatus: 'Paid'
+         }));
+      }
+   }, [customer.planId, plans]);
    
+   // --- LOGIC ---
+   const handlePlanChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const newPlanId = e.target.value;
+      const selectedPlan = plans.find((p:any) => p.id === newPlanId);
+      
+      if (selectedPlan) {
+         setFormData({
+            ...formData,
+            planId: newPlanId,
+            planPrice: selectedPlan.price,
+            amountPaid: selectedPlan.price,
+            pendingAmount: 0,
+            paymentStatus: 'Paid'
+         });
+      }
+   };
+
+   const handlePaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newPaid = Number(e.target.value);
+      const newPending = Math.max(0, formData.planPrice - newPaid);
+      const newStatus = newPending > 0 ? 'Pending' : 'Paid';
+
+      setFormData({
+         ...formData,
+         amountPaid: newPaid,
+         pendingAmount: newPending,
+         paymentStatus: newStatus
+      });
+   };
+
+   const handlePendingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newPending = Number(e.target.value);
+      const newPaid = Math.max(0, formData.planPrice - newPending);
+      const newStatus = newPending > 0 ? 'Pending' : 'Paid';
+
+      setFormData({
+         ...formData,
+         amountPaid: newPaid,
+         pendingAmount: newPending,
+         paymentStatus: newStatus
+      });
+   };
+
    const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       const selectedPlan = plans.find((p: any) => p.id === formData.planId);
@@ -706,24 +773,91 @@ const RenewCustomerModal = ({ customer, plans, onClose, onSubmit }: any) => {
       const weekdays = selectedPlan.weekdays || [0,1,2,3,4,5,6];
       const endDate = calculateEndDate(formData.startDate, selectedPlan.numberOfDeliveryDays, weekdays);
       
-      onSubmit({ ...formData, planPrice: selectedPlan.price, endDate });
+      onSubmit({ 
+         ...formData, 
+         // planPrice: formData.planPrice, // Included in spread
+         endDate 
+      });
    };
 
    return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-         <div className="bg-white w-full max-w-md rounded-2xl p-6">
-            <h3 className="font-bold text-lg mb-4 text-slate-900">Renew {customer.name}</h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
-               <select className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900" value={formData.planId} onChange={e => setFormData({...formData, planId: e.target.value})}>
-                  {plans.map((p:any) => <option key={p.id} value={p.id}>{p.name} (₹{p.price})</option>)}
-               </select>
-               <input required type="date" value={formData.startDate} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900" onChange={e => setFormData({...formData, startDate: e.target.value})} />
-               <div className="grid grid-cols-2 gap-4">
-                  <select className="p-2 border border-slate-300 rounded bg-white text-slate-900" onChange={e => setFormData({...formData, paymentStatus: e.target.value as any})}><option value="Paid">Paid</option><option value="Pending">Pending</option></select>
-                  <input type="number" placeholder="Paid" className="p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400" onChange={e => setFormData({...formData, amountPaid: Number(e.target.value)})} />
+         <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl">
+            
+            {/* Header with Customer Details */}
+            <div className="mb-6 border-b border-slate-100 pb-4">
+               <h3 className="font-bold text-lg text-slate-900 mb-1">Renew Subscription</h3>
+               <div className="flex flex-col gap-1 text-sm text-slate-500">
+                  <span className="font-bold text-slate-700 text-base">{customer.name}</span>
+                  <div className="flex justify-between items-center">
+                     <span className="flex items-center gap-1"><Phone size={14}/> {customer.mobile}</span>
+                     <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded text-xs font-bold"><Building size={12}/> {branchName}</span>
+                  </div>
                </div>
-               <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold transition-colors">Confirm Renewal</button>
-               <button type="button" onClick={onClose} className="w-full text-slate-500 py-1 text-sm hover:text-slate-700">Cancel</button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+               
+               {/* Plan Selection */}
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select New Plan</label>
+                  <select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" value={formData.planId} onChange={handlePlanChange}>
+                     {plans.map((p:any) => <option key={p.id} value={p.id}>{p.name} (₹{p.price})</option>)}
+                  </select>
+               </div>
+
+               {/* Start Date */}
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Start Date</label>
+                  <input required type="date" value={formData.startDate} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, startDate: e.target.value})} />
+               </div>
+
+               {/* Delivery Boy Selection */}
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Delivery Boy</label>
+                  <select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" value={formData.deliveryBoyId} onChange={e => setFormData({...formData, deliveryBoyId: e.target.value})}>
+                     <option value="">-- Assign Delivery Boy --</option>
+                     {staff.map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+               </div>
+
+               {/* Payment Calculation Block */}
+               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <div className="flex justify-between items-center mb-3">
+                     <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Calculator size={14}/> Payment</span>
+                     <span className={`text-xs font-bold px-2 py-1 rounded ${formData.paymentStatus === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {formData.paymentStatus}
+                     </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                     <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">Paid (₹)</label>
+                        <input 
+                           type="number" min="0"
+                           className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 font-bold text-green-600 focus:ring-1 focus:ring-green-500 outline-none" 
+                           value={formData.amountPaid} 
+                           onChange={handlePaidChange}
+                        />
+                     </div>
+                     <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">Pending (₹)</label>
+                        <input 
+                           type="number" min="0"
+                           className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 font-bold text-red-600 focus:ring-1 focus:ring-red-500 outline-none" 
+                           value={formData.pendingAmount} 
+                           onChange={handlePendingChange}
+                        />
+                     </div>
+                  </div>
+                  <div className="mt-2 text-right text-xs text-slate-400">
+                     Plan Total: <b>₹{formData.planPrice}</b>
+                  </div>
+               </div>
+
+               <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 font-bold">Cancel</button>
+                  <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold transition-colors shadow-lg shadow-blue-500/30">Confirm Renewal</button>
+               </div>
             </form>
          </div>
       </div>
@@ -731,173 +865,109 @@ const RenewCustomerModal = ({ customer, plans, onClose, onSubmit }: any) => {
 }
 
 const PauseBranchModal = ({ branches, customers, onClose, onSubmit }: any) => {
-   const [selectedBranch, setSelectedBranch] = useState(branches[0]?.id || '');
-   const [pauseStart, setPauseStart] = useState('');
-   const [pauseEnd, setPauseEnd] = useState('');
+   const [formData, setFormData] = useState({
+      branchId: branches[0]?.id || '',
+      pauseStart: '',
+      pauseEnd: ''
+   });
 
-   // Calculate stats
-   const affectedCustomers = useMemo(() => {
-      return customers.filter((c:any) => c.branchId === selectedBranch && c.isActive && c.daysLeft > 0).length;
-   }, [customers, selectedBranch]);
-
-   const pauseDuration = useMemo(() => {
-      if(!pauseStart || !pauseEnd) return 0;
-      return getDaysDifference(pauseStart, pauseEnd) + 1; // inclusive
-   }, [pauseStart, pauseEnd]);
+   const handleSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!formData.branchId || !formData.pauseStart || !formData.pauseEnd) return;
+      onSubmit(formData.branchId, formData.pauseStart, formData.pauseEnd);
+   };
 
    return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-         <div className="bg-white w-full max-w-sm rounded-2xl p-6">
-            <h3 className="font-bold text-lg mb-2 text-slate-900 flex items-center gap-2">
-               <Store className="text-slate-600"/> Pause Branch (Holiday)
-            </h3>
-            <p className="text-sm text-slate-500 mb-4">Extend all active subscriptions in a branch by the number of delivery days missed.</p>
-            <div className="space-y-4">
+         <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl">
+            <h3 className="font-bold text-lg mb-4 text-slate-900">Pause Branch Operations</h3>
+            <p className="text-sm text-slate-500 mb-4">
+               This will automatically extend the subscription end dates for all active customers in this branch by the number of delivery days missed.
+            </p>
+            <form onSubmit={handleSubmit} className="space-y-4">
                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Select Branch</label>
-                  <select className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1" value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select Branch</label>
+                  <select 
+                     className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900"
+                     value={formData.branchId}
+                     onChange={e => setFormData({...formData, branchId: e.target.value})}
+                  >
                      {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                </div>
-               
                <div className="grid grid-cols-2 gap-4">
                   <div>
-                     <label className="text-xs font-bold text-slate-500 uppercase">Pause From</label>
-                     <input type="date" value={pauseStart} onChange={e => setPauseStart(e.target.value)} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1" />
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Pause From</label>
+                     <input required type="date" className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, pauseStart: e.target.value})} />
                   </div>
                   <div>
-                     <label className="text-xs font-bold text-slate-500 uppercase">Pause To</label>
-                     <input type="date" value={pauseEnd} onChange={e => setPauseEnd(e.target.value)} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1" />
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Resume On</label>
+                     <input required type="date" className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, pauseEnd: e.target.value})} />
                   </div>
                </div>
-
-               {pauseDuration > 0 && (
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex justify-between items-center text-sm">
-                     <span className="text-slate-500">Duration: <b>{pauseDuration} Days</b></span>
-                     <span className="text-slate-500">Affected: <b className="text-orange-600">{affectedCustomers}</b></span>
-                  </div>
-               )}
-
-               <div className="flex gap-2">
-                  <button onClick={onClose} className="flex-1 py-2 border rounded text-slate-600">Cancel</button>
-                  <button 
-                     disabled={!pauseStart || !pauseEnd || new Date(pauseStart) > new Date(pauseEnd)}
-                     onClick={() => onSubmit(selectedBranch, pauseStart, pauseEnd)} 
-                     className="flex-1 py-2 bg-slate-800 text-white rounded font-bold hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                     Confirm Pause
-                  </button>
+               <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 font-bold">Cancel</button>
+                  <button type="submit" className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-lg font-bold">Confirm Pause</button>
                </div>
-            </div>
+            </form>
          </div>
       </div>
-   )
-}
+   );
+};
 
 const PauseCustomerModal = ({ customers, plans, branches, onClose, onSubmit }: any) => {
-   const [selectedBranchId, setSelectedBranchId] = useState(branches[0]?.id || '');
-   const [selectedId, setSelectedId] = useState('');
-   const [pauseStart, setPauseStart] = useState('');
-   const [pauseEnd, setPauseEnd] = useState('');
+   const [formData, setFormData] = useState({
+      customerId: '',
+      pauseStart: '',
+      pauseEnd: ''
+   });
 
-   // Filter customers by selected branch first
-   const filtered = useMemo(() => {
-      return customers.filter((c:any) => c.branchId === selectedBranchId && c.isActive && c.daysLeft > 0);
-   }, [customers, selectedBranchId]);
+   // Filter only active customers
+   const activeCustomers = useMemo(() => customers.filter((c:any) => c.isActive), [customers]);
 
-   const customer = customers.find((c:any) => c.id === selectedId);
-   const plan = customer ? plans.find((p:any) => p.id === customer.planId) : null;
-
-   // Auto-calculate stats
-   const stats = useMemo(() => {
-      if(!customer || !plan || !pauseStart || !pauseEnd) return null;
-      
-      const weekdays = plan.weekdays || [0,1,2,3,4,5,6];
-      const missedDeliveries = countDeliveryDays(pauseStart, pauseEnd, weekdays);
-      const newEndDate = calculateEndDate(customer.endDate, missedDeliveries, weekdays);
-      const duration = getDaysDifference(pauseStart, pauseEnd) + 1;
-
-      return { missedDeliveries, newEndDate, duration };
-   }, [customer, plan, pauseStart, pauseEnd]);
+   const handleSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!formData.customerId) return;
+      onSubmit(formData.customerId, formData.pauseStart, formData.pauseEnd);
+   };
 
    return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-         <div className="bg-white w-full max-w-sm rounded-2xl p-6">
-            <h3 className="font-bold text-lg mb-2 text-slate-900 flex items-center gap-2">
-               <PauseCircle className="text-orange-500"/> Pause Customer
-            </h3>
-            
-            <div className="space-y-4">
+         <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl">
+            <h3 className="font-bold text-lg mb-4 text-slate-900">Pause Subscription</h3>
+            <form onSubmit={handleSubmit} className="space-y-4">
                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">1. Select Branch</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select Customer</label>
                   <select 
-                     className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1" 
-                     value={selectedBranchId} 
-                     onChange={e => { setSelectedBranchId(e.target.value); setSelectedId(''); }}
-                  >
-                     {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-               </div>
-
-               <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">2. Select Customer</label>
-                  <select 
-                     className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1"
-                     value={selectedId}
-                     onChange={e => setSelectedId(e.target.value)}
+                     required
+                     className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900"
+                     value={formData.customerId}
+                     onChange={e => setFormData({...formData, customerId: e.target.value})}
                   >
                      <option value="">-- Choose Customer --</option>
-                     {filtered.map((c:any) => (
-                        <option key={c.id} value={c.id}>{c.name} ({c.daysLeft} left)</option>
+                     {activeCustomers.map((c:any) => (
+                        <option key={c.id} value={c.id}>{c.name} ({c.mobile})</option>
                      ))}
                   </select>
-                  {filtered.length === 0 && <div className="text-xs text-slate-400 mt-1">No active customers in this branch.</div>}
                </div>
-
                <div className="grid grid-cols-2 gap-4">
                   <div>
-                     <label className="text-xs font-bold text-slate-500 uppercase">Pause From</label>
-                     <input type="date" value={pauseStart} onChange={e => setPauseStart(e.target.value)} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1" />
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Pause From</label>
+                     <input required type="date" className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, pauseStart: e.target.value})} />
                   </div>
                   <div>
-                     <label className="text-xs font-bold text-slate-500 uppercase">Pause To</label>
-                     <input type="date" value={pauseEnd} onChange={e => setPauseEnd(e.target.value)} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 mt-1" />
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Resume On</label>
+                     <input required type="date" className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, pauseEnd: e.target.value})} />
                   </div>
                </div>
-
-               {stats && (
-                  <div className="bg-orange-50 p-3 rounded-lg border border-orange-100 space-y-2">
-                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-600">Total Pause Duration:</span>
-                        <span className="font-bold text-slate-900">{stats.duration} Days</span>
-                     </div>
-                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-600">Missed Deliveries:</span>
-                        <span className="font-bold text-slate-900">{stats.missedDeliveries}</span>
-                     </div>
-                     <div className="pt-2 border-t border-orange-200 flex justify-between items-center">
-                        <span className="text-xs font-bold uppercase text-orange-700">New End Date</span>
-                        <span className="text-sm font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded flex items-center gap-1">
-                           {stats.newEndDate} <ArrowRight size={12}/>
-                        </span>
-                     </div>
-                  </div>
-               )}
-
-               <div className="flex gap-2 pt-2">
-                  <button onClick={onClose} className="flex-1 py-2 border rounded text-slate-600">Cancel</button>
-                  <button 
-                     disabled={!selectedId || !stats} 
-                     onClick={() => onSubmit(selectedId, pauseStart, pauseEnd)} 
-                     className="flex-1 py-2 bg-orange-500 text-white rounded font-bold hover:bg-orange-600 disabled:opacity-50"
-                  >
-                     Confirm Pause
-                  </button>
+               <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 font-bold">Cancel</button>
+                  <button type="submit" className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-2.5 rounded-lg font-bold">Confirm Pause</button>
                </div>
-            </div>
+            </form>
          </div>
       </div>
-   )
-}
+   );
+};
 
 export default Customers;

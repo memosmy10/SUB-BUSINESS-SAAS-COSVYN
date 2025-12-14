@@ -118,13 +118,16 @@ const Dashboard = () => {
   const kpis = useMemo(() => {
     if (isLoading) return { revenue: 0, pending: 0, expenses: 0, activeUsers: 0, deliveriesToday: 0, renewalRate: 0 };
 
-    const revenue = filteredCustomers.reduce((acc: number, c: any) => acc + (c.planPrice || 0), 0);
+    // REVENUE CALCULATION: Total Collected (Lifetime) + Current Pending
+    // This ensures renewals (which add to payments and update pending) correctly increase Total Revenue.
+    const totalCollected = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+    const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
+    const revenue = totalCollected + totalPending;
+
     const expensesTotal = filteredExpenses.reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
     
     const activeCusts = filteredCustomers.filter((c: any) => c.isActive && c.daysLeft > 0);
     const activeUsers = activeCusts.length;
-
-    const pending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
 
     const todayDayId = new Date().getDay();
     const deliveriesToday = activeCusts.filter((c: any) => {
@@ -136,8 +139,8 @@ const Dashboard = () => {
     const totalUnique = filteredCustomers.length;
     const renewalRate = totalUnique > 0 ? Math.round((totalRenewals / (totalUnique + totalRenewals)) * 100) : 0;
 
-    return { revenue, pending, expenses: expensesTotal, activeUsers, deliveriesToday, renewalRate };
-  }, [filteredCustomers, filteredExpenses, plans, isLoading]);
+    return { revenue, pending: totalPending, expenses: expensesTotal, activeUsers, deliveriesToday, renewalRate };
+  }, [filteredCustomers, filteredExpenses, filteredPayments, plans, isLoading]);
 
   // --- DAILY & TOMORROW KITCHEN PREP METRICS ---
   const kitchenMetrics = useMemo(() => {

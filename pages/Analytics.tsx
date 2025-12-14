@@ -168,11 +168,17 @@ const Analytics = () => {
     if (activeCustomers > 0 && renewalRate < 30) {
       insights.push("Renewal rate is below 30%. Consider offering a loyalty discount to expiring customers.");
     }
-    const topExpense = expenseBreakdownData.sort((a,b) => b.value - a.value)[0];
+    
+    // FIX: Clone array using spread syntax before sorting to avoid mutating read-only array
+    const topExpense = [...expenseBreakdownData].sort((a,b) => b.value - a.value)[0];
+    
     if (topExpense && topExpense.value > totalExpenses * 0.4) {
       insights.push(`'${topExpense.name}' accounts for over 40% of expenses. Look for alternative suppliers or cost-saving measures.`);
     }
-    const topPlan = planPerformance.sort((a,b) => b.value - a.value)[0];
+    
+    // FIX: Clone array using spread syntax before sorting
+    const topPlan = [...planPerformance].sort((a,b) => b.value - a.value)[0];
+    
     if (topPlan && topPlan.value > totalRevenue * 0.5) {
       insights.push(`'${topPlan.name}' drives >50% of revenue. Ensure delivery quality for this plan is top-notch.`);
     }
@@ -314,7 +320,8 @@ const Analytics = () => {
                 </ResponsiveContainer>
               </div>
               <div className="w-full md:w-1/2 space-y-3">
-                 {expenseBreakdownData.sort((a,b) => b.value - a.value).map((entry, idx) => (
+                 {/* FIX: Clone before sort to avoid mutation */}
+                 {[...expenseBreakdownData].sort((a,b) => b.value - a.value).map((entry, idx) => (
                    <div key={idx} className="flex justify-between items-center text-sm">
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />

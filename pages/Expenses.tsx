@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { Plus, Receipt, Loader2, X, Trash2, ShoppingBag, Edit2, Store } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem } from '../services/dbService';
+import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
 import { GlobalExpense, ExpenseItem, INDIA_STATES } from '../services/store';
 
 const EXPENSE_CATEGORIES = ['Food', 'Salaries', 'Packaging', 'Rent', 'Marketing', 'Transportation', 'Others'];
@@ -24,7 +24,7 @@ const Expenses = () => {
 
   const [selectedBranch, setSelectedBranch] = useState('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<GlobalExpense | null>(null);
 
   // Derived Data
   const filteredExpenses = useMemo(() => {
@@ -57,26 +57,31 @@ const Expenses = () => {
     return data;
   }, [filteredExpenses]);
 
-  const handleAddExpense = async (data: any) => {
+  const handleAddOrEditExpense = async (data: any) => {
     if(!currentUser) return;
-    await addItem(currentUser.uid, 'expenses', data);
-    setIsModalOpen(false);
-  };
-
-  const handleBranchSubmit = async (data: any) => {
-    if(!currentUser) return;
-    if (selectedBranch !== 'All') {
-        // Edit existing
-        await updateItem(currentUser.uid, 'branches', selectedBranch, data);
+    if (editingExpense) {
+        await updateItem(currentUser.uid, 'expenses', editingExpense.id, data);
     } else {
-        // Add new
-        const id = await addItem(currentUser.uid, 'branches', data);
-        setSelectedBranch(id); // Auto-select new branch
+        await addItem(currentUser.uid, 'expenses', data);
     }
-    setIsBranchModalOpen(false);
+    setIsModalOpen(false);
+    setEditingExpense(null);
   };
 
-  const currentBranchData = branches.find(b => b.id === selectedBranch);
+  const handleDeleteExpense = async (id: string) => {
+    if(!currentUser || !window.confirm("Delete this expense record?")) return;
+    await deleteItem(currentUser.uid, 'expenses', id);
+  };
+
+  const openAddModal = () => {
+     setEditingExpense(null);
+     setIsModalOpen(true);
+  };
+
+  const openEditModal = (expense: GlobalExpense) => {
+     setEditingExpense(expense);
+     setIsModalOpen(true);
+  };
 
   if (l1 || l2) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
@@ -86,26 +91,19 @@ const Expenses = () => {
          <h1 className="text-2xl font-bold text-slate-900">Expenses</h1>
          
          <div className="flex gap-3 w-full sm:w-auto">
-            {/* Branch Selector with Edit/Add Button */}
+            {/* Branch Selector - Removed Add Branch Button */}
             <div className="flex rounded-lg border border-slate-300 bg-white overflow-hidden shadow-sm flex-1 sm:flex-none">
                 <select 
-                    className="p-2 bg-transparent text-slate-900 outline-none w-full sm:w-40 text-sm font-medium" 
+                    className="p-2 bg-transparent text-slate-900 outline-none w-full sm:w-48 text-sm font-medium" 
                     value={selectedBranch} 
                     onChange={e => setSelectedBranch(e.target.value)}
                 >
                    <option value="All">All Branches</option>
                    {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
-                <button 
-                    onClick={() => setIsBranchModalOpen(true)}
-                    className="px-3 border-l border-slate-200 text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors flex items-center justify-center bg-slate-50"
-                    title={selectedBranch === 'All' ? "Add New Branch" : "Edit This Branch"}
-                >
-                    {selectedBranch === 'All' ? <Plus size={16}/> : <Edit2 size={16}/>}
-                </button>
             </div>
 
-            <button onClick={() => setIsModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors shadow-sm flex items-center gap-2 font-bold text-sm whitespace-nowrap">
+            <button onClick={openAddModal} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors shadow-sm flex items-center gap-2 font-bold text-sm whitespace-nowrap">
                <Plus size={18}/> <span className="hidden sm:inline">Add Expense</span>
                <span className="sm:hidden">Add</span>
             </button>
@@ -131,7 +129,7 @@ const Expenses = () => {
             <h3 className="font-bold mb-4 text-slate-900">Recent Transactions</h3>
             {filteredExpenses.slice(0, 20).map((e: any, i) => (
                <div key={i} className="flex justify-between py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50 px-2 -mx-2 rounded transition-colors group">
-                  <div>
+                  <div className="flex-1">
                      <div className="font-bold text-slate-900 text-sm">{e.title || e.category}</div>
                      <div className="text-xs text-slate-500 flex items-center gap-2">
                         <span>{e.date}</span>
@@ -142,11 +140,17 @@ const Expenses = () => {
                         )}
                      </div>
                   </div>
-                  <div className="text-right">
-                     <div className="font-bold text-slate-900">₹{e.amount}</div>
-                     <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${e.paymentStatus === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {e.paymentStatus}
-                     </span>
+                  <div className="text-right flex items-center gap-3">
+                     <div>
+                        <div className="font-bold text-slate-900">₹{e.amount}</div>
+                        <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${e.paymentStatus === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                           {e.paymentStatus}
+                        </span>
+                     </div>
+                     <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => openEditModal(e)} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Edit2 size={14} /></button>
+                        <button onClick={() => handleDeleteExpense(e.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={14} /></button>
+                     </div>
                   </div>
                </div>
             ))}
@@ -174,14 +178,13 @@ const Expenses = () => {
           </div>
       </div>
 
-      {isModalOpen && <AddExpenseModal branches={branches} onClose={() => setIsModalOpen(false)} onSubmit={handleAddExpense} />}
-      
-      {isBranchModalOpen && (
-        <BranchModal 
-            initialData={selectedBranch !== 'All' ? currentBranchData : undefined}
-            onClose={() => setIsBranchModalOpen(false)}
-            onSubmit={handleBranchSubmit}
-        />
+      {isModalOpen && (
+         <AddExpenseModal 
+            branches={branches} 
+            initialData={editingExpense} 
+            onClose={() => setIsModalOpen(false)} 
+            onSubmit={handleAddOrEditExpense} 
+         />
       )}
     </div>
   );
@@ -189,90 +192,21 @@ const Expenses = () => {
 
 // --- MODALS ---
 
-const BranchModal = ({ initialData, onClose, onSubmit }: any) => {
-    const [formData, setFormData] = useState({ 
-      name: initialData?.name || '', 
-      city: initialData?.city || '',
-      state: initialData?.state || '' 
-    });
-    
-    const handleSubmit = (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!formData.name || !formData.city || !formData.state) return;
-      onSubmit(formData);
-    };
-    
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-          <div className="flex justify-between mb-4 items-center">
-            <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
-                <Store size={20} className="text-blue-600"/>
-                {initialData ? 'Edit Branch' : 'Add Branch'}
-            </h3>
-            <button onClick={onClose}><X size={20} className="text-slate-500 hover:text-slate-700"/></button>
-          </div>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Branch Name</label>
-              <input 
-                required autoFocus
-                placeholder="e.g. Main Kitchen" 
-                className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" 
-                value={formData.name}
-                onChange={e => setFormData({...formData, name: e.target.value})} 
-              />
-            </div>
-            
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">City Name</label>
-              <input 
-                required 
-                placeholder="e.g. Mumbai" 
-                className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" 
-                value={formData.city}
-                onChange={e => setFormData({...formData, city: e.target.value})} 
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">State</label>
-              <select 
-                required
-                className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-primary-500 outline-none"
-                value={formData.state}
-                onChange={e => setFormData({...formData, state: e.target.value})}
-              >
-                <option value="">Select State</option>
-                {INDIA_STATES.map((state) => (
-                  <option key={state} value={state}>{state}</option>
-                ))}
-              </select>
-            </div>
-            
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold transition-colors shadow-lg shadow-blue-500/20">
-              {initialData ? 'Save Changes' : 'Create Branch'}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-};
-
-const AddExpenseModal = ({ branches, onClose, onSubmit }: any) => {
+const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState({
       branchId: branches[0]?.id || '', 
       date: new Date().toISOString().split('T')[0], 
       category: 'Food', 
-      amount: '', 
       title: '', 
       description: '',
       paymentStatus: 'Paid',
-      paymentMethod: 'UPI'
+      paymentMethod: 'UPI',
+      ...initialData,
+      amount: initialData ? String(initialData.amount) : '', // Handle number to string
    });
 
    // Line Items State
-   const [items, setItems] = useState<ExpenseItem[]>([]);
+   const [items, setItems] = useState<ExpenseItem[]>(initialData?.items || []);
    const [newItem, setNewItem] = useState({ name: '', quantity: '', unit: 'kg', price: '' });
 
    // Update total amount when items change
@@ -318,7 +252,7 @@ const AddExpenseModal = ({ branches, onClose, onSubmit }: any) => {
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
          <div className="bg-white w-full max-w-2xl rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-               <h3 className="font-bold text-xl text-slate-900">Add New Expense</h3>
+               <h3 className="font-bold text-xl text-slate-900">{initialData ? 'Edit Expense' : 'Add New Expense'}</h3>
                <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X size={20}/></button>
             </div>
             
@@ -462,7 +396,7 @@ const AddExpenseModal = ({ branches, onClose, onSubmit }: any) => {
                </div>
 
                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl font-bold transition-all shadow-lg hover:shadow-blue-500/25 mt-4">
-                  Save Expense
+                  {initialData ? 'Save Changes' : 'Save Expense'}
                </button>
             </form>
          </div>

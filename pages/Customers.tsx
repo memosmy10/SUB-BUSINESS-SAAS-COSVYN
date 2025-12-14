@@ -65,11 +65,14 @@ const Customers = () => {
        // Add Mode
        const newId = await addItem(currentUser.uid, 'customers', data);
        if (data.amountPaid > 0) {
+         // Use the selected Start Date for revenue tracking, adding time to ensure it hits the correct day in most timezones
+         const revenueDate = new Date(data.startDate + 'T12:00:00').toISOString();
+         
          await addItem(currentUser.uid, 'payments', {
             amount: data.amountPaid,
             customerId: newId,
             customerName: data.name,
-            date: new Date().toISOString(),
+            date: revenueDate,
             type: 'Income'
          });
        }
@@ -101,11 +104,14 @@ const Customers = () => {
     });
 
     if (data.amountPaid > 0) {
+      // Use the renewal Start Date for revenue tracking
+      const revenueDate = new Date(data.startDate + 'T12:00:00').toISOString();
+
       await addItem(currentUser.uid, 'payments', {
          amount: data.amountPaid,
          customerId: customerId,
          customerName: cust.name,
-         date: new Date().toISOString(),
+         date: revenueDate,
          type: 'Income'
       });
     }
@@ -171,7 +177,7 @@ const Customers = () => {
      setActiveCustomer(null);
   };
 
-  // Filter Logic
+  // Filter Logic & Sorting
   const filteredCustomers = useMemo(() => {
      return customers.filter(c => {
         const branchName = branches.find((b:any) => b.id === c.branchId)?.name || '';
@@ -185,6 +191,11 @@ const Customers = () => {
            (filters.branch === '' || c.branchId === filters.branch) &&
            planName.toLowerCase().includes(filters.plan.toLowerCase())
         );
+     }).sort((a, b) => {
+        // Sort by Start Date Descending (Newest First)
+        const dateA = new Date(a.startDate).getTime();
+        const dateB = new Date(b.startDate).getTime();
+        return dateB - dateA;
      });
   }, [customers, filters, branches, plans]);
 
@@ -257,7 +268,7 @@ const Customers = () => {
       {/* Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[1100px]">
+            <table className="w-full text-left border-collapse min-w-[1200px]">
                <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
                   {/* Column Headers */}
                   <tr>
@@ -269,6 +280,7 @@ const Customers = () => {
                      <th className="p-3 border-b border-slate-200">Area</th>
                      <th className="p-3 border-b border-slate-200">Payment</th>
                      <th className="p-3 border-b border-slate-200 text-center">Deliveries Left</th>
+                     <th className="p-3 border-b border-slate-200">Start Date</th>
                      <th className="p-3 border-b border-slate-200">End Date</th>
                      <th className="p-3 border-b border-slate-200">Branch</th>
                      <th className="p-3 border-b border-slate-200 text-right min-w-[140px]">Actions</th>
@@ -294,6 +306,7 @@ const Customers = () => {
                            <option value="">All</option><option value="Paid">Paid</option><option value="Pending">Pending</option>
                         </select>
                      </th>
+                     <th className="p-2 border-b border-slate-200"></th>
                      <th className="p-2 border-b border-slate-200"></th>
                      <th className="p-2 border-b border-slate-200"></th>
                      <th className="p-2 border-b border-slate-200">
@@ -344,6 +357,7 @@ const Customers = () => {
                                  {isExpired ? 'Exp' : daysLeft}
                               </span>
                            </td>
+                           <td className="p-3 text-slate-500 text-xs">{c.startDate}</td>
                            <td className="p-3 text-slate-500 text-xs">{c.endDate}</td>
                            <td className="p-3 text-slate-600">{branch?.name || '-'}</td>
                            <td className="p-3 text-right">
@@ -362,7 +376,7 @@ const Customers = () => {
                         </tr>
                      )
                   })}
-                  {filteredCustomers.length === 0 && <tr><td colSpan={11} className="p-8 text-center text-slate-400">No customers found matching filters.</td></tr>}
+                  {filteredCustomers.length === 0 && <tr><td colSpan={12} className="p-8 text-center text-slate-400">No customers found matching filters.</td></tr>}
                </tbody>
             </table>
          </div>

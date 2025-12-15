@@ -5,7 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend 
 } from 'recharts';
 import { 
-  DollarSign, Activity, Users, TrendingUp, Loader2, Repeat, UserPlus, Calendar
+  DollarSign, Activity, Users, TrendingUp, Loader2, Repeat, UserPlus, Calendar, CreditCard
 } from 'lucide-react';
 import { useAdminTenants, useAdminBillingHistory } from '../../services/dbService';
 
@@ -18,70 +18,73 @@ const AdminDashboard = () => {
 
   const loading = l1 || l2;
 
-  const metrics = useMemo(() => {
-    let active = 0;
-    let mrr = 0;
-    let totalRevenue = 0; 
-    let monthlyCount = 0;
-    let sixMonthCount = 0;
-    let yearlyCount = 0;
-    let monthlyRev = 0;
-    let sixMonthRev = 0;
-    let yearlyRev = 0;
+  // Helper to estimate price from plan name if not stored directly
+  const getPlanPrice = (planName: string) => {
+     const name = (planName || '').toLowerCase();
+     if (name.includes('monthly')) return 999;
+     if (name.includes('6 months')) return 5099;
+     if (name.includes('yearly')) return 9599;
+     return 0;
+  };
 
-    // Snapshot metrics from Tenants state
+  const metrics = useMemo(() => {
+    let activeCount = 0;
+    let activeRevenueSum = 0; // "Total Revenue" as per request (Sum of prices of active subs)
+    let mrr = 0;
+    
+    // Plan Distribution for Active Revenue
+    const planDist = {
+       'Monthly': 0,
+       '6 Months': 0,
+       'Yearly': 0
+    };
+
+    // 1. Process Active Tenants
     tenants.forEach(t => {
       if (t.planStatus === 'Active') {
-        active++;
-        let price = 0;
-        let months = 1;
-        
-        if (t.planName?.includes('Monthly')) { 
-            price = 999; 
-            months = 1; 
-            monthlyCount++;
-            monthlyRev += price;
-        } else if (t.planName?.includes('6 Months')) { 
-            price = 5099; 
-            months = 6; 
-            sixMonthCount++;
-            sixMonthRev += price;
-        } else if (t.planName?.includes('Yearly')) { 
-            price = 9599; 
-            months = 12; 
-            yearlyCount++;
-            yearlyRev += price;
-        }
+        activeCount++;
+        const price = getPlanPrice(t.planName);
         
         if (price > 0) {
-            mrr += price / months;
+           activeRevenueSum += price; // Sum of prices
+           
+           // MRR Calculation
+           if (t.planName.toLowerCase().includes('monthly')) {
+              mrr += price;
+              planDist['Monthly'] += price;
+           } else if (t.planName.toLowerCase().includes('6 months')) {
+              mrr += price / 6;
+              planDist['6 Months'] += price;
+           } else if (t.planName.toLowerCase().includes('yearly')) {
+              mrr += price / 12;
+              planDist['Yearly'] += price;
+           }
         }
       }
     });
 
-    // Total Historical Revenue from Billing History
-    totalRevenue = history.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-
-    const arr = mrr * 12;
+    // 2. Process Historical Collections
+    const totalLifetimeCollected = history.reduce((acc, curr) => acc + (curr.amount || 0), 0);
     const signups = tenants.length;
-    const churn = signups > 0 ? ((signups - active) / signups) * 100 : 0;
+    const churn = signups > 0 ? ((signups - activeCount) / signups) * 100 : 0;
 
     return { 
-        revenue: totalRevenue, 
-        active, 
+        activeRevenue: activeRevenueSum, // The requested "Total Revenue"
+        lifetimeRevenue: totalLifetimeCollected,
+        active: activeCount, 
         mrr, 
-        arr, 
+        arr: mrr * 12, 
         churn: churn.toFixed(1), 
         signups,
         planDistribution: [
-           { name: 'Monthly', value: monthlyRev, count: monthlyCount },
-           { name: '6 Months', value: sixMonthRev, count: sixMonthCount },
-           { name: 'Yearly', value: yearlyRev, count: yearlyCount },
-        ]
+           { name: 'Monthly', value: planDist['Monthly'] },
+           { name: '6 Months', value: planDist['6 Months'] },
+           { name: 'Yearly', value: planDist['Yearly'] },
+        ].filter(i => i.value > 0)
     };
   }, [tenants, history]);
 
-  // Real Trend Data derived from Billing History
+  // Real Trend Data derived from Billing History (Actual Payments)
   const trendData = useMemo(() => {
      if (history.length === 0) return [];
 
@@ -125,31 +128,31 @@ const AdminDashboard = () => {
       {/* 1. KEY METRICS */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
          <Widget 
-            title="Total Revenue" 
-            value={`₹${metrics.revenue.toLocaleString()}`} 
+            title="Active Revenue" 
+            value={`₹${metrics.activeRevenue.toLocaleString()}`} 
             icon={DollarSign} 
             colorClass="bg-emerald-500 text-emerald-400" 
-            subtext="Lifetime SaaS Income"
+            subtext="Sum of active plans"
+         />
+         <Widget 
+            title="Lifetime Revenue" 
+            value={`₹${metrics.lifetimeRevenue.toLocaleString()}`} 
+            icon={CreditCard} 
+            colorClass="bg-blue-500 text-blue-400" 
+            subtext="Total Collected"
          />
          <Widget 
             title="Active Business" 
             value={metrics.active} 
             icon={Activity} 
-            colorClass="bg-blue-500 text-blue-400" 
+            colorClass="bg-violet-500 text-violet-400" 
          />
          <Widget 
             title="MRR (Est)" 
             value={`₹${Math.round(metrics.mrr).toLocaleString()}`} 
             icon={Repeat} 
-            colorClass="bg-violet-500 text-violet-400" 
-            subtext="Monthly Recurring"
-         />
-         <Widget 
-            title="ARR (Est)" 
-            value={`₹${Math.round(metrics.arr).toLocaleString()}`} 
-            icon={TrendingUp} 
             colorClass="bg-cyan-500 text-cyan-400" 
-            subtext="Annual Run Rate"
+            subtext="Monthly Recurring"
          />
          <Widget 
             title="Churn Rate" 
@@ -170,7 +173,7 @@ const AdminDashboard = () => {
       <div className="bg-slate-900/70 p-6 rounded-2xl border border-slate-800 backdrop-blur-sm">
          <div className="flex justify-between items-center mb-6">
             <h3 className="text-white font-bold flex items-center gap-2">
-               <TrendingUp size={20} className="text-cyan-400" /> Revenue Trend
+               <TrendingUp size={20} className="text-cyan-400" /> Revenue Trend (Collections)
             </h3>
             <select 
                className="bg-slate-950 border border-slate-800 text-slate-400 text-xs rounded-lg px-2 py-1 outline-none"
@@ -213,9 +216,9 @@ const AdminDashboard = () => {
          
          {/* Pie Chart */}
          <div className="bg-slate-900/70 p-6 rounded-2xl border border-slate-800 backdrop-blur-sm flex flex-col">
-            <h3 className="text-white font-bold mb-6">Revenue Distribution by Plan</h3>
+            <h3 className="text-white font-bold mb-6">Revenue Breakdown (Active Plans)</h3>
             <div className="flex-1 min-h-[300px] flex items-center justify-center">
-               {metrics.revenue > 0 ? (
+               {metrics.activeRevenue > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                      <PieChart>
                         <Pie 
@@ -240,7 +243,7 @@ const AdminDashboard = () => {
                      </PieChart>
                   </ResponsiveContainer>
                ) : (
-                  <p className="text-slate-500 text-sm italic">No revenue recorded yet.</p>
+                  <p className="text-slate-500 text-sm italic">No active revenue.</p>
                )}
             </div>
             {/* Stats below chart */}
@@ -249,7 +252,6 @@ const AdminDashboard = () => {
                   <div key={p.name} className="bg-slate-950/50 rounded-lg p-2 border border-slate-800">
                      <div className="text-xs text-slate-500 font-bold uppercase">{p.name}</div>
                      <div className="text-white font-bold text-sm">₹{p.value.toLocaleString()}</div>
-                     <div className="text-[10px] text-slate-400">{p.count} Active</div>
                   </div>
                ))}
             </div>
@@ -258,7 +260,7 @@ const AdminDashboard = () => {
          {/* 4. RECENT SUBSCRIPTIONS LIST */}
          <div className="bg-slate-900/70 p-0 rounded-2xl border border-slate-800 backdrop-blur-sm overflow-hidden flex flex-col">
             <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-               <h3 className="text-white font-bold">Latest Subscriptions</h3>
+               <h3 className="text-white font-bold">Latest Payments</h3>
             </div>
             <div className="flex-1 overflow-y-auto max-h-[400px]">
                {history.slice(0, 8).map((pay, idx) => {
@@ -274,7 +276,7 @@ const AdminDashboard = () => {
                                  {tenant?.businessName || 'Unknown Business'}
                               </h4>
                               <div className="text-xs text-slate-500 flex items-center gap-1">
-                                 <Calendar size={10} /> {pay.date ? pay.date.split('T')[0] : 'No Date'}
+                                 <Calendar size={10} /> {pay.date ? new Date(pay.date).toLocaleDateString() : 'No Date'}
                               </div>
                            </div>
                         </div>

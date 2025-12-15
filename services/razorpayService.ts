@@ -10,24 +10,14 @@ const loadRazorpayScript = () => {
   });
 };
 
-const getEnv = (key: string) => {
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      return process.env[key];
-    }
-  } catch (e) {
-    console.error(e);
-  }
-  return undefined;
-};
-
 interface PaymentProps {
   amount: number; // in Rupees
   planName: string;
   userEmail: string;
   userContact: string;
+  businessName?: string;
   onSuccess: (paymentId: string) => void;
-  onFailure: (error: any) => void;
+  onFailure?: (error: any) => void;
 }
 
 export const handleRazorpayPayment = async ({
@@ -35,45 +25,58 @@ export const handleRazorpayPayment = async ({
   planName,
   userEmail,
   userContact,
+  businessName,
   onSuccess,
   onFailure
 }: PaymentProps) => {
   const res = await loadRazorpayScript();
 
   if (!res) {
-    alert('Razorpay SDK failed to load. Are you online?');
+    alert('Razorpay SDK failed to load. Please check your internet connection.');
     return;
   }
 
-  // In a real backend app, you would fetch the 'order_id' from your backend here.
+  // REPLACE THIS WITH YOUR ACTUAL KEY ID
+  const RAZORPAY_KEY_ID = 'rzp_live_RmI0NXqEhYfbfl'; 
+
   const options = {
-    key: getEnv('REACT_APP_RAZORPAY_KEY_ID') || 'rzp_test_12345678',
-    amount: amount * 100, // Amount is in paise
+    key: RAZORPAY_KEY_ID, 
+    amount: Math.round(amount * 100), // Amount is in paise (e.g. 10000 paise = 100 INR)
     currency: "INR",
-    name: "COSVYN SaaS",
-    description: `Subscription for ${planName}`,
-    image: "https://via.placeholder.com/150", 
+    name: "ScaleKitchen", // Or your company name
+    description: `Subscription: ${planName}`,
+    image: "https://cdn-icons-png.flaticon.com/512/3135/3135715.png", // You can replace this with your logo URL
     handler: function (response: any) {
-      onSuccess(response.razorpay_payment_id);
+      // Success Callback
+      if (response.razorpay_payment_id) {
+        onSuccess(response.razorpay_payment_id);
+      } else {
+        if (onFailure) onFailure("Payment ID missing");
+      }
     },
     prefill: {
-      name: "Business Owner",
+      name: businessName || "Business Owner",
       email: userEmail,
       contact: userContact,
     },
     notes: {
-      address: "Cosvyn Corporate Office",
+      plan_name: planName,
     },
     theme: {
-      color: "#0d40e6", // Primary Color
+      color: "#0d40e6", // Primary Brand Color
     },
     modal: {
       ondismiss: function() {
-        if (onFailure) onFailure("Payment Cancelled by user");
+        if (onFailure) onFailure("Cancelled by user");
       }
     }
   };
 
-  const paymentObject = new (window as any).Razorpay(options);
-  paymentObject.open();
+  try {
+    const paymentObject = new (window as any).Razorpay(options);
+    paymentObject.open();
+  } catch (err) {
+    console.error("Razorpay Error:", err);
+    if (onFailure) onFailure(err);
+  }
 };

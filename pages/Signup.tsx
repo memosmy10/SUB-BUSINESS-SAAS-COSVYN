@@ -71,7 +71,8 @@ const Signup = () => {
         isProfileComplete: true,
         planName: 'None',
         planExpiryDate: new Date().toISOString().split('T')[0],
-        planStatus: 'Inactive' // Crucial: This forces the payment flow next
+        planStatus: 'Inactive', // Crucial: This forces the payment flow next
+        createdAt: new Date().toISOString()
       });
 
       // 3. Redirect to Onboarding (or Dashboard if pending sub exists)

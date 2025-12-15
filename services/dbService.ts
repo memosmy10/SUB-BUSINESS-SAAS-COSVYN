@@ -148,7 +148,7 @@ export const useAdminTenants = () => {
   return { tenants, loading };
 };
 
-// Fetch ALL payments across all businesses (Collection Group Query)
+// Fetch ALL payments across all businesses (Collection Group Query) -> GMV
 export const useAdminGlobalPayments = () => {
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -161,7 +161,6 @@ export const useAdminGlobalPayments = () => {
       const allPayments = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        // Capture parent ID (business ID) if needed, though simpler to just store it in doc
         path: doc.ref.path 
       }));
       setPayments(allPayments);
@@ -175,6 +174,38 @@ export const useAdminGlobalPayments = () => {
   }, []);
 
   return { payments, loading };
+};
+
+// Fetch ALL billing history (SaaS Income)
+export const useAdminBillingHistory = () => {
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Queries all collections named 'billing_history'
+    const q = query(collectionGroup(db, 'billing_history'), orderBy('date', 'desc'));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => {
+        // Extract tenantId from path: businesses/{tenantId}/billing_history/{docId}
+        const pathSegments = doc.ref.path.split('/');
+        return {
+          id: doc.id,
+          ...doc.data(),
+          tenantId: pathSegments[1]
+        };
+      });
+      setHistory(items);
+      setLoading(false);
+    }, (err) => {
+      console.error("Error fetching billing history:", err);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  return { history, loading };
 };
 
 // Generic hook for root collections (Features, Support, Reviews)

@@ -210,18 +210,22 @@ const Dashboard = () => {
     });
   }, [filteredPayments, filteredExpenses]);
 
-  // --- CHART DATA 2: Plan Wise Revenue (Pie) ---
+  // --- CHART DATA 2: Plan Wise Revenue (Pie) - UPDATED TO USE COLLECTIONS ---
   const planPieData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredCustomers.forEach((c: any) => {
-      if (c.isActive && c.planPrice) {
-        const plan = plans.find((p: any) => p.id === c.planId);
-        const name = plan ? plan.name : 'Unknown Plan';
-        map[name] = (map[name] || 0) + (c.planPrice);
-      }
+    
+    // Use filteredPayments to show actual realized revenue per plan
+    filteredPayments.forEach((p: any) => {
+       const customer = customers.find((c: any) => c.id === p.customerId);
+       if (customer) {
+          const plan = plans.find((pl: any) => pl.id === customer.planId);
+          const planName = plan ? plan.name : 'Unknown Plan';
+          map[planName] = (map[planName] || 0) + (p.amount || 0);
+       }
     });
+
     return Object.keys(map).map(k => ({ name: k, value: map[k] }));
-  }, [filteredCustomers, plans]);
+  }, [filteredPayments, customers, plans]);
 
   // Current Date Formatter
   const todayDateObj = new Date();
@@ -367,7 +371,7 @@ const Dashboard = () => {
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <p className="text-xs text-center text-slate-400 mt-2">Based on current active subscriptions</p>
+          <p className="text-xs text-center text-slate-400 mt-2">Based on total revenue collected</p>
         </div>
       </div>
     </div>

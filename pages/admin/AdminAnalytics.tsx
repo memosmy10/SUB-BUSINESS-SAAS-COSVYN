@@ -4,23 +4,37 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
 import { MapPin, Building2, Loader2 } from 'lucide-react';
-import { useAdminTenants } from '../../services/dbService';
+import { useAdminTenants, useAdminBillingHistory } from '../../services/dbService';
 
 const AdminAnalytics = () => {
-  const { tenants, loading } = useAdminTenants();
+  const { tenants, loading: l1 } = useAdminTenants();
+  const { history, loading: l2 } = useAdminBillingHistory();
+
+  const loading = l1 || l2;
 
   // --- Data Calculations ---
 
-  const monthlyRevenue = useMemo(() => {
-     // Mock distribution for demo visualization since we don't have historical snapshots stored yet
+  const monthlyGrowth = useMemo(() => {
      if (tenants.length === 0) return [];
-     return [
-       { name: 'Jan', Active: tenants.length * 0.2 },
-       { name: 'Feb', Active: tenants.length * 0.4 },
-       { name: 'Mar', Active: tenants.length * 0.6 },
-       { name: 'Apr', Active: tenants.length * 0.8 },
-       { name: 'May', Active: tenants.length }
-     ];
+     
+     // Group signups by month based on createdAt if available, else distribute
+     const growthMap: Record<string, number> = {};
+     
+     tenants.forEach(t => {
+        // Use createdAt if available, otherwise maybe use start date of plan, or fallback
+        const dateStr = t.createdAt || t.planExpiryDate || new Date().toISOString(); 
+        // If planExpiryDate is used as fallback, subtracting duration would be better, but simplified for now.
+        // Best reliance is on new 'createdAt' field.
+        
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return;
+        
+        const key = date.toLocaleString('default', { month: 'short' });
+        growthMap[key] = (growthMap[key] || 0) + 1;
+     });
+
+     const monthsOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+     return monthsOrder.map(m => ({ name: m, Signups: growthMap[m] || 0 })).filter(d => d.Signups > 0 || d.name === new Date().toLocaleString('default', { month: 'short' }));
   }, [tenants]);
 
   const planDistribution = useMemo(() => [
@@ -33,9 +47,27 @@ const AdminAnalytics = () => {
   const topCities = useMemo(() => {
     const cityMap: Record<string, number> = {};
     tenants.forEach(tenant => {
-        if(tenant.city) cityMap[tenant.city] = (cityMap[tenant.city] || 0) + 1;
+        if(tenant.city) {
+           const city = tenant.city.trim();
+           if(city) cityMap[city] = (cityMap[city] || 0) + 1;
+        }
     });
     return Object.entries(cityMap)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [tenants]);
+
+  // State Logic
+  const topStates = useMemo(() => {
+    const stateMap: Record<string, number> = {};
+    tenants.forEach(tenant => {
+        if(tenant.state) {
+           const state = tenant.state.trim();
+           if(state) stateMap[state] = (stateMap[state] || 0) + 1;
+        }
+    });
+    return Object.entries(stateMap)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
@@ -47,20 +79,36 @@ const AdminAnalytics = () => {
     <div className="space-y-6">
        <div className="flex justify-between items-center">
           <h1 className="text-2xl font-bold text-white">Platform Analytics</h1>
-          <div className="text-sm font-medium text-slate-400">Live Data</div>
+          <div className="text-sm font-medium text-slate-400">Real-time Data</div>
        </div>
 
        {/* GEO ANALYTICS SECTION */}
        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Revenue By State (Visual List simulating Map Data) */}
+          {/* Top States */}
           <div className="lg:col-span-2 bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
              <h3 className="text-white font-bold mb-6 flex items-center gap-2">
-                <MapPin className="text-cyan-500" size={20} /> Tenant Distribution
+                <MapPin className="text-cyan-500" size={20} /> Geographic Distribution (By State)
              </h3>
-             <div className="h-64 flex items-center justify-center text-slate-500 italic border border-dashed border-slate-800 rounded-xl">
-                Map Visualization Coming Soon (Needs GeoData)
-             </div>
+             {topStates.length > 0 ? (
+                <div className="space-y-4">
+                   {topStates.map((st, idx) => (
+                      <div key={idx} className="relative">
+                         <div className="flex justify-between mb-1 text-sm text-slate-300">
+                            <span>{st.name}</span>
+                            <span>{st.count} Users</span>
+                         </div>
+                         <div className="w-full bg-slate-800 rounded-full h-2">
+                            <div className="bg-cyan-500 h-2 rounded-full" style={{ width: `${(st.count / tenants.length) * 100}%` }}></div>
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             ) : (
+                <div className="h-64 flex items-center justify-center text-slate-500 italic border border-dashed border-slate-800 rounded-xl">
+                   No location data yet.
+                </div>
+             )}
           </div>
 
           {/* Top Cities */}
@@ -80,11 +128,11 @@ const AdminAnalytics = () => {
                          <span className="text-slate-200 font-bold">{city.name}</span>
                       </div>
                       <span className="text-sm font-medium bg-slate-800 text-slate-300 px-2 py-1 rounded-lg">
-                         {city.count} Owners
+                         {city.count}
                       </span>
                    </div>
                 ))}
-                {topCities.length === 0 && <div className="text-slate-500 text-center">No city data available.</div>}
+                {topCities.length === 0 && <div className="text-slate-500 text-center py-4">No city data available.</div>}
              </div>
           </div>
 
@@ -92,23 +140,27 @@ const AdminAnalytics = () => {
 
        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* Revenue Breakdown */}
+          {/* Signups Growth */}
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-             <h3 className="text-white font-bold mb-6">Growth Trend (Active Users)</h3>
+             <h3 className="text-white font-bold mb-6">User Growth (Signups)</h3>
              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                   <BarChart data={monthlyRevenue}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
-                      <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                        cursor={{fill: '#1e293b'}}
-                      />
-                      <Legend />
-                      <Bar dataKey="Active" fill="#3b82f6" />
-                   </BarChart>
-                </ResponsiveContainer>
+                {monthlyGrowth.length > 0 ? (
+                   <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={monthlyGrowth}>
+                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
+                         <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} allowDecimals={false} />
+                         <Tooltip 
+                           contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
+                           cursor={{fill: '#1e293b'}}
+                         />
+                         <Legend />
+                         <Bar dataKey="Signups" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                   </ResponsiveContainer>
+                ) : (
+                   <div className="flex items-center justify-center h-full text-slate-500">No signups recorded yet.</div>
+                )}
              </div>
           </div>
 
@@ -116,23 +168,27 @@ const AdminAnalytics = () => {
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
              <h3 className="text-white font-bold mb-6">Active Subscriptions by Plan</h3>
              <div className="h-72 relative">
-                <ResponsiveContainer width="100%" height="100%">
-                   <PieChart>
-                      <Pie 
-                        data={planDistribution} 
-                        innerRadius={60} 
-                        outerRadius={100} 
-                        paddingAngle={5} 
-                        dataKey="value"
-                      >
-                         {planDistribution.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                         ))}
-                      </Pie>
-                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }} />
-                      <Legend verticalAlign="bottom" height={36}/>
-                   </PieChart>
-                </ResponsiveContainer>
+                {planDistribution.length > 0 ? (
+                   <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                         <Pie 
+                           data={planDistribution} 
+                           innerRadius={60} 
+                           outerRadius={100} 
+                           paddingAngle={5} 
+                           dataKey="value"
+                         >
+                            {planDistribution.map((entry, index) => (
+                               <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                            ))}
+                         </Pie>
+                         <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }} />
+                         <Legend verticalAlign="bottom" height={36}/>
+                      </PieChart>
+                   </ResponsiveContainer>
+                ) : (
+                   <div className="flex items-center justify-center h-full text-slate-500">No active plans.</div>
+                )}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
                    <div className="text-3xl font-bold text-white">{tenants.length}</div>
                    <div className="text-xs text-slate-500 uppercase font-bold">Total</div>

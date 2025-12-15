@@ -6,58 +6,33 @@ import {
 import { 
   AreaChart, Area, XAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
-import { useAdminGlobalPayments, useAdminTenants } from '../../services/dbService';
+import { useAdminBillingHistory, useAdminTenants } from '../../services/dbService';
 
 const AdminPayments = () => {
   const [filterPlan, setFilterPlan] = useState('All');
   
   // FETCH REAL DATA
-  const { payments, loading: l1 } = useAdminGlobalPayments();
+  const { history, loading: l1 } = useAdminBillingHistory();
   const { tenants, loading: l2 } = useAdminTenants();
 
   const loading = l1 || l2;
 
   const paymentsWithDetails = useMemo(() => {
-    return payments.map(payment => {
-      // payment.path usually looks like businesses/{uid}/payments/{id}
-      // We can try to match by customerName in payment record if available, 
-      // or assume we need to join manually. 
-      // Since `payment` record in User app stores `customerName` (which is end-customer, not tenant),
-      // we need to find the Business Owner (Tenant) who received this payment.
-      // Wait, Admin Payments page usually tracks SaaS Subscription Payments (Business -> Admin).
-      // However, the current Schema in Onboarding only updates `lastPaymentId`.
-      // It doesn't create a `subscriptions` collection for the SaaS product itself in a separate place.
-      // Assuming for this MVP, "Admin Payments" view actually shows the aggregate of *Tenant's Revenue* 
-      // OR *SaaS Subscription Revenue*.
-      // Based on previous mock data (`MOCK_SUBSCRIPTIONS`), it was tracking SaaS Revenue.
-      // Since we don't have a dedicated `saas_transactions` collection in this MVP, 
-      // I will adapt this to show "Tenant Revenue Flow" (Global Payments) OR handle empty state.
-      
-      // LET'S ASSUME FOR LAUNCH: We want to see User's payments to Tenants to gauge platform volume.
-      // OR if we want SaaS Revenue, we'd need to create a record in `OnboardingPayment`.
-      // Let's stick to Global Volume for now as it's verifiable data.
-      
-      // Actually, let's map the `payment` object from `businesses/{uid}/payments`.
-      // We need to know WHICH Business (Tenant) it belongs to.
-      // The `payment` object doesn't have `tenantId` explicitly, but we can derive from parent path or if we saved it.
-      // The `useAdminGlobalPayments` hook adds `path`.
-      
-      const pathSegments = payment.path ? payment.path.split('/') : [];
-      const tenantId = pathSegments[1]; // businesses/{tenantId}/payments
-      const tenant = tenants.find(t => t.id === tenantId);
+    return history.map(pay => {
+      const tenant = tenants.find(t => t.id === pay.tenantId);
 
       return {
-        ...payment,
+        ...pay,
         businessName: tenant?.businessName || 'Unknown Business',
         ownerName: tenant?.ownerName || 'Unknown Owner',
         mobile: tenant?.mobile || 'Unknown',
-        planType: tenant?.planName || 'Unknown',
-        amountPaid: payment.amount || 0, // Ensure field match
-        startDate: payment.date || new Date().toISOString(),
-        transactionId: payment.id
+        planType: pay.planName || 'Unknown',
+        amountPaid: pay.amount || 0,
+        startDate: pay.date || new Date().toISOString(),
+        transactionId: pay.paymentId || pay.id // Prefer paymentId if available
       };
     }).sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
-  }, [payments, tenants]);
+  }, [history, tenants]);
 
   const filteredPayments = filterPlan === 'All' 
     ? paymentsWithDetails 
@@ -65,28 +40,34 @@ const AdminPayments = () => {
 
   const totalCollected = filteredPayments.reduce((acc, curr) => acc + curr.amountPaid, 0);
 
-  // Mock chart data for trend (aggregated from real data)
+  // Real chart data for trend
   const chartData = useMemo(() => {
      if (filteredPayments.length === 0) return [];
-     // Group by date/week simply
-     const data = filteredPayments.slice(0, 20).map((p, i) => ({
-        name: `T${i}`, value: p.amountPaid
-     })).reverse();
-     return data;
+     
+     // Group by Date YYYY-MM-DD
+     const grouped = filteredPayments.reduce((acc: any, curr: any) => {
+        const date = curr.startDate.split('T')[0];
+        if (!acc[date]) acc[date] = 0;
+        acc[date] += curr.amountPaid;
+        return acc;
+     }, {});
+
+     const sortedDates = Object.keys(grouped).sort();
+     return sortedDates.map(date => ({ name: date, value: grouped[date] }));
   }, [filteredPayments]);
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-white" /></div>;
 
   return (
     <div className="space-y-6">
-      {/* Responsive Header */}
+      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-           <h1 className="text-2xl font-bold text-white">Platform GMV (Global Payments)</h1>
-           <p className="text-xs text-slate-400">Tracking all transaction volume across all tenants.</p>
+           <h1 className="text-2xl font-bold text-white">SaaS Revenue (Billing History)</h1>
+           <p className="text-xs text-slate-400">Tracking subscription payments from businesses to you.</p>
         </div>
         <div className="w-full md:w-auto bg-slate-900/50 p-3 rounded-xl border border-slate-800 flex justify-between items-center md:block md:text-right">
-           <p className="text-xs text-slate-400 uppercase font-bold">Total Volume</p>
+           <p className="text-xs text-slate-400 uppercase font-bold">Total Collected</p>
            <p className="text-2xl font-bold text-emerald-400">₹{totalCollected.toLocaleString()}</p>
         </div>
       </div>
@@ -94,7 +75,7 @@ const AdminPayments = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
          {/* Chart */}
          <div className="lg:col-span-2 bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-            <h3 className="text-white font-bold mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-emerald-400"/> Transaction Trend</h3>
+            <h3 className="text-white font-bold mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-emerald-400"/> Revenue Trend</h3>
             <div className="h-60 w-full">
               <ResponsiveContainer width="100%" height="100%">
                  <AreaChart data={chartData}>
@@ -118,7 +99,7 @@ const AdminPayments = () => {
             <h3 className="text-white font-bold mb-4">Filters</h3>
             <div className="space-y-4">
                <div>
-                  <label className="text-xs text-slate-500 uppercase font-bold mb-2 block">Tenant Plan</label>
+                  <label className="text-xs text-slate-500 uppercase font-bold mb-2 block">Subscription Type</label>
                   <div className="flex flex-wrap gap-2">
                      {['All', 'Monthly', '6 Months', 'Yearly'].map(plan => (
                         <button 
@@ -146,10 +127,10 @@ const AdminPayments = () => {
                 <thead className="bg-slate-950/50 text-xs uppercase font-bold text-slate-500">
                    <tr>
                       <th className="px-6 py-4">Date</th>
-                      <th className="px-6 py-4">Business (Receiver)</th>
+                      <th className="px-6 py-4">Payer (Business)</th>
                       <th className="px-6 py-4">Amount</th>
                       <th className="px-6 py-4">Plan</th>
-                      <th className="px-6 py-4 text-right">Transaction ID</th>
+                      <th className="px-6 py-4 text-right">Payment ID</th>
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">

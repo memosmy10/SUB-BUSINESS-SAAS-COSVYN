@@ -1,15 +1,19 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Shield, Zap, Loader2, Tag, ExternalLink } from 'lucide-react';
+import { Check, Shield, Zap, Loader2, Tag, Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateEffectivePrice } from '../services/saasStore';
-import { useGlobalPricing } from '../services/dbService';
+import { useGlobalPricing, addItem } from '../services/dbService';
+import { handleRazorpayPayment } from '../services/razorpayService';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 const OnboardingPayment = () => {
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [activating, setActivating] = useState(false);
   
   // Use Global Pricing
   const { plans, offer, loading: pricingLoading } = useGlobalPricing();
@@ -27,25 +31,75 @@ const OnboardingPayment = () => {
   // Check offer validity
   const isOfferActive = offer.isActive && new Date() < new Date(offer.endsAt);
 
-  const handlePayment = async () => {
+  const activateSubscription = async (paymentId: string, plan: any, amountPaid: number) => {
     if (!currentUser) return;
+    setActivating(true);
+
+    try {
+      // 1. Calculate Expiry Date based on plan duration
+      const now = new Date();
+      now.setMonth(now.getMonth() + plan.durationMonths);
+      const newExpiryDate = now.toISOString().split('T')[0];
+
+      // 2. Update Firestore immediately (Main Profile)
+      const docRef = doc(db, 'businesses', currentUser.uid);
+      await updateDoc(docRef, {
+        planName: `COSVYN ONE (${plan.label})`,
+        planStatus: 'Active',
+        planExpiryDate: newExpiryDate,
+        lastPaymentId: paymentId,
+        updatedAt: new Date().toISOString()
+      });
+
+      // 3. Add to Billing History (CRITICAL FIX: This ensures it shows on Profile)
+      await addItem(currentUser.uid, 'billing_history', {
+        amount: amountPaid,
+        date: new Date().toISOString(),
+        planName: `COSVYN ONE (${plan.label})`,
+        paymentId: paymentId,
+        expiryDate: newExpiryDate,
+        type: 'Activation',
+        status: 'Paid'
+      });
+
+      // 4. Navigate to Dashboard
+      navigate('/app/dashboard');
+    } catch (error) {
+      console.error("Activation Failed:", error);
+      alert("Payment successful but activation failed. Please contact support.");
+      setActivating(false);
+    }
+  };
+
+  const initiatePayment = () => {
+    if (!currentUser) return;
+    
+    const selectedPlan = plans.find(p => p.id === selectedPlanId);
+    if (!selectedPlan) return;
+
+    const amount = calculateEffectivePrice(selectedPlan.price, offer);
+
+    // Fetch user details for prefill if needed (optional, using auth defaults)
+    const email = currentUser.email || "";
+    const mobile = ""; 
+
     setLoading(true);
 
-    // --- STRICT PAYMENT REDIRECT LOGIC ---
-    // 1. The ID of this specific SaaS tool (Matches Cosvyn configuration)
-    const PRODUCT_ID = 'saas_1'; 
-
-    // 2. Use pure origin (e.g. https://domain.com) to avoid HashRouter # issues in redirect
-    // The GlobalPaymentListener in App.tsx detects ?status=success on the root/any URL.
-    const CALLBACK_URL = window.location.origin; 
-
-    // 3. Construct the Product Page URL with the callback param
-    // We pass the selected plan as a hint/metadata if supported, or just let them choose again on the gateway.
-    // However, primarily we just redirect to the product page as requested.
-    const productPageUrl = `https://cosvyn.space/#/product/${PRODUCT_ID}?callback=${encodeURIComponent(CALLBACK_URL)}`;
-
-    // 4. Redirect
-    window.location.href = productPageUrl;
+    handleRazorpayPayment({
+      amount: amount,
+      planName: selectedPlan.label,
+      userEmail: email,
+      userContact: mobile,
+      businessName: currentUser.displayName || "Business Owner",
+      onSuccess: (paymentId) => {
+        setLoading(false);
+        activateSubscription(paymentId, selectedPlan, amount);
+      },
+      onFailure: (error) => {
+        setLoading(false);
+        console.log("Payment Cancelled/Failed", error);
+      }
+    });
   };
 
   const handleLogout = async () => {
@@ -53,11 +107,13 @@ const OnboardingPayment = () => {
     navigate('/login');
   };
 
-  if (loading || pricingLoading) {
+  if (loading || pricingLoading || activating) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <Loader2 className="animate-spin text-primary-600 mb-4" size={40} />
-        <h2 className="text-xl font-bold text-slate-900">Loading Plans...</h2>
+        <Loader2 className="animate-spin text-primary-600 mb-4" size={48} />
+        <h2 className="text-xl font-bold text-slate-900">
+          {activating ? 'Activating Subscription...' : 'Processing Secure Payment...'}
+        </h2>
         <p className="text-slate-500 mt-2 mb-6">Please do not close this window.</p>
       </div>
     );
@@ -144,7 +200,7 @@ const OnboardingPayment = () => {
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedPlanId(plan.id);
-                      handlePayment();
+                      initiatePayment();
                     }}
                     className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-300 ${
                       isSelected 
@@ -162,12 +218,12 @@ const OnboardingPayment = () => {
 
         <div className="max-w-md mx-auto text-center space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200">
           <button 
-            onClick={handlePayment}
+            onClick={initiatePayment}
             className="group w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-2xl transition-all flex items-center justify-center gap-3 text-lg relative overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
             <Shield size={22} className="text-emerald-400" /> 
-            <span>Proceed to Payment Gateway</span>
+            <span>Pay Securely with Razorpay</span>
           </button>
           
           <div className="flex items-center justify-center gap-6 text-sm">
@@ -175,7 +231,7 @@ const OnboardingPayment = () => {
               Sign Out
             </button>
             <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-100 px-3 py-1.5 rounded-full">
-              <ExternalLink size={12} /> Securely processed via Cosvyn
+              <Lock size={12} /> SSL Encrypted Payment
             </div>
           </div>
         </div>

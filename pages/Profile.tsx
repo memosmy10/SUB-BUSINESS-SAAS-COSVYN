@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   User, Building, CreditCard, Shield, CheckCircle, AlertCircle, 
-  MapPin, Globe, Rocket, Monitor, LayoutTemplate, ExternalLink, X, Zap, Loader2, Tag 
+  Globe, Rocket, Monitor, LayoutTemplate, ExternalLink, X, Zap, Loader2, Tag, Lock, Receipt, Calendar
 } from 'lucide-react';
 import { 
   INITIAL_BUSINESS_PROFILE, INDIA_STATES, BusinessProfile, getDaysDifference 
@@ -11,8 +11,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { calculateEffectivePrice } from '../services/saasStore';
-import { useGlobalPricing } from '../services/dbService';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useGlobalPricing, useStreamCollection, addItem } from '../services/dbService';
+import { handleRazorpayPayment } from '../services/razorpayService';
 
 const Profile = () => {
   const { currentUser } = useAuth();
@@ -21,6 +21,14 @@ const Profile = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<BusinessProfile>({...INITIAL_BUSINESS_PROFILE});
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
+
+  // Fetch Billing History
+  const { data: billingHistory } = useStreamCollection<any>('billing_history');
+  
+  // Sort history by date descending
+  const sortedHistory = [...billingHistory].sort((a: any, b: any) => 
+    new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
 
   // FETCH PROFILE
   useEffect(() => {
@@ -87,21 +95,54 @@ const Profile = () => {
     }
   };
 
-  const handleRedirectForRenewal = () => {
+  const handleRenewalSuccess = async (paymentId: string, planDurationMonths: number, planName: string, amountPaid: number) => {
     if (!currentUser) return;
     
-    // --- STRICT PAYMENT REDIRECT LOGIC ---
-    // 1. The ID of this specific SaaS tool (Matches Cosvyn configuration)
-    const PRODUCT_ID = 'saas_1'; 
+    try {
+      // Logic: Extend the CURRENT expiry date by X months
+      // If current expiry is in the past, use TODAY as base
+      const currentExpiry = new Date(profile.planExpiryDate);
+      const today = new Date();
+      
+      const baseDate = currentExpiry > today ? currentExpiry : today;
+      baseDate.setMonth(baseDate.getMonth() + planDurationMonths);
+      
+      const newExpiryDate = baseDate.toISOString().split('T')[0];
 
-    // 2. The URL where the user should return after paying
-    const CALLBACK_URL = window.location.origin; 
+      await updateDoc(doc(db, 'businesses', currentUser.uid), {
+        planName: `COSVYN ONE (${planName})`,
+        planStatus: 'Active',
+        planExpiryDate: newExpiryDate,
+        lastPaymentId: paymentId,
+        updatedAt: new Date().toISOString()
+      });
 
-    // 3. Construct the Product Page URL with the callback param
-    const productPageUrl = `https://cosvyn.space/#/product/${PRODUCT_ID}?callback=${encodeURIComponent(CALLBACK_URL)}`;
+      // Add to History
+      await addItem(currentUser.uid, 'billing_history', {
+        amount: amountPaid,
+        date: new Date().toISOString(),
+        planName: planName,
+        paymentId: paymentId,
+        expiryDate: newExpiryDate,
+        type: 'Renewal',
+        status: 'Paid'
+      });
 
-    // 4. Redirect
-    window.location.href = productPageUrl;
+      // Update local state immediately
+      setProfile(prev => ({
+         ...prev,
+         planStatus: 'Active',
+         planName: `COSVYN ONE (${planName})`,
+         planExpiryDate: newExpiryDate
+      }));
+
+      setIsRenewModalOpen(false);
+      alert("Subscription Renewed Successfully!");
+
+    } catch (e) {
+      console.error("Renewal Update Failed:", e);
+      alert("Payment successful but database update failed. Contact Support.");
+    }
   };
 
   const ServiceCard = ({ title, desc, icon: Icon }: any) => (
@@ -316,10 +357,50 @@ const Profile = () => {
                   >
                     Renew Subscription
                   </button>
-                  <button className="w-full bg-transparent border border-white/20 text-slate-300 font-medium py-2.5 rounded-xl hover:bg-white/5 transition-colors text-sm">
-                    View Billing History
-                  </button>
                 </div>
+             </div>
+          </div>
+
+          {/* BILLING HISTORY CARD */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+             <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2 bg-slate-50">
+                <Receipt size={18} className="text-slate-500" />
+                <h3 className="font-bold text-slate-800">Billing History</h3>
+             </div>
+             <div className="max-h-60 overflow-y-auto">
+                {sortedHistory.length === 0 ? (
+                   <div className="p-6 text-center text-slate-400 text-sm italic">
+                      No payment history available.
+                   </div>
+                ) : (
+                   <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50/50 text-slate-500 text-xs uppercase font-bold sticky top-0 backdrop-blur-sm">
+                         <tr>
+                            <th className="px-4 py-2 font-bold">Details</th>
+                            <th className="px-4 py-2 text-right font-bold">Amount</th>
+                         </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                         {sortedHistory.map((item: any) => (
+                            <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                               <td className="px-4 py-3 text-slate-600">
+                                  <div className="font-bold text-slate-900 text-sm">{item.planName}</div>
+                                  <div className="text-xs text-slate-500 mt-0.5">
+                                     {new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {item.paymentId || 'N/A'}</div>
+                               </td>
+                               <td className="px-4 py-3 text-right">
+                                  <div className="font-bold text-slate-900">₹{item.amount?.toLocaleString()}</div>
+                                  <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider inline-block mt-1">
+                                     Paid
+                                  </span>
+                               </td>
+                            </tr>
+                         ))}
+                      </tbody>
+                   </table>
+                )}
              </div>
           </div>
 
@@ -363,8 +444,9 @@ const Profile = () => {
       {/* RENEWAL MODAL */}
       {isRenewModalOpen && (
         <RenewSaaSModal 
+          profile={profile}
           onClose={() => setIsRenewModalOpen(false)} 
-          onRenew={handleRedirectForRenewal}
+          onSuccess={handleRenewalSuccess}
         />
       )}
 
@@ -372,16 +454,48 @@ const Profile = () => {
   );
 };
 
-const RenewSaaSModal = ({ onClose, onRenew }: any) => {
-  const { offer, loading } = useGlobalPricing();
+const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
+  const { plans, offer, loading } = useGlobalPricing();
+  const [selectedPlanId, setSelectedPlanId] = useState('Yearly');
+  const [processing, setProcessing] = useState(false);
   
-  if (loading) return null; // Or a spinner if necessary, but modal shouldn't flash
+  // Set default selection
+  useEffect(() => {
+     if(!loading && plans.length) {
+        setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0].id);
+     }
+  }, [loading, plans]);
+
+  if (loading) return null;
 
   const isOfferActive = offer.isActive && new Date() < new Date(offer.endsAt);
+  const selectedPlan = plans.find(p => p.id === selectedPlanId);
+  const effectivePrice = selectedPlan ? calculateEffectivePrice(selectedPlan.price, offer) : 0;
+
+  const initiatePayment = () => {
+     if(!selectedPlan) return;
+     setProcessing(true);
+     
+     handleRazorpayPayment({
+        amount: effectivePrice,
+        planName: selectedPlan.label + " Renewal",
+        userEmail: profile.email,
+        userContact: profile.mobile,
+        businessName: profile.businessName,
+        onSuccess: (pid) => {
+           setProcessing(false);
+           onSuccess(pid, selectedPlan.durationMonths, selectedPlan.label, effectivePrice);
+        },
+        onFailure: (err) => {
+           console.log("Renewal Cancelled/Failed", err);
+           setProcessing(false);
+        }
+     });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in zoom-in-95">
-       <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+       <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
           <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
              <div className="flex items-center gap-2">
                <Zap className="text-primary-600" size={20} fill="currentColor" />
@@ -389,27 +503,52 @@ const RenewSaaSModal = ({ onClose, onRenew }: any) => {
              </div>
              <button onClick={onClose}><X size={20} className="text-slate-400 hover:text-slate-600"/></button>
           </div>
-          <div className="p-6 space-y-4">
-             <p className="text-slate-600 text-sm mb-4">Click below to proceed to our secure payment gateway where you can select your renewal plan.</p>
-             
-             {isOfferActive && (
-               <div className="bg-green-50 border border-green-200 text-green-700 text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-2 mb-2">
-                 <Tag size={14} /> {offer.title} - {offer.discountPercent}% Discount Applied!
-               </div>
-             )}
+          
+          <div className="p-6">
+             <div className="mb-6 text-center">
+                <p className="text-slate-500 mb-2">Extend your subscription to keep your business running smoothly.</p>
+                {isOfferActive && (
+                  <div className="inline-flex items-center gap-2 bg-green-50 text-green-700 px-4 py-1.5 rounded-full text-xs font-bold border border-green-200">
+                     <Tag size={12}/> {offer.title} Applied!
+                  </div>
+                )}
+             </div>
 
-             <div className="bg-slate-50 p-4 rounded-lg text-xs text-slate-500 leading-relaxed border border-slate-100 flex gap-2">
-                <ExternalLink size={14} className="shrink-0 mt-0.5" />
-                Redirecting to cosvyn.space for plan selection and payment.
+             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                {plans.map(plan => {
+                   const price = calculateEffectivePrice(plan.price, offer);
+                   const isSelected = selectedPlanId === plan.id;
+                   
+                   return (
+                      <div 
+                        key={plan.id}
+                        onClick={() => setSelectedPlanId(plan.id)}
+                        className={`border-2 rounded-xl p-4 cursor-pointer transition-all ${
+                           isSelected 
+                             ? 'border-primary-500 bg-primary-50/50 relative shadow-sm' 
+                             : 'border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                         {isSelected && <div className="absolute top-2 right-2 text-primary-600"><CheckCircle size={16}/></div>}
+                         <div className="text-sm font-bold text-slate-900 mb-1">{plan.label}</div>
+                         <div className="text-2xl font-extrabold text-slate-900 mb-1">₹{price.toLocaleString()}</div>
+                         <div className="text-xs text-slate-500">{plan.durationMonths === 12 ? '/year' : plan.durationMonths === 6 ? '/6mo' : '/mo'}</div>
+                      </div>
+                   )
+                })}
              </div>
 
              <button 
-               onClick={onRenew}
-               className="w-full bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-slate-800 transition-all mt-2 flex items-center justify-center gap-2"
+               onClick={initiatePayment}
+               disabled={processing}
+               className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
              >
-                <CreditCard size={20} />
-                Proceed to Renew
+                {processing ? <Loader2 className="animate-spin"/> : <><Shield size={20} className="text-green-400"/> Pay & Renew</>}
              </button>
+             
+             <p className="text-center text-xs text-slate-400 mt-4 flex items-center justify-center gap-1">
+                <Lock size={10}/> Secured by Razorpay
+             </p>
           </div>
        </div>
     </div>

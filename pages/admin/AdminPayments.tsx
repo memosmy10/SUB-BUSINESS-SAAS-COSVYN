@@ -39,11 +39,11 @@ const AdminPayments = () => {
   // Apply Filters
   const filteredPayments = useMemo(() => {
      return paymentsWithDetails.filter(p => {
-        const matchesPlan = filterPlan === 'All' || p.planType.includes(filterPlan);
+        const matchesPlan = filterPlan === 'All' || (p.planType && p.planType.includes(filterPlan));
         const matchesSearch = 
-           p.businessName.toLowerCase().includes(searchQuery.toLowerCase()) || 
-           p.ownerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           p.transactionId.toLowerCase().includes(searchQuery.toLowerCase());
+           (p.businessName || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+           (p.ownerName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+           (p.transactionId || '').toLowerCase().includes(searchQuery.toLowerCase());
         
         return matchesPlan && matchesSearch;
      });
@@ -94,20 +94,24 @@ const AdminPayments = () => {
          <div className="lg:col-span-2 bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
             <h3 className="text-white font-bold mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-emerald-400"/> Revenue Trend</h3>
             <div className="h-60 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                 <AreaChart data={chartData}>
-                    <defs>
-                       <linearGradient id="colorPaid" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                       </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} fontSize={12} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }} />
-                    <Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={3} fill="url(#colorPaid)" />
-                 </AreaChart>
-              </ResponsiveContainer>
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                   <AreaChart data={chartData}>
+                      <defs>
+                         <linearGradient id="colorPaid" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                         </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} fontSize={12} />
+                      <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }} />
+                      <Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={3} fill="url(#colorPaid)" />
+                   </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full text-slate-500">No data available</div>
+              )}
             </div>
          </div>
 

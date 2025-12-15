@@ -17,15 +17,11 @@ const AdminAnalytics = () => {
   const monthlyGrowth = useMemo(() => {
      if (tenants.length === 0) return [];
      
-     // Group signups by month based on createdAt if available, else distribute
+     // Group signups by month based on createdAt
      const growthMap: Record<string, number> = {};
      
      tenants.forEach(t => {
-        // Use createdAt if available, otherwise maybe use start date of plan, or fallback
         const dateStr = t.createdAt || t.planExpiryDate || new Date().toISOString(); 
-        // If planExpiryDate is used as fallback, subtracting duration would be better, but simplified for now.
-        // Best reliance is on new 'createdAt' field.
-        
         const date = new Date(dateStr);
         if (isNaN(date.getTime())) return;
         
@@ -37,11 +33,18 @@ const AdminAnalytics = () => {
      return monthsOrder.map(m => ({ name: m, Signups: growthMap[m] || 0 })).filter(d => d.Signups > 0 || d.name === new Date().toLocaleString('default', { month: 'short' }));
   }, [tenants]);
 
-  const planDistribution = useMemo(() => [
-    { name: 'Monthly', value: tenants.filter(t => t.planName?.includes('Monthly')).length, color: '#3b82f6' },
-    { name: '6 Months', value: tenants.filter(t => t.planName?.includes('6 Months')).length, color: '#8b5cf6' },
-    { name: 'Yearly', value: tenants.filter(t => t.planName?.includes('Yearly')).length, color: '#06b6d4' },
-  ].filter(d => d.value > 0), [tenants]);
+  // ACTIVE Paid Subscriptions by Plan
+  const planDistribution = useMemo(() => {
+    const activeTenants = tenants.filter(t => t.planStatus === 'Active');
+    
+    return [
+      { name: 'Monthly', value: activeTenants.filter(t => t.planName?.toLowerCase().includes('monthly')).length, color: '#3b82f6' },
+      { name: '6 Months', value: activeTenants.filter(t => t.planName?.toLowerCase().includes('6 months')).length, color: '#8b5cf6' },
+      { name: 'Yearly', value: activeTenants.filter(t => t.planName?.toLowerCase().includes('yearly')).length, color: '#06b6d4' },
+    ].filter(d => d.value > 0);
+  }, [tenants]);
+
+  const totalActivePaid = planDistribution.reduce((acc, curr) => acc + curr.value, 0);
 
   // Top Cities Logic
   const topCities = useMemo(() => {
@@ -79,7 +82,7 @@ const AdminAnalytics = () => {
     <div className="space-y-6">
        <div className="flex justify-between items-center">
           <h1 className="text-2xl font-bold text-white">Platform Analytics</h1>
-          <div className="text-sm font-medium text-slate-400">Real-time Data</div>
+          <div className="text-sm font-medium text-slate-400">Real-time Database Metrics</div>
        </div>
 
        {/* GEO ANALYTICS SECTION */}
@@ -142,7 +145,7 @@ const AdminAnalytics = () => {
           
           {/* Signups Growth */}
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-             <h3 className="text-white font-bold mb-6">User Growth (Signups)</h3>
+             <h3 className="text-white font-bold mb-6">User Growth (Total Signups)</h3>
              <div className="h-72">
                 {monthlyGrowth.length > 0 ? (
                    <ResponsiveContainer width="100%" height="100%">
@@ -164,9 +167,9 @@ const AdminAnalytics = () => {
              </div>
           </div>
 
-          {/* Plan Distribution */}
+          {/* Active Paid Plans */}
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-             <h3 className="text-white font-bold mb-6">Active Subscriptions by Plan</h3>
+             <h3 className="text-white font-bold mb-6">Active Paid Subscriptions</h3>
              <div className="h-72 relative">
                 {planDistribution.length > 0 ? (
                    <ResponsiveContainer width="100%" height="100%">
@@ -187,11 +190,11 @@ const AdminAnalytics = () => {
                       </PieChart>
                    </ResponsiveContainer>
                 ) : (
-                   <div className="flex items-center justify-center h-full text-slate-500">No active plans.</div>
+                   <div className="flex items-center justify-center h-full text-slate-500">No active paid plans found.</div>
                 )}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
-                   <div className="text-3xl font-bold text-white">{tenants.length}</div>
-                   <div className="text-xs text-slate-500 uppercase font-bold">Total</div>
+                   <div className="text-3xl font-bold text-white">{totalActivePaid}</div>
+                   <div className="text-xs text-slate-500 uppercase font-bold">Total Active</div>
                 </div>
              </div>
           </div>

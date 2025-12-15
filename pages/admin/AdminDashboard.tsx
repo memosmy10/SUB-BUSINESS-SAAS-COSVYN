@@ -18,19 +18,19 @@ const AdminDashboard = () => {
 
   const loading = l1 || l2;
 
-  // Helper to estimate price from plan name if not stored directly
-  const getPlanPrice = (planName: string) => {
+  // Helper to estimate price from plan name
+  const getPlanDetails = (planName: string) => {
      const name = (planName || '').toLowerCase();
-     if (name.includes('monthly')) return 999;
-     if (name.includes('6 months')) return 5099;
-     if (name.includes('yearly')) return 9599;
-     return 0;
+     if (name.includes('monthly')) return { price: 999, months: 1 };
+     if (name.includes('6 months')) return { price: 5099, months: 6 };
+     if (name.includes('yearly')) return { price: 9599, months: 12 };
+     return { price: 0, months: 1 };
   };
 
   const metrics = useMemo(() => {
     let activeCount = 0;
-    let activeRevenueSum = 0; // "Total Revenue" as per request (Sum of prices of active subs)
-    let mrr = 0;
+    let activeRevenueSum = 0; // Sum of PRICES of all active plans
+    let totalMonthlyEquivalent = 0; // For ARPU calc
     
     // Plan Distribution for Active Revenue
     const planDist = {
@@ -43,37 +43,38 @@ const AdminDashboard = () => {
     tenants.forEach(t => {
       if (t.planStatus === 'Active') {
         activeCount++;
-        const price = getPlanPrice(t.planName);
+        const { price, months } = getPlanDetails(t.planName);
         
         if (price > 0) {
-           activeRevenueSum += price; // Sum of prices
+           activeRevenueSum += price;
+           totalMonthlyEquivalent += (price / months);
            
-           // MRR Calculation
-           if (t.planName.toLowerCase().includes('monthly')) {
-              mrr += price;
-              planDist['Monthly'] += price;
-           } else if (t.planName.toLowerCase().includes('6 months')) {
-              mrr += price / 6;
-              planDist['6 Months'] += price;
-           } else if (t.planName.toLowerCase().includes('yearly')) {
-              mrr += price / 12;
-              planDist['Yearly'] += price;
-           }
+           if (t.planName.toLowerCase().includes('monthly')) planDist['Monthly'] += price;
+           else if (t.planName.toLowerCase().includes('6 months')) planDist['6 Months'] += price;
+           else if (t.planName.toLowerCase().includes('yearly')) planDist['Yearly'] += price;
         }
       }
     });
 
-    // 2. Process Historical Collections
+    // 2. Process Historical Collections (Lifetime Revenue)
+    // Irrespective of status, just sum of all payments ever made
     const totalLifetimeCollected = history.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+
+    // 3. MRR Calculation
+    // MRR = Paying Customers * Average Revenue Per User (Monthly)
+    // ARPU = Total Monthly Equivalent Revenue / Paying Customers
+    const arpu = activeCount > 0 ? totalMonthlyEquivalent / activeCount : 0;
+    const mrr = activeCount * arpu;
+
     const signups = tenants.length;
     const churn = signups > 0 ? ((signups - activeCount) / signups) * 100 : 0;
 
     return { 
-        activeRevenue: activeRevenueSum, // The requested "Total Revenue"
+        activeRevenue: activeRevenueSum,
         lifetimeRevenue: totalLifetimeCollected,
         active: activeCount, 
         mrr, 
-        arr: mrr * 12, 
+        arpu,
         churn: churn.toFixed(1), 
         signups,
         planDistribution: [
@@ -94,8 +95,8 @@ const AdminDashboard = () => {
         const date = new Date(curr.date);
         if (isNaN(date.getTime())) return acc;
         
-        const key = date.toLocaleString('default', { month: 'short', year: 'numeric' }); // e.g. "Oct 2023"
-        const sortKey = date.getTime(); // Use for sorting
+        const key = date.toLocaleString('default', { month: 'short', year: 'numeric' });
+        const sortKey = date.getTime(); 
 
         if (!acc[key]) acc[key] = { name: key, Revenue: 0, sort: sortKey };
         acc[key].Revenue += (curr.amount || 0);
@@ -128,6 +129,13 @@ const AdminDashboard = () => {
       {/* 1. KEY METRICS */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
          <Widget 
+            title="Lifetime Revenue" 
+            value={`₹${metrics.lifetimeRevenue.toLocaleString()}`} 
+            icon={CreditCard} 
+            colorClass="bg-blue-500 text-blue-400" 
+            subtext="Total Collections"
+         />
+         <Widget 
             title="Active Revenue" 
             value={`₹${metrics.activeRevenue.toLocaleString()}`} 
             icon={DollarSign} 
@@ -135,24 +143,18 @@ const AdminDashboard = () => {
             subtext="Sum of active plans"
          />
          <Widget 
-            title="Lifetime Revenue" 
-            value={`₹${metrics.lifetimeRevenue.toLocaleString()}`} 
-            icon={CreditCard} 
-            colorClass="bg-blue-500 text-blue-400" 
-            subtext="Total Collected"
-         />
-         <Widget 
-            title="Active Business" 
+            title="Active Owners" 
             value={metrics.active} 
             icon={Activity} 
             colorClass="bg-violet-500 text-violet-400" 
+            subtext="Paying Customers"
          />
          <Widget 
-            title="MRR (Est)" 
+            title="MRR" 
             value={`₹${Math.round(metrics.mrr).toLocaleString()}`} 
             icon={Repeat} 
             colorClass="bg-cyan-500 text-cyan-400" 
-            subtext="Monthly Recurring"
+            subtext={`Avg Revenue: ₹${Math.round(metrics.arpu)}`}
          />
          <Widget 
             title="Churn Rate" 
@@ -216,7 +218,7 @@ const AdminDashboard = () => {
          
          {/* Pie Chart */}
          <div className="bg-slate-900/70 p-6 rounded-2xl border border-slate-800 backdrop-blur-sm flex flex-col">
-            <h3 className="text-white font-bold mb-6">Revenue Breakdown (Active Plans)</h3>
+            <h3 className="text-white font-bold mb-6">Active Revenue by Plan</h3>
             <div className="flex-1 min-h-[300px] flex items-center justify-center">
                {metrics.activeRevenue > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -260,7 +262,7 @@ const AdminDashboard = () => {
          {/* 4. RECENT SUBSCRIPTIONS LIST */}
          <div className="bg-slate-900/70 p-0 rounded-2xl border border-slate-800 backdrop-blur-sm overflow-hidden flex flex-col">
             <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-               <h3 className="text-white font-bold">Latest Payments</h3>
+               <h3 className="text-white font-bold">Latest Transactions</h3>
             </div>
             <div className="flex-1 overflow-y-auto max-h-[400px]">
                {history.slice(0, 8).map((pay, idx) => {
@@ -290,7 +292,7 @@ const AdminDashboard = () => {
                   );
                })}
                {history.length === 0 && (
-                  <div className="p-8 text-center text-slate-500 text-sm">No subscription payments yet.</div>
+                  <div className="p-8 text-center text-slate-500 text-sm">No transactions yet.</div>
                )}
             </div>
          </div>

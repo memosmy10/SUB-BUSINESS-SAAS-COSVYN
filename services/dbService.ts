@@ -148,34 +148,6 @@ export const useAdminTenants = () => {
   return { tenants, loading };
 };
 
-// Fetch ALL payments across all businesses (Collection Group Query) -> GMV
-export const useAdminGlobalPayments = () => {
-  const [payments, setPayments] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Queries all collections named 'payments' regardless of nesting
-    const q = query(collectionGroup(db, 'payments'));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allPayments = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        path: doc.ref.path 
-      }));
-      setPayments(allPayments);
-      setLoading(false);
-    }, (err) => {
-      console.error("Error fetching global payments:", err);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  return { payments, loading };
-};
-
 // Fetch ALL billing history (SaaS Income)
 export const useAdminBillingHistory = () => {
   const [history, setHistory] = useState<any[]>([]);
@@ -183,7 +155,8 @@ export const useAdminBillingHistory = () => {
 
   useEffect(() => {
     // Queries all collections named 'billing_history'
-    const q = query(collectionGroup(db, 'billing_history'), orderBy('date', 'desc'));
+    // NOTE: Removed orderBy to prevent "Missing Index" error on client without manual index creation
+    const q = query(collectionGroup(db, 'billing_history'));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => {

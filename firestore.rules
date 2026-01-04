@@ -18,7 +18,13 @@ service cloud.firestore {
       }
     }
 
-    // Collection Group Query for Payments (Admin Only)
+    // Collection Group Query for Admin Dashboard & Payments
+    // This allows fetching 'billing_history' from all users at once
+    match /{path=**}/billing_history/{docId} {
+      allow read: if isAdmin();
+    }
+
+    // Collection Group Query for Payments (Legacy/Backup)
     match /{path=**}/payments/{paymentId} {
       allow read: if isAdmin();
     }

@@ -45,6 +45,7 @@ export interface GlobalCustomer {
   paymentStatus: 'Paid' | 'Pending';
   amountPaid: number;
   planPrice: number;
+  deliveryCharges?: number; // Optional delivery charges
   pendingAmount: number;
   renewalCount: number;
   

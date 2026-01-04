@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users, UserCheck, RefreshCw, Plus, PauseCircle, Store,
-  Search, Filter, Calendar, MapPin, X, AlertCircle, Loader2, Edit, Trash2, Pause, Clock, ArrowRight, CheckCircle, Calculator, Phone, Building
+  Search, Filter, Calendar, MapPin, X, AlertCircle, Loader2, Edit, Trash2, Pause, Clock, ArrowRight, CheckCircle, Calculator, Phone, Building, Truck
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -122,6 +122,7 @@ const Customers = () => {
       endDate: data.endDate,
       daysLeft: daysLeft,
       planPrice: data.planPrice, // Update to new plan price
+      deliveryCharges: data.deliveryCharges || 0, // Carry forward or update delivery charges
       amountPaid: data.amountPaid, // Reset/Update amount paid for this new cycle
       paymentStatus: data.paymentStatus,
       pendingAmount: data.pendingAmount,
@@ -487,6 +488,7 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       amountPaid: 0, 
       pendingAmount: 0,
       planPrice: 0,
+      deliveryCharges: 0,
       startDate: new Date().toISOString().split('T')[0], 
       deliveryBoyId: '',
       mealTime: 'Lunch', 
@@ -507,7 +509,7 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
                 ...prev, 
                 planId: firstPlan.id,
                 planPrice: firstPlan.price,
-                amountPaid: firstPlan.price, // Default to full paid
+                amountPaid: firstPlan.price + (prev.deliveryCharges || 0), // Default to full paid incl charges
                 pendingAmount: 0,
                 paymentStatus: 'Paid'
             }));
@@ -527,21 +529,36 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       const selectedPlan = plans.find((p:any) => p.id === newPlanId);
       
       if (selectedPlan) {
+         const totalContract = selectedPlan.price + (formData.deliveryCharges || 0);
          setFormData({
             ...formData,
             planId: newPlanId,
             planPrice: selectedPlan.price,
-            // Auto-fill payment fields
-            amountPaid: selectedPlan.price,
+            amountPaid: totalContract,
             pendingAmount: 0,
             paymentStatus: 'Paid'
          });
       }
    };
 
+   const handleDeliveryChargesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const charges = Number(e.target.value) || 0;
+      const totalContract = formData.planPrice + charges;
+      const newPending = Math.max(0, totalContract - formData.amountPaid);
+      const newStatus = newPending > 0 ? 'Pending' : 'Paid';
+
+      setFormData({
+         ...formData,
+         deliveryCharges: charges,
+         pendingAmount: newPending,
+         paymentStatus: newStatus
+      });
+   };
+
    const handlePaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newPaid = Number(e.target.value);
-      const newPending = Math.max(0, formData.planPrice - newPaid);
+      const totalContract = formData.planPrice + (formData.deliveryCharges || 0);
+      const newPending = Math.max(0, totalContract - newPaid);
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
 
       setFormData({
@@ -554,7 +571,8 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
 
    const handlePendingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newPending = Number(e.target.value);
-      const newPaid = Math.max(0, formData.planPrice - newPending);
+      const totalContract = formData.planPrice + (formData.deliveryCharges || 0);
+      const newPaid = Math.max(0, totalContract - newPending);
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
 
       setFormData({
@@ -580,7 +598,8 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
          isActive: true, 
          daysLeft,
          endDate,
-         planPrice: formData.planPrice, // Ensure we save the specific price snapshot
+         planPrice: formData.planPrice,
+         deliveryCharges: Number(formData.deliveryCharges),
          amountPaid: Number(formData.amountPaid),
          pendingAmount: Number(formData.pendingAmount),
          paymentStatus: formData.paymentStatus,
@@ -682,8 +701,25 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
                         />
                      </div>
                   </div>
+                  
+                  {/* DELIVERY CHARGES - NEW OPTIONAL FIELD */}
+                  <div className="mt-4 pt-4 border-t border-slate-200">
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block flex items-center gap-1">
+                        <Truck size={14}/> Delivery Charges (Optional)
+                     </label>
+                     <input 
+                        type="number" 
+                        min="0"
+                        placeholder="Enter extra delivery fee"
+                        className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:ring-2 focus:ring-blue-500 outline-none" 
+                        value={formData.deliveryCharges} 
+                        onChange={handleDeliveryChargesChange}
+                     />
+                     <p className="text-[10px] text-slate-400 mt-1">This will be added to the total plan cost.</p>
+                  </div>
+
                   <div className="mt-2 text-right text-xs text-slate-400">
-                     Total Plan Price: <b>₹{formData.planPrice}</b>
+                     Total Value: <b>₹{formData.planPrice + (formData.deliveryCharges || 0)}</b> (Plan: ₹{formData.planPrice} + Delivery: ₹{formData.deliveryCharges || 0})
                   </div>
                </div>
 
@@ -705,6 +741,7 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
       amountPaid: 0,
       pendingAmount: 0,
       planPrice: 0,
+      deliveryCharges: customer.deliveryCharges || 0,
       deliveryBoyId: customer.deliveryBoyId || ''
    });
 
@@ -712,10 +749,11 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
    useEffect(() => {
       const plan = plans.find((p:any) => p.id === customer.planId);
       if(plan) {
+         const totalContract = plan.price + (formData.deliveryCharges || 0);
          setFormData(prev => ({
             ...prev,
             planPrice: plan.price,
-            amountPaid: plan.price, // Default full paid
+            amountPaid: totalContract, // Default full paid
             pendingAmount: 0,
             paymentStatus: 'Paid'
          }));
@@ -728,20 +766,36 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
       const selectedPlan = plans.find((p:any) => p.id === newPlanId);
       
       if (selectedPlan) {
+         const totalContract = selectedPlan.price + (formData.deliveryCharges || 0);
          setFormData({
             ...formData,
             planId: newPlanId,
             planPrice: selectedPlan.price,
-            amountPaid: selectedPlan.price,
+            amountPaid: totalContract,
             pendingAmount: 0,
             paymentStatus: 'Paid'
          });
       }
    };
 
+   const handleDeliveryChargesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const charges = Number(e.target.value) || 0;
+      const totalContract = formData.planPrice + charges;
+      const newPending = Math.max(0, totalContract - formData.amountPaid);
+      const newStatus = newPending > 0 ? 'Pending' : 'Paid';
+
+      setFormData({
+         ...formData,
+         deliveryCharges: charges,
+         pendingAmount: newPending,
+         paymentStatus: newStatus
+      });
+   };
+
    const handlePaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newPaid = Number(e.target.value);
-      const newPending = Math.max(0, formData.planPrice - newPaid);
+      const totalContract = formData.planPrice + (formData.deliveryCharges || 0);
+      const newPending = Math.max(0, totalContract - newPaid);
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
 
       setFormData({
@@ -754,7 +808,8 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
 
    const handlePendingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newPending = Number(e.target.value);
-      const newPaid = Math.max(0, formData.planPrice - newPending);
+      const totalContract = formData.planPrice + (formData.deliveryCharges || 0);
+      const newPaid = Math.max(0, totalContract - newPending);
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
 
       setFormData({
@@ -775,7 +830,6 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
       
       onSubmit({ 
          ...formData, 
-         // planPrice: formData.planPrice, // Included in spread
          endDate 
       });
    };
@@ -829,7 +883,7 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
                         {formData.paymentStatus}
                      </span>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-4 mb-4">
                      <div>
                         <label className="text-xs font-bold text-slate-500 block mb-1">Paid (₹)</label>
                         <input 
@@ -849,8 +903,21 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
                         />
                      </div>
                   </div>
+
+                  <div className="border-t border-slate-200 pt-3">
+                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block flex items-center gap-1">
+                        <Truck size={14}/> Delivery Charges
+                     </label>
+                     <input 
+                        type="number" min="0"
+                        className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 outline-none focus:ring-1 focus:ring-blue-500" 
+                        value={formData.deliveryCharges} 
+                        onChange={handleDeliveryChargesChange}
+                     />
+                  </div>
+
                   <div className="mt-2 text-right text-xs text-slate-400">
-                     Plan Total: <b>₹{formData.planPrice}</b>
+                     Renewal Total: <b>₹{formData.planPrice + (formData.deliveryCharges || 0)}</b>
                   </div>
                </div>
 

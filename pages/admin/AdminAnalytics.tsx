@@ -14,23 +14,33 @@ const AdminAnalytics = () => {
 
   // --- Data Calculations ---
 
+  // User Growth (Total Signups) - Chronological
   const monthlyGrowth = useMemo(() => {
      if (tenants.length === 0) return [];
      
-     // Group signups by month based on createdAt
-     const growthMap: Record<string, number> = {};
+     const growthMap: Record<string, { label: string, sort: number, count: number }> = {};
      
      tenants.forEach(t => {
-        const dateStr = t.createdAt || t.planExpiryDate || new Date().toISOString(); 
+        // Use createdAt for signup date. Fallback to updatedAt if missing.
+        const dateStr = t.createdAt || t.updatedAt || new Date().toISOString(); 
         const date = new Date(dateStr);
         if (isNaN(date.getTime())) return;
         
-        const key = date.toLocaleString('default', { month: 'short' });
-        growthMap[key] = (growthMap[key] || 0) + 1;
+        // Key by YYYY-MM to separate years
+        const key = `${date.getFullYear()}-${date.getMonth()}`; 
+        const label = date.toLocaleString('default', { month: 'short', year: '2-digit' }); // e.g. "Oct 24"
+        const sort = date.getTime(); // Use timestamp for sorting
+
+        if (!growthMap[key]) {
+            growthMap[key] = { label, sort, count: 0 };
+        }
+        growthMap[key].count++;
      });
 
-     const monthsOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-     return monthsOrder.map(m => ({ name: m, Signups: growthMap[m] || 0 })).filter(d => d.Signups > 0 || d.name === new Date().toLocaleString('default', { month: 'short' }));
+     // Convert to array and sort by time
+     return Object.values(growthMap)
+        .sort((a, b) => a.sort - b.sort)
+        .map(d => ({ name: d.label, Signups: d.count }));
   }, [tenants]);
 
   // ACTIVE Paid Subscriptions by Plan

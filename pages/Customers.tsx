@@ -38,7 +38,7 @@ const Customers = () => {
   const [activeCustomer, setActiveCustomer] = useState<GlobalCustomer | null>(null);
 
   const [filters, setFilters] = useState({
-    name: '', mobile: '', plan: '', area: '', payment: '', branch: ''
+    name: '', mobile: '', plan: '', area: '', payment: '', branch: '', mealTime: ''
   });
 
   useEffect(() => {
@@ -174,6 +174,7 @@ const Customers = () => {
            (c.area || '').toLowerCase().includes(filters.area.toLowerCase()) &&
            (filters.payment === '' || c.paymentStatus === filters.payment) &&
            (filters.branch === '' || c.branchId === filters.branch) &&
+           (filters.mealTime === '' || c.mealTime === filters.mealTime) &&
            planName.toLowerCase().includes(filters.plan.toLowerCase())
         );
      }).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
@@ -272,7 +273,14 @@ const Customers = () => {
                      <th className="p-2 border-b border-slate-200">
                         <input className="w-full p-1 text-xs border border-slate-200 rounded font-normal bg-white text-slate-900" placeholder="Filter Plan" value={filters.plan} onChange={e => setFilters({...filters, plan: e.target.value})} />
                      </th>
-                     <th className="p-2 border-b border-slate-200"></th>
+                     <th className="p-2 border-b border-slate-200">
+                        <select className="w-full p-1 text-xs border border-slate-200 rounded font-normal bg-white text-slate-900" value={filters.mealTime} onChange={e => setFilters({...filters, mealTime: e.target.value})}>
+                           <option value="">All</option>
+                           <option value="Breakfast">Breakfast</option>
+                           <option value="Lunch">Lunch</option>
+                           <option value="Dinner">Dinner</option>
+                        </select>
+                     </th>
                      <th className="p-2 border-b border-slate-200">
                         <input className="w-full p-1 text-xs border border-slate-200 rounded font-normal bg-white text-slate-900" placeholder="Filter Area" value={filters.area} onChange={e => setFilters({...filters, area: e.target.value})} />
                      </th>

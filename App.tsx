@@ -1,4 +1,4 @@
-import React, { useState, useEffect, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useEffect, ErrorInfo, ReactNode, Component } from 'react';
 import { HashRouter, Routes, Route, Navigate, Outlet, NavLink, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import LandingPage from './pages/LandingPage';
@@ -43,19 +43,27 @@ import { db } from './services/firebase';
 import { useStreamCollection } from './services/dbService';
 
 // --- ERROR BOUNDARY ---
-interface Props { children: ReactNode; }
-interface State { hasError: boolean; error: Error | null; }
+interface ErrorBoundaryProps { children: ReactNode; }
+interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 
-// Use React.Component explicitly to ensure TypeScript correctly resolves the 'props' property
-class ErrorBoundary extends React.Component<Props, State> {
-  public state: State = { hasError: false, error: null };
-  public static getDerivedStateFromError(error: Error): State { return { hasError: true, error }; }
+// Fix: Adding an explicit constructor and using direct Component import from React to resolve 'props' visibility
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  public static getDerivedStateFromError(error: Error): ErrorBoundaryState { 
+    return { hasError: true, error }; 
+  }
+
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) { 
     console.group("ScaleKitchen Runtime Crash");
     console.error("Error:", error);
     console.error("Info:", errorInfo);
     console.groupEnd();
   }
+
   public render() {
     if (this.state.hasError) {
       return (
@@ -86,7 +94,7 @@ class ErrorBoundary extends React.Component<Props, State> {
         </div>
       );
     }
-    // Fix: Access props from the correct base class instance
+    // Fix: Accessing children from props safely inside render method
     return this.props.children;
   }
 }
@@ -177,7 +185,7 @@ const SubscriptionManager = () => {
 
   if (status === 'idle') return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-in fade-in duration-300">
       <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
         {status === 'processing' && (
           <div className="flex flex-col items-center"><Loader2 className="animate-spin text-primary-600 mb-4" size={48} /><h2 className="text-xl font-bold text-slate-900 mb-2">Activating Plan...</h2></div>

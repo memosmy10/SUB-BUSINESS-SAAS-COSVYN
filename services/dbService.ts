@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { 
   collection, 
@@ -31,7 +30,6 @@ export const useStreamCollection = <T>(collectionName: string) => {
       return;
     }
 
-    // Reference: businesses/{userId}/{collectionName}
     const q = query(collection(db, 'businesses', currentUser.uid, collectionName));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -42,7 +40,9 @@ export const useStreamCollection = <T>(collectionName: string) => {
       setData(items);
       setLoading(false);
     }, (error) => {
-      console.error(`Error streaming ${collectionName}:`, error);
+      if (error.code !== 'permission-denied') {
+        console.warn(`Firestore Stream Error (${collectionName}):`, error.message);
+      }
       setLoading(false);
     });
 
@@ -52,11 +52,9 @@ export const useStreamCollection = <T>(collectionName: string) => {
   return { data, loading };
 };
 
-// Generic Add Function
 export const addItem = async (userId: string, collectionName: string, data: any) => {
   try {
     const colRef = collection(db, 'businesses', userId, collectionName);
-    // Add timestamps
     const docRef = await addDoc(colRef, {
       ...data,
       createdAt: new Date().toISOString()
@@ -68,7 +66,6 @@ export const addItem = async (userId: string, collectionName: string, data: any)
   }
 };
 
-// Generic Update Function
 export const updateItem = async (userId: string, collectionName: string, docId: string, data: any) => {
   try {
     const docRef = doc(db, 'businesses', userId, collectionName, docId);
@@ -82,7 +79,6 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
   }
 };
 
-// Generic Delete Function
 export const deleteItem = async (userId: string, collectionName: string, docId: string) => {
   try {
     const docRef = doc(db, 'businesses', userId, collectionName, docId);
@@ -93,21 +89,25 @@ export const deleteItem = async (userId: string, collectionName: string, docId: 
   }
 };
 
-// --- GLOBAL PRICING SERVICE (LANDING & SAAS) ---
-
+// --- GLOBAL PRICING SERVICE ---
 export const useGlobalPricing = () => {
   const [plans, setPlans] = useState<SaasPlan[]>(SHARED_SAAS_PLANS);
   const [offer, setOffer] = useState<SpecialOffer>(SHARED_OFFER);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Listen to global_settings/saas_config
-    const unsubscribe = onSnapshot(doc(db, 'global_settings', 'saas_config'), (docSnap) => {
+    const docRef = doc(db, 'global_settings', 'saas_config');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.plans) setPlans(data.plans);
         if (data.offer) setOffer(data.offer);
       }
+      setLoading(false);
+    }, (error) => {
+      // Fallback silently to shared constants if permissions are temporarily unavailable
+      setPlans(SHARED_SAAS_PLANS);
+      setOffer(SHARED_OFFER);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -124,10 +124,7 @@ export const saveGlobalPricing = async (plans: SaasPlan[], offer: SpecialOffer) 
   });
 };
 
-
 // --- ADMIN SERVICES ---
-
-// Fetch all businesses (Real Users)
 export const useAdminTenants = () => {
   const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -141,6 +138,11 @@ export const useAdminTenants = () => {
       }));
       setTenants(users);
       setLoading(false);
+    }, (error) => {
+      if (error.code !== 'permission-denied') {
+        console.warn("Admin tenants stream error:", error.message);
+      }
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -148,19 +150,14 @@ export const useAdminTenants = () => {
   return { tenants, loading };
 };
 
-// Fetch ALL billing history (SaaS Income)
 export const useAdminBillingHistory = () => {
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Queries all collections named 'billing_history'
-    // NOTE: Removed orderBy to prevent "Missing Index" error on client without manual index creation
     const q = query(collectionGroup(db, 'billing_history'));
-    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => {
-        // Extract tenantId from path: businesses/{tenantId}/billing_history/{docId}
         const pathSegments = doc.ref.path.split('/');
         return {
           id: doc.id,
@@ -171,17 +168,17 @@ export const useAdminBillingHistory = () => {
       setHistory(items);
       setLoading(false);
     }, (err) => {
-      console.error("Error fetching billing history:", err);
+      if (err.code !== 'permission-denied') {
+        console.warn("Admin billing history error:", err.message);
+      }
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
   return { history, loading };
 };
 
-// Generic hook for root collections (Features, Support, Reviews)
 export const useGlobalCollection = (collectionName: string) => {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -194,6 +191,11 @@ export const useGlobalCollection = (collectionName: string) => {
         ...doc.data()
       }));
       setData(items);
+      setLoading(false);
+    }, (error) => {
+      if (error.code !== 'permission-denied') {
+        console.warn(`Global Collection Error (${collectionName}):`, error.message);
+      }
       setLoading(false);
     });
     return () => unsubscribe();

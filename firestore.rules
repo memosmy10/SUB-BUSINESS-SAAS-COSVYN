@@ -1,43 +1,56 @@
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper function to check if user is the specific admin
+    // 1. HELPER: Check if the user is a Super Admin
     function isAdmin() {
-      return request.auth.token.email == 'cosvynsolutions@gmail.com';
+      return request.auth != null && (
+        request.auth.token.email == 'cosvynsolutions@gmail.com' || 
+        request.auth.token.email == 'admin@scalekitchen.in'
+      );
     }
 
-    // Business Collection Rules
-    match /businesses/{userId} {
-      allow read, write: if request.auth.uid == userId || isAdmin();
+    // 2. PUBLIC SETTINGS
+    // Allows the landing page and pricing section to load for everyone
+    match /global_settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
 
-      // Sub-collections (customers, expenses, plans, etc.)
-      match /{document=**} {
-        allow read, write: if request.auth.uid == userId || isAdmin();
+    // 3. BUSINESS DATA (The core SaaS data)
+    match /businesses/{userId} {
+      // Owners can get/edit their own profile. Admins can do anything.
+      allow get, write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      
+      // Explicitly allow admins to list all businesses (for the Admin Owners page)
+      allow list: if isAdmin();
+
+      // Rules for all sub-collections (customers, expenses, staff, inventory, etc.)
+      match /{allSubcollections=**} {
+        allow read, write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       }
     }
 
-    // Collection Group Query for Admin Dashboard & Payments
-    // This allows fetching 'billing_history' from all users at once
+    // 4. PENDING ACTIVATIONS
+    // Required for the signup flow to verify payments
+    match /pending_activations/{email} {
+      allow read: if true; 
+      allow write: if isAdmin();
+    }
+
+    // 5. COLLECTION GROUPS (For Admin Panel Analytics)
+    // Allows admins to calculate total revenue across the whole platform
     match /{path=**}/billing_history/{docId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == path[1]);
+    }
+    match /{path=**}/payments/{docId} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == path[1]);
     }
 
-    // Collection Group Query for Payments (Legacy/Backup)
-    match /{path=**}/payments/{paymentId} {
-      allow read: if isAdmin();
-    }
-
-    // Global Collections for Support/Features (Public Write, Admin Read/Update)
-    match /global_features/{docId} {
-      allow read, write: if request.auth != null;
-    }
-    match /global_tickets/{docId} {
-      allow read, write: if request.auth != null;
-    }
-    match /global_reviews/{docId} {
-      allow read, write: if request.auth != null;
-    }
+    // 6. GLOBAL INTERACTIONS
+    // Logged in users can submit feedback and support tickets
+    match /global_features/{docId} { allow read, write: if request.auth != null; }
+    match /global_tickets/{docId} { allow read, write: if request.auth != null; }
+    match /global_reviews/{docId} { allow read, write: if request.auth != null; }
   }
 }

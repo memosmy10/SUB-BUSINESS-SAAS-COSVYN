@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Zap, CheckCircle, ArrowRight, Loader2, MapPin, Building, User as UserIcon, Mail, Lock, Phone, ArrowLeft } from 'lucide-react';
+import { Zap, CheckCircle, ArrowRight, Loader2, MapPin, Building, User as UserIcon, Mail, Lock, Phone, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
@@ -15,7 +14,6 @@ const Signup = () => {
   const [hasPendingSubscription, setHasPendingSubscription] = useState(false);
 
   useEffect(() => {
-    // Check for pending subscription from redirected payment
     const pending = localStorage.getItem('pending_subscription');
     if (pending) {
       setHasPendingSubscription(true);
@@ -55,33 +53,38 @@ const Signup = () => {
 
     try {
       // 1. Create Authentication User
-      const user = await signupWithEmail(formData.email, formData.password);
+      const user = await signupWithEmail(formData.email.trim(), formData.password);
 
       // 2. Create Inactive Profile in Firestore
       await setDoc(doc(db, 'businesses', user.uid), {
         ownerName: formData.ownerName,
-        email: formData.email,
+        email: formData.email.trim(),
         mobile: formData.mobile,
         businessName: formData.businessName,
         state: formData.state,
         city: formData.city,
         country: 'India',
         description: '',
-        category: 'Tiffin Service', // Default
+        category: 'Tiffin Service',
         isProfileComplete: true,
         planName: 'None',
         planExpiryDate: new Date().toISOString().split('T')[0],
-        planStatus: 'Inactive', // Crucial: This forces the payment flow next
+        planStatus: 'Inactive',
         createdAt: new Date().toISOString()
       });
 
-      // 3. Redirect to Onboarding (or Dashboard if pending sub exists)
-      // The SubscriptionManager in App.tsx will handle the pending sub on navigation/load
       navigate('/onboarding');
-
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Failed to create account. Try again.");
+      console.error("Signup Error:", err);
+      if (err.code === 'auth/email-already-in-use') {
+        setError("This email is already registered. Please log in instead.");
+      } else if (err.code === 'auth/invalid-email') {
+        setError("Invalid email address format.");
+      } else if (err.code === 'auth/weak-password') {
+        setError("Password is too weak.");
+      } else {
+        setError(err.message || "Failed to create account. Please check your details and try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -125,7 +128,6 @@ const Signup = () => {
       {/* Right: Signup Form */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12 overflow-y-auto relative">
         
-        {/* Back Button */}
         <Link to="/" className="absolute top-6 left-6 lg:left-12 flex items-center gap-2 text-slate-400 hover:text-slate-700 transition-colors text-sm font-medium group z-20">
           <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> Back
         </Link>
@@ -133,7 +135,7 @@ const Signup = () => {
         <div className="w-full max-w-md space-y-8 mt-8 lg:mt-0">
           <div className="text-center lg:text-left">
             <h2 className="text-3xl font-bold text-slate-900">Create your account</h2>
-            <p className="text-slate-500 mt-2">Start your 14-day free trial. No credit card required.</p>
+            <p className="text-slate-500 mt-2">Start managing your business effectively.</p>
           </div>
 
           {hasPendingSubscription && (
@@ -147,27 +149,32 @@ const Signup = () => {
           )}
 
           {error && (
-            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-medium border border-red-100">
-              {error}
+            <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium border border-red-100 flex items-start gap-3 shadow-sm animate-in shake duration-300">
+              <AlertCircle size={18} className="shrink-0 mt-0.5" />
+              <div className="flex-1">
+                {error}
+                {error.includes("already registered") && (
+                   <Link to="/login" className="block mt-1 font-bold underline hover:text-red-800">Login Now &rarr;</Link>
+                )}
+              </div>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            
             <div className="space-y-4">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Business Details</h3>
               <div className="grid grid-cols-1 gap-4">
                 <div className="relative">
-                  <Building className="absolute left-3 top-3 text-slate-400" size={18} />
-                  <input required name="businessName" type="text" placeholder="Business Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                  <Building className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="businessName" type="text" placeholder="Business Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
                 <div className="relative">
-                  <UserIcon className="absolute left-3 top-3 text-slate-400" size={18} />
-                  <input required name="ownerName" type="text" placeholder="Owner Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                  <UserIcon className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="ownerName" type="text" placeholder="Owner Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
                 <div className="relative">
-                  <Phone className="absolute left-3 top-3 text-slate-400" size={18} />
-                  <input required name="mobile" type="tel" placeholder="Mobile Number" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                  <Phone className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="mobile" type="tel" placeholder="Mobile Number" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="relative">
@@ -175,10 +182,10 @@ const Signup = () => {
                       <option value="" disabled>Select State</option>
                       {INDIA_STATES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
-                    <MapPin className="absolute right-3 top-3 text-slate-400 pointer-events-none" size={18} />
+                    <MapPin className="absolute right-3 top-3.5 text-slate-400 pointer-events-none" size={18} />
                   </div>
                   <div className="relative">
-                    <input required name="city" type="text" placeholder="City" className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                    <input required name="city" type="text" placeholder="City" className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                   </div>
                 </div>
               </div>
@@ -187,17 +194,17 @@ const Signup = () => {
             <div className="space-y-4 pt-2 border-t border-slate-100">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Login Credentials</h3>
               <div className="relative">
-                <Mail className="absolute left-3 top-3 text-slate-400" size={18} />
-                <input required name="email" type="email" placeholder="Email Address" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                <Mail className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                <input required name="email" type="email" placeholder="Email Address" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="relative">
-                  <Lock className="absolute left-3 top-3 text-slate-400" size={18} />
-                  <input required name="password" type="password" placeholder="Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                  <Lock className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="password" type="password" placeholder="Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-3 text-slate-400" size={18} />
-                  <input required name="confirmPassword" type="password" placeholder="Confirm Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900 placeholder:text-slate-400" onChange={handleChange} />
+                  <Lock className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="confirmPassword" type="password" placeholder="Confirm Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
               </div>
             </div>
@@ -205,7 +212,7 @@ const Signup = () => {
             <button 
               disabled={loading}
               type="submit" 
-              className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2 mt-6"
+              className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2 mt-6 disabled:opacity-70"
             >
               {loading ? <Loader2 className="animate-spin" /> : <>Create Account <ArrowRight size={20} /></>}
             </button>

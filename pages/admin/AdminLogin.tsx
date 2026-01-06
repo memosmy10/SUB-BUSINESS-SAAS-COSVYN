@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -31,7 +30,6 @@ const AdminLogin = () => {
 
       navigate('/admin/dashboard');
     } catch (err: any) {
-      // Extract code and message safe checking
       const errorCode = err.code;
       const errorMessage = err.message || "";
 
@@ -39,7 +37,7 @@ const AdminLogin = () => {
         errorCode === 'auth/invalid-credential' || 
         errorCode === 'auth/user-not-found' || 
         errorCode === 'auth/wrong-password' ||
-        errorMessage.includes('auth/invalid-credential')
+        errorMessage.toLowerCase().includes('invalid-credential')
       ) {
          setError("Invalid credentials. If you haven't created the admin account yet, please Sign Up using the admin email on the main Signup page first.");
       } else {

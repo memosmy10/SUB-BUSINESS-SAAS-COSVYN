@@ -1,65 +1,45 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { ChartDataPoint } from "../types";
 
-// Safe environment variable access
-const getApiKey = () => {
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      return process.env.API_KEY;
-    }
-  } catch (e) {
-    console.error("Error accessing env vars", e);
-  }
-  return undefined;
-};
-
-// Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: getApiKey() });
+// Initialize Gemini with the strictly required named parameter pattern
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generateBusinessInsights = async (data: ChartDataPoint[]): Promise<string> => {
   try {
-    const dataString = JSON.stringify(data);
-    const model = 'gemini-2.5-flash';
+    if (!data || data.length === 0) return "Not enough data to generate insights yet.";
     
-    const prompt = `
-      Analyze the following monthly revenue (value) vs expenses (secondaryValue) data for a subscription business.
+    // Filtering out months with no data to save tokens and improve accuracy
+    const activeData = data.filter(d => (d.value || 0) > 0 || (d.secondaryValue || 0) > 0);
+    const dataString = JSON.stringify(activeData);
+    
+    // Using gemini-3-flash-preview for fast, low-latency text tasks
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `Analyze the following monthly revenue (value) vs expenses (secondaryValue) data for a meal subscription business.
       Data: ${dataString}
       
-      Provide a concise 3-bullet point summary of the financial health and 1 strategic recommendation.
-      Keep it professional and brief.
-    `;
-
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: prompt,
+      Provide a concise 3-bullet point summary of the financial health and 1 strategic recommendation for the kitchen owner.
+      Keep it professional, encouraging, and brief. Use Lakhs/Rupees context.`
     });
 
     return response.text || "Unable to generate insights at this time.";
   } catch (error) {
-    console.error("Error generating insights:", error);
-    return "Error connecting to AI service. Please check your API key configuration.";
+    console.error("Gemini Insight Error:", error);
+    return "AI insights are currently warming up. Check back in a moment!";
   }
 };
 
 export const generateSupportReply = async (customerQuery: string): Promise<string> => {
   try {
-    const model = 'gemini-2.5-flash';
-    const prompt = `
-      You are a helpful customer support agent for 'SubFlow', a SaaS platform.
-      Draft a polite, empathetic, and concise reply to the following customer query.
-      
-      Customer Query: "${customerQuery}"
-    `;
-
     const response = await ai.models.generateContent({
-      model: model,
-      contents: prompt,
+      model: 'gemini-3-flash-preview',
+      contents: `You are a helpful customer support agent for 'ScaleKitchen', a SaaS platform for tiffin services.
+      Draft a polite, empathetic, and concise reply to the following kitchen owner query: "${customerQuery}"`
     });
 
     return response.text || "I'm sorry, I couldn't generate a response.";
   } catch (error) {
-    console.error("Error generating reply:", error);
+    console.error("Gemini Support Error:", error);
     return "Error connecting to AI support assistant.";
   }
 };

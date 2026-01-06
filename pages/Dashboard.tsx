@@ -1,14 +1,14 @@
-
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   ArrowUpRight, ArrowDownRight, Users, DollarSign, Package, Loader2, 
-  AlertCircle, TrendingUp, RefreshCw, Calendar, Utensils, Sunrise, Sun, Moon 
+  AlertCircle, TrendingUp, RefreshCw, Calendar, Utensils, Sunrise, Sun, Moon, Sparkles, Lightbulb
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend 
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
+import { generateBusinessInsights } from '../services/geminiService';
 
 const COLORS = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
 
@@ -85,8 +85,10 @@ const Dashboard = () => {
 
   const isLoading = l1 || l2 || l3 || l4 || l5;
 
-  // Add Branch Filter State
+  // States
   const [selectedBranch, setSelectedBranch] = useState('All');
+  const [aiInsight, setAiInsight] = useState<string>('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   // --- FILTERED DATA ---
   const filteredCustomers = useMemo(() => {
@@ -118,8 +120,6 @@ const Dashboard = () => {
   const kpis = useMemo(() => {
     if (isLoading) return { revenue: 0, pending: 0, expenses: 0, activeUsers: 0, deliveriesToday: 0, renewalRate: 0 };
 
-    // REVENUE CALCULATION: Total Collected (Lifetime) + Current Pending
-    // This ensures renewals (which add to payments and update pending) correctly increase Total Revenue.
     const totalCollected = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
     const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
     const revenue = totalCollected + totalPending;
@@ -142,7 +142,7 @@ const Dashboard = () => {
     return { revenue, pending: totalPending, expenses: expensesTotal, activeUsers, deliveriesToday, renewalRate };
   }, [filteredCustomers, filteredExpenses, filteredPayments, plans, isLoading]);
 
-  // --- DAILY & TOMORROW KITCHEN PREP METRICS ---
+  // --- KITCHEN PREP METRICS ---
   const kitchenMetrics = useMemo(() => {
     const today = new Date();
     const tomorrow = new Date(today);
@@ -150,19 +150,14 @@ const Dashboard = () => {
 
     const getBreakdown = (targetDate: Date) => {
         const targetDayId = targetDate.getDay();
-        // Reset hours for date comparison
         const targetDateZero = new Date(targetDate);
         targetDateZero.setHours(0,0,0,0);
 
         const activeForDay = filteredCustomers.filter((c: any) => {
            if (!c.isActive) return false;
-           
-           // Check if subscription covers this date
            const endDate = new Date(c.endDate);
            endDate.setHours(0,0,0,0);
-           
            if (targetDateZero > endDate) return false;
-
            const plan = plans.find((p: any) => p.id === c.planId);
            return plan && plan.weekdays ? plan.weekdays.includes(targetDayId) : true;
         });
@@ -177,7 +172,6 @@ const Dashboard = () => {
         activeForDay.forEach((c: any) => {
            const meal = c.mealTime || 'Lunch'; 
            const planName = plans.find((p: any) => p.id === c.planId)?.name || 'Unknown Plan';
-           
            if (breakdown[meal as keyof typeof breakdown]) {
               const target = breakdown[meal as keyof typeof breakdown] as { count: number, plans: Record<string, number> };
               target.count++;
@@ -194,7 +188,7 @@ const Dashboard = () => {
   }, [filteredCustomers, plans]);
 
 
-  // --- CHART DATA 1: Revenue vs Expenses ---
+  // --- CHART DATA ---
   const barChartData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return months.map(month => {
@@ -210,11 +204,8 @@ const Dashboard = () => {
     });
   }, [filteredPayments, filteredExpenses]);
 
-  // --- CHART DATA 2: Plan Wise Revenue (Pie) - UPDATED TO USE COLLECTIONS ---
   const planPieData = useMemo(() => {
     const map: Record<string, number> = {};
-    
-    // Use filteredPayments to show actual realized revenue per plan
     filteredPayments.forEach((p: any) => {
        const customer = customers.find((c: any) => c.id === p.customerId);
        if (customer) {
@@ -223,15 +214,23 @@ const Dashboard = () => {
           map[planName] = (map[planName] || 0) + (p.amount || 0);
        }
     });
-
     return Object.keys(map).map(k => ({ name: k, value: map[k] }));
   }, [filteredPayments, customers, plans]);
 
-  // Current Date Formatter
-  const todayDateObj = new Date();
-  const todayDate = todayDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  
-  const tomorrowDateObj = new Date(todayDateObj);
+  // AI INSIGHTS TRIGGER
+  useEffect(() => {
+    const fetchAI = async () => {
+      if (isLoading || barChartData.every(d => d.value === 0 && d.secondaryValue === 0)) return;
+      setIsAiLoading(true);
+      const result = await generateBusinessInsights(barChartData);
+      setAiInsight(result);
+      setIsAiLoading(false);
+    };
+    fetchAI();
+  }, [isLoading, selectedBranch]); // Refetch when branch changes
+
+  const todayDate = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  const tomorrowDateObj = new Date();
   tomorrowDateObj.setDate(tomorrowDateObj.getDate() + 1);
   const tomorrowDate = tomorrowDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
@@ -239,7 +238,6 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header with Date and Branch Selector */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
@@ -251,9 +249,8 @@ const Dashboard = () => {
           <p className="text-slate-500 mt-1">Overview of your meal subscription business.</p>
         </div>
         
-        {/* Branch Filter */}
         <select 
-           className="px-4 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:ring-2 focus:ring-primary-500 outline-none w-full md:w-auto"
+           className="px-4 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:ring-2 focus:ring-primary-500 outline-none w-full md:w-auto shadow-sm"
            value={selectedBranch}
            onChange={(e) => setSelectedBranch(e.target.value)}
         >
@@ -262,70 +259,44 @@ const Dashboard = () => {
         </select>
       </div>
 
-      {/* 6 Widgets Grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <StatCard 
-          title="Total Revenue" 
-          value={`₹${kpis.revenue.toLocaleString()}`} 
-          icon={DollarSign} 
-          isPositive={true} 
-          colorClass="bg-green-600 text-green-600"
-        />
-        <StatCard 
-          title="Pending Payments" 
-          value={`₹${kpis.pending.toLocaleString()}`} 
-          icon={AlertCircle} 
-          isPositive={false} 
-          colorClass="bg-red-500 text-red-500"
-        />
-        <StatCard 
-          title="Total Expenses" 
-          value={`₹${kpis.expenses.toLocaleString()}`} 
-          icon={TrendingUp} 
-          isPositive={true} 
-          colorClass="bg-orange-500 text-orange-500"
-        />
-        <StatCard 
-          title="Active Customers" 
-          value={kpis.activeUsers} 
-          icon={Users} 
-          isPositive={true} 
-          colorClass="bg-blue-600 text-blue-600"
-        />
-        <StatCard 
-          title="Deliveries Today" 
-          value={kpis.deliveriesToday} 
-          icon={Package} 
-          isPositive={true} 
-          colorClass="bg-violet-600 text-violet-600"
-        />
-        <StatCard 
-          title="Renewal Rate" 
-          value={`${kpis.renewalRate}%`} 
-          icon={RefreshCw} 
-          isPositive={kpis.renewalRate > 50} 
-          colorClass="bg-cyan-500 text-cyan-500"
-        />
+        <StatCard title="Total Revenue" value={`₹${kpis.revenue.toLocaleString()}`} icon={DollarSign} isPositive={true} colorClass="bg-green-600 text-green-600" />
+        <StatCard title="Pending Payments" value={`₹${kpis.pending.toLocaleString()}`} icon={AlertCircle} isPositive={false} colorClass="bg-red-500 text-red-500" />
+        <StatCard title="Total Expenses" value={`₹${kpis.expenses.toLocaleString()}`} icon={TrendingUp} isPositive={true} colorClass="bg-orange-500 text-orange-500" />
+        <StatCard title="Active Customers" value={kpis.activeUsers} icon={Users} isPositive={true} colorClass="bg-blue-600 text-blue-600" />
+        <StatCard title="Deliveries Today" value={kpis.deliveriesToday} icon={Package} isPositive={true} colorClass="bg-violet-600 text-violet-600" />
+        <StatCard title="Renewal Rate" value={`${kpis.renewalRate}%`} icon={RefreshCw} isPositive={kpis.renewalRate > 50} colorClass="bg-cyan-500 text-cyan-500" />
       </div>
 
-      {/* KITCHEN PREP WIDGETS (Today & Tomorrow) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-         <KitchenPrepWidget 
-            title="Daily Kitchen Prep" 
-            date={`Today, ${todayDate}`}
-            metrics={kitchenMetrics.today}
-            isTomorrow={false}
-         />
-         <KitchenPrepWidget 
-            title="Tomorrow's Plan" 
-            date={`Tomorrow, ${tomorrowDate}`}
-            metrics={kitchenMetrics.tomorrow}
-            isTomorrow={true}
-         />
+         <KitchenPrepWidget title="Daily Kitchen Prep" date={`Today, ${todayDate}`} metrics={kitchenMetrics.today} isTomorrow={false} />
+         <KitchenPrepWidget title="Tomorrow's Plan" date={`Tomorrow, ${tomorrowDate}`} metrics={kitchenMetrics.tomorrow} isTomorrow={true} />
+      </div>
+
+      {/* AI INSIGHTS CARD */}
+      <div className="bg-gradient-to-br from-primary-50 to-violet-50 p-6 rounded-2xl border border-primary-100 shadow-sm relative overflow-hidden group">
+         <div className="absolute top-[-20px] right-[-20px] opacity-10 group-hover:scale-110 transition-transform duration-700">
+            <Sparkles size={120} className="text-primary-600" />
+         </div>
+         <div className="flex items-center gap-3 mb-4 relative z-10">
+            <div className="p-2 bg-white rounded-xl shadow-sm text-primary-600 animate-pulse">
+               <Lightbulb size={20} fill="currentColor" />
+            </div>
+            <h3 className="font-bold text-primary-900">AI Kitchen Intelligence</h3>
+         </div>
+         {isAiLoading ? (
+            <div className="flex items-center gap-3 text-slate-400 py-4">
+               <Loader2 size={16} className="animate-spin" />
+               <span className="text-sm font-medium italic">Analyzing your cash flow and growth metrics...</span>
+            </div>
+         ) : (
+            <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line relative z-10 bg-white/40 p-4 rounded-xl backdrop-blur-sm border border-white/60">
+               {aiInsight || "Add more payment and expense records to unlock AI financial analysis."}
+            </div>
+         )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Revenue vs Expenses Bar Chart */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <h2 className="text-lg font-bold text-slate-900 mb-6">Cash Flow (Collections vs Expenses)</h2>
           <div className="h-80">
@@ -346,25 +317,13 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Plan Wise Monthly Revenue Pie Chart */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
           <h2 className="text-lg font-bold text-slate-900 mb-6">Revenue by Plan</h2>
           <div className="flex-1 min-h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie 
-                  data={planPieData} 
-                  dataKey="value" 
-                  nameKey="name" 
-                  cx="50%" 
-                  cy="50%" 
-                  outerRadius={80} 
-                  innerRadius={50}
-                  paddingAngle={5}
-                >
-                  {planPieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
+                <Pie data={planPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} paddingAngle={5}>
+                  {planPieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
                 <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
                 <Legend verticalAlign="bottom" layout="horizontal" />

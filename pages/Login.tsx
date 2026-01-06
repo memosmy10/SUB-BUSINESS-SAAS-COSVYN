@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Zap, CheckCircle, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
@@ -17,41 +16,46 @@ const Login = () => {
   const [hasPendingSubscription, setHasPendingSubscription] = useState(false);
 
   useEffect(() => {
-    // Check for pending subscription from redirected payment
     const pending = localStorage.getItem('pending_subscription');
     if (pending) {
       setHasPendingSubscription(true);
     }
   }, []);
 
-  // The logic to route user based on subscription status and role
   const handleAuthSuccess = async (user: any) => {
-    // 1. Check if Admin
     if (user.email === ADMIN_EMAIL) {
       navigate('/admin/dashboard');
       return;
     }
 
-    // 2. Check if Business Owner
     try {
       const docRef = doc(db, 'businesses', user.uid);
-      const docSnap = await getDoc(docRef);
+      let docSnap = null;
+      
+      // Retry loop to handle Firebase Auth -> Firestore propagation delay
+      for (let i = 0; i < 3; i++) {
+        try {
+          docSnap = await getDoc(docRef);
+          break; 
+        } catch (e: any) {
+          if (i === 2) throw e; 
+          await new Promise(r => setTimeout(r, 800)); 
+        }
+      }
 
-      if (docSnap.exists()) {
+      if (docSnap && docSnap.exists()) {
         const data = docSnap.data();
         if (data.planStatus === 'Active') {
           navigate('/app/dashboard');
         } else {
-          // Subscription inactive or expired
           navigate('/onboarding');
         }
       } else {
-        // No profile found? Should technically go to signup, or onboarding to create one
         navigate('/onboarding');
       }
-    } catch (e) {
-      console.error("Error fetching profile", e);
-      // Fallback
+    } catch (e: any) {
+      console.warn("Routing fallback after profile fetch error:", e.message);
+      // Fallback to dashboard; persistent listeners will eventually sync data
       navigate('/app/dashboard'); 
     }
   };
@@ -61,40 +65,31 @@ const Login = () => {
     setLoading(true);
     setError('');
     try {
-      const user = await loginWithEmail(email, password);
+      const user = await loginWithEmail(email.trim(), password);
       await handleAuthSuccess(user);
     } catch (err: any) {
-      // Extract code and message safe checking
+      console.error("Login Error:", err);
       const errorCode = err.code;
-      const errorMessage = err.message || "";
+      const errorMessage = (err.message || "").toLowerCase();
 
-      // Log only unexpected errors
-      if (errorCode !== 'auth/invalid-credential' && errorCode !== 'auth/user-not-found' && errorCode !== 'auth/wrong-password') {
-        console.error("Login Error:", err);
-      }
-
-      // Handle specific Firebase errors
       if (
         errorCode === 'auth/invalid-credential' || 
         errorCode === 'auth/user-not-found' || 
         errorCode === 'auth/wrong-password' ||
-        errorMessage.includes('auth/invalid-credential')
+        errorMessage.includes('invalid-credential')
       ) {
-         if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
-             setError("Admin account not found. You must click 'Sign up' below to create the admin account first.");
-         } else {
-             setError("Invalid email or password. Please check your credentials or Sign Up.");
-         }
+         setError("Incorrect email or password. Please check your credentials and try again.");
       } else if (errorCode === 'auth/too-many-requests') {
-         setError("Too many failed attempts. Please try again later.");
+         setError("Account temporarily locked due to many failed attempts. Try again later.");
+      } else if (errorCode === 'auth/network-request-failed') {
+         setError("Connection error. Please check your internet.");
       } else {
-         setError("Login failed: " + errorMessage);
+         setError("Login failed. Please verify your details.");
       }
       setLoading(false);
     }
   };
 
-  // Watch for auth state changes
   useEffect(() => {
     if (currentUser) {
       handleAuthSuccess(currentUser);
@@ -103,13 +98,11 @@ const Login = () => {
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background decoration */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-primary-600/20 rounded-full blur-[100px]" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-violet-600/20 rounded-full blur-[100px]" />
 
       <div className="bg-white rounded-3xl shadow-2xl overflow-hidden max-w-4xl w-full grid md:grid-cols-2 relative z-10">
         
-        {/* Left: Branding (Hidden on Mobile) */}
         <div className="hidden md:flex bg-gradient-to-br from-slate-900 to-slate-800 p-12 text-white flex-col justify-between relative overflow-hidden">
           <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10" />
           
@@ -120,12 +113,12 @@ const Login = () => {
               </div>
               <span className="text-2xl font-bold tracking-tight">ScaleKitchen</span>
             </div>
-            <h2 className="text-4xl font-bold mb-6 leading-tight">Run your meal prep business on autopilot.</h2>
-            <p className="text-slate-400 text-lg">Manage subscriptions, deliveries, and payments in one unified dashboard.</p>
+            <h2 className="text-4xl font-bold mb-6 leading-tight">Scale your meal prep business with ease.</h2>
+            <p className="text-slate-400 text-lg">One unified platform for subscriptions, deliveries, and billing.</p>
           </div>
 
           <div className="space-y-4 mt-8">
-            {['Automated Billing', 'Delivery Routing', 'Customer Insights'].map((feat, i) => (
+            {['Billing Automation', 'Route Planning', 'Data Analytics'].map((feat, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div className="w-6 h-6 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center">
                   <CheckCircle size={14} />
@@ -136,10 +129,8 @@ const Login = () => {
           </div>
         </div>
 
-        {/* Right: Login Form */}
         <div className="p-6 md:p-12 flex flex-col justify-center items-center relative w-full">
           
-          {/* Back Button */}
           <Link to="/" className="absolute top-4 left-4 md:top-6 md:left-6 flex items-center gap-2 text-slate-400 hover:text-slate-700 transition-colors text-sm font-medium group">
             <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> Back
           </Link>
@@ -147,35 +138,23 @@ const Login = () => {
           <div className="w-full max-w-sm mt-8 md:mt-0">
             <div className="text-center mb-6 md:mb-8">
               <h3 className="text-2xl font-bold text-slate-900 mb-2">Welcome Back</h3>
-              <p className="text-slate-500">Log in to access your dashboard.</p>
+              <p className="text-slate-500">Enter details to manage your kitchen.</p>
             </div>
 
             {hasPendingSubscription && (
-              <div className="bg-green-50 text-green-700 p-4 rounded-lg text-sm font-medium border border-green-200 mb-6 flex flex-col gap-2 shadow-sm animate-in fade-in slide-in-from-top-2">
+              <div className="bg-green-50 text-green-700 p-4 rounded-lg text-sm font-medium border border-green-200 mb-6 flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
                 <div className="flex items-center gap-2">
                   <CheckCircle size={20} className="shrink-0 text-green-600" />
-                  <span className="font-bold text-lg">Payment Successful!</span>
+                  <span className="font-bold text-lg">Payment Verified!</span>
                 </div>
-                <p className="text-slate-600 ml-7">Please log in to activate your plan immediately.</p>
+                <p className="text-slate-600 ml-7">Log in to your account to start using the app.</p>
               </div>
             )}
 
             {error && (
-              <div className="bg-red-50 text-red-600 p-4 rounded-lg text-sm font-medium border border-red-100 mb-6 flex flex-col gap-2">
-                <div className="flex items-start gap-2">
-                  <AlertCircle size={18} className="shrink-0 mt-0.5" /> 
-                  <span className="leading-snug">{error}</span>
-                </div>
-                {error.includes("Admin account not found") && (
-                   <Link to="/signup" className="text-red-700 underline text-xs ml-7 font-bold">
-                      Create Admin Account Now
-                   </Link>
-                )}
-                {error.includes("Domain") && (
-                   <div className="ml-7 text-xs text-red-700 bg-red-100/50 p-2 rounded">
-                      <strong>How to fix:</strong> Go to Firebase Console &rarr; Authentication &rarr; Settings &rarr; Authorized Domains &rarr; Add Domain.
-                   </div>
-                )}
+              <div className="bg-red-50 text-red-600 p-4 rounded-lg text-sm font-medium border border-red-100 mb-6 flex items-start gap-3 shadow-sm">
+                <AlertCircle size={18} className="shrink-0 mt-0.5" /> 
+                <span className="leading-snug">{error}</span>
               </div>
             )}
 
@@ -184,7 +163,7 @@ const Login = () => {
                 <input 
                   type="email" 
                   placeholder="Email Address" 
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all text-slate-900 placeholder:text-slate-400"
+                  className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all text-slate-900"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -194,7 +173,7 @@ const Login = () => {
                 <input 
                   type="password" 
                   placeholder="Password" 
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all text-slate-900 placeholder:text-slate-400"
+                  className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all text-slate-900"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -203,14 +182,14 @@ const Login = () => {
               <button 
                 type="submit" 
                 disabled={loading}
-                className="w-full bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center"
+                className="w-full bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center disabled:opacity-70"
               >
-                {loading ? <Loader2 className="animate-spin" /> : "Log In"}
+                {loading ? <Loader2 className="animate-spin" /> : "Sign In"}
               </button>
             </form>
 
             <p className="mt-8 text-center text-sm text-slate-500">
-              Don't have an account? <Link to="/signup" className="text-primary-600 font-bold hover:underline">Sign up</Link>
+              New here? <Link to="/signup" className="text-primary-600 font-bold hover:underline">Create an account</Link>
             </p>
           </div>
         </div>

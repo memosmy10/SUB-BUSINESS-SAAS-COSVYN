@@ -7,11 +7,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
 import { 
-  INITIAL_BUSINESS_PROFILE, 
   calculateEndDate, 
   calculateRemainingDeliveries, 
   countDeliveryDays,
-  getDaysDifference,
   GlobalCustomer 
 } from '../services/store';
 import { doc, getDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
@@ -21,11 +19,10 @@ const Customers = () => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   
-  // Real Data
-  const { data: customers, loading: l1 } = useStreamCollection<GlobalCustomer>('customers');
-  const { data: branches, loading: l2 } = useStreamCollection<any>('branches');
-  const { data: plans, loading: l3 } = useStreamCollection<any>('plans');
-  const { data: deliveryBoys, loading: l4 } = useStreamCollection<any>('staff');
+  const { data: customers = [], loading: l1 } = useStreamCollection<GlobalCustomer>('customers');
+  const { data: branches = [], loading: l2 } = useStreamCollection<any>('branches');
+  const { data: plans = [], loading: l3 } = useStreamCollection<any>('plans');
+  const { data: deliveryBoys = [], loading: l4 } = useStreamCollection<any>('staff');
 
   const isLoading = l1 || l2 || l3 || l4;
 
@@ -33,7 +30,6 @@ const Customers = () => {
   const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
 
-  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
   const [isPauseBranchModalOpen, setIsPauseBranchModalOpen] = useState(false);
@@ -41,12 +37,10 @@ const Customers = () => {
   
   const [activeCustomer, setActiveCustomer] = useState<GlobalCustomer | null>(null);
 
-  // Column Filters
   const [filters, setFilters] = useState({
     name: '', mobile: '', plan: '', area: '', payment: '', branch: ''
   });
 
-  // Check Profile
   useEffect(() => {
     if(currentUser) {
       getDoc(doc(db, 'businesses', currentUser.uid)).then(snap => {
@@ -55,10 +49,8 @@ const Customers = () => {
     }
   }, [currentUser]);
 
-  // Actions
   const handleAddOrEditCustomer = async (data: any) => {
     if (!currentUser) return;
-    
     if (activeCustomer) {
        const oldPaid = activeCustomer.amountPaid || 0;
        const newPaid = Number(data.amountPaid);
@@ -95,11 +87,9 @@ const Customers = () => {
     if (!currentUser) return;
     const cust = customers.find(c => c.id === customerId);
     if (!cust) return;
-
     const plan = plans.find((p:any) => p.id === data.planId);
     const weekdays = plan ? plan.weekdays : [0,1,2,3,4,5,6];
     const daysLeft = calculateRemainingDeliveries(data.endDate, weekdays);
-
     await updateItem(currentUser.uid, 'customers', customerId, {
       isActive: true,
       planId: data.planId,
@@ -114,7 +104,6 @@ const Customers = () => {
       deliveryBoyId: data.deliveryBoyId,
       renewalCount: (cust.renewalCount || 0) + 1
     });
-
     if (data.amountPaid > 0) {
       const revenueDate = new Date(data.startDate + 'T12:00:00').toISOString();
       await addItem(currentUser.uid, 'payments', {
@@ -130,7 +119,7 @@ const Customers = () => {
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    if (currentUser && window.confirm('Delete customer? This action will also delete all revenue records associated with this customer. This cannot be undone.')) {
+    if (currentUser && window.confirm('Delete customer? This action will also delete all revenue records associated with this customer.')) {
       try {
         const batch = writeBatch(db);
         const customerRef = doc(db, 'businesses', currentUser.uid, 'customers', id);
@@ -141,16 +130,14 @@ const Customers = () => {
         paymentSnap.forEach((pDoc) => batch.delete(pDoc.ref));
         await batch.commit();
       } catch (error) {
-        console.error("Error deleting customer and payments:", error);
-        alert("Failed to delete customer completely.");
+        console.error("Error deleting customer:", error);
       }
     }
   };
 
   const handlePauseBranch = async (branchId: string, pauseStart: string, pauseEnd: string) => {
      if (!currentUser) return;
-     const branchCustomers = customers.filter(c => c.branchId === branchId && c.isActive);
-     let updatedCount = 0;
+     const branchCustomers = (customers || []).filter(c => c.branchId === branchId && c.isActive);
      for (const c of branchCustomers) {
         const plan = plans.find((p:any) => p.id === c.planId);
         const weekdays = plan ? plan.weekdays : [0,1,2,3,4,5,6];
@@ -158,16 +145,14 @@ const Customers = () => {
         if (missedDeliveries > 0) {
            const newEndDate = calculateEndDate(c.endDate, missedDeliveries, weekdays);
            await updateItem(currentUser.uid, 'customers', c.id, { endDate: newEndDate });
-           updatedCount++;
         }
      }
      setIsPauseBranchModalOpen(false);
-     alert(`Paused branch. ${updatedCount} subscriptions extended.`);
   };
 
   const handlePauseCustomer = async (customerId: string, pauseStart: string, pauseEnd: string) => {
      if (!currentUser) return;
-     const c = customers.find(x => x.id === customerId);
+     const c = (customers || []).find(x => x.id === customerId);
      if (!c) return;
      const plan = plans.find((p:any) => p.id === c.planId);
      const weekdays = plan ? plan.weekdays : [0,1,2,3,4,5,6];
@@ -181,29 +166,29 @@ const Customers = () => {
   };
 
   const filteredCustomers = useMemo(() => {
-     return customers.filter(c => {
+     return (customers || []).filter(c => {
         const planName = plans.find((p:any) => p.id === c.planId)?.name || '';
         return (
-           c.name.toLowerCase().includes(filters.name.toLowerCase()) &&
-           c.mobile.includes(filters.mobile) &&
-           c.area.toLowerCase().includes(filters.area.toLowerCase()) &&
+           (c.name || '').toLowerCase().includes(filters.name.toLowerCase()) &&
+           (c.mobile || '').includes(filters.mobile) &&
+           (c.area || '').toLowerCase().includes(filters.area.toLowerCase()) &&
            (filters.payment === '' || c.paymentStatus === filters.payment) &&
            (filters.branch === '' || c.branchId === filters.branch) &&
            planName.toLowerCase().includes(filters.plan.toLowerCase())
         );
      }).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
-  }, [customers, filters, branches, plans]);
+  }, [customers, filters, plans]);
 
   const metrics = useMemo(() => {
-    const unique = customers.length;
+    const unique = customers?.length || 0;
     let active = 0;
-    customers.forEach(c => {
+    (customers || []).forEach(c => {
        const plan = plans.find((p:any) => p.id === c.planId);
        const weekdays = plan ? plan.weekdays : [0,1,2,3,4,5,6];
        const daysLeft = calculateRemainingDeliveries(c.endDate, weekdays);
        if (c.isActive && daysLeft > 0) active++;
     });
-    const totalRenewals = customers.reduce((acc, c) => acc + (c.renewalCount || 0), 0);
+    const totalRenewals = (customers || []).reduce((acc, c) => acc + (c.renewalCount || 0), 0);
     const renewalRate = unique > 0 ? Math.round((totalRenewals / (unique + totalRenewals)) * 100) : 0;
     return { unique, active, renewalRate };
   }, [customers, plans]);
@@ -213,8 +198,8 @@ const Customers = () => {
       setExpandedCustomerId(null);
     } else {
       setExpandedCustomerId(id);
-      const cust = customers.find(c => c.id === id);
-      if (cust) {
+      const cust = (customers || []).find(c => c.id === id);
+      if (cust && cust.startDate) {
         const date = new Date(cust.startDate);
         setSelectedMonthKey(`${date.getFullYear()}-${date.getMonth()}`);
       }
@@ -222,9 +207,10 @@ const Customers = () => {
   };
 
   const shareStatusWhatsApp = (cust: GlobalCustomer, summary: any) => {
-    const monthName = new Date(parseInt(selectedMonthKey?.split('-')[0] || '2025'), parseInt(selectedMonthKey?.split('-')[1] || '0')).toLocaleString('default', { month: 'long', year: 'numeric' });
-    const msg = `Hello ${cust.name}, here is your delivery status for ${monthName}:\n\n✅ Total Delivered: ${summary.delivered}\n⏸️ User Paused: ${summary.userPaused}\n🛑 Branch Paused: ${summary.branchPaused}\n☀️ Sundays: ${summary.sundays}\n⚪ Days with No Active Plan: ${summary.noPlan}\n\nThank you for choosing our service!`;
-    window.open(`https://wa.me/${cust.mobile.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const parts = (selectedMonthKey || '2025-0').split('-');
+    const monthName = new Date(parseInt(parts[0]), parseInt(parts[1])).toLocaleString('default', { month: 'long', year: 'numeric' });
+    const msg = `Hello ${cust.name}, delivery status for ${monthName}:\n✅ Delivered: ${summary.delivered}\n⏸️ User Paused: ${summary.userPaused}\n🛑 Branch Paused: ${summary.branchPaused}\n☀️ Sundays: ${summary.sundays}\n⚪ No Active Plan: ${summary.noPlan}`;
+    window.open(`https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
@@ -301,7 +287,7 @@ const Customers = () => {
                      <th className="p-2 border-b border-slate-200">
                         <select className="w-full p-1 text-xs border border-slate-200 rounded font-normal bg-white text-slate-900" value={filters.branch} onChange={e => setFilters({...filters, branch: e.target.value})}>
                            <option value="">All</option>
-                           {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                           {(branches || []).map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
                      </th>
                      <th className="p-2 border-b border-slate-200"></th>
@@ -371,7 +357,6 @@ const Customers = () => {
                                  <td colSpan={13} className="p-0">
                                     <div className="p-6 bg-slate-50 animate-in fade-in slide-in-from-top-2 duration-300">
                                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                          {/* Timeline Column */}
                                           <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                                              <h4 className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
                                                 <Calendar size={14}/> Subscription Timeline
@@ -396,8 +381,6 @@ const Customers = () => {
                                                 ))}
                                              </div>
                                           </div>
-
-                                          {/* Days Status Grid Column */}
                                           <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                                              <div className="flex justify-between items-center mb-4">
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
@@ -409,12 +392,12 @@ const Customers = () => {
                                                    </button>
                                                 </div>
                                              </div>
-                                             
                                              <div className="grid grid-cols-7 gap-2 mb-6">
                                                 {['S','M','T','W','T','F','S'].map((day, i) => (
                                                    <div key={i} className="text-center text-[10px] font-black text-slate-300 uppercase">{day}</div>
                                                 ))}
-                                                {generateMonthDays(selectedMonthKey).map((d: any, i: number) => {
+                                                {(generateMonthDays(selectedMonthKey) || []).map((d: any, i: number) => {
+                                                   if (d.empty) return <div key={i} className="w-8 h-8" />;
                                                    const status = getDayStatus(c, d.date, plans);
                                                    return (
                                                       <div key={i} className="flex flex-col items-center">
@@ -427,7 +410,7 @@ const Customers = () => {
                                                                status === 'no-plan' ? 'bg-slate-100 text-slate-400 border-slate-200' :
                                                                'bg-white text-slate-300 border-slate-100'
                                                             }`}
-                                                            title={d.date?.toDateString()}
+                                                            title={d.date?.toDateString() || ''}
                                                          >
                                                             {d.day}
                                                          </div>
@@ -435,8 +418,6 @@ const Customers = () => {
                                                    );
                                                 })}
                                              </div>
-
-                                             {/* Legend */}
                                              <div className="flex flex-wrap gap-x-4 gap-y-2 pt-4 border-t border-slate-100">
                                                 <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase"><div className="w-3 h-3 rounded bg-green-500" /> Delivered</div>
                                                 <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase"><div className="w-3 h-3 rounded bg-orange-100 border border-orange-200" /> Sunday</div>
@@ -445,8 +426,6 @@ const Customers = () => {
                                                 <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase"><div className="w-3 h-3 rounded bg-slate-100 border border-slate-200" /> No Plan</div>
                                              </div>
                                           </div>
-
-                                          {/* Summary Metrics Column */}
                                           <div className="bg-slate-900 text-white p-5 rounded-xl shadow-lg border border-slate-800 flex flex-col justify-between">
                                              <h4 className="text-[10px] font-black text-slate-500 uppercase mb-4 tracking-widest">Monthly Summary</h4>
                                              {(() => {
@@ -490,7 +469,6 @@ const Customers = () => {
          </div>
       </div>
 
-      {/* Modals are kept the same */}
       {isAddModalOpen && ( <CustomerModal branches={branches} plans={plans} staff={deliveryBoys} initialData={activeCustomer} onClose={() => { setIsAddModalOpen(false); setActiveCustomer(null); }} onSubmit={handleAddOrEditCustomer} /> )}
       {isRenewModalOpen && activeCustomer && ( <RenewCustomerModal customer={activeCustomer} plans={plans.filter((p: any) => p.branchId === activeCustomer.branchId)} staff={deliveryBoys.filter((s: any) => s.branchId === activeCustomer.branchId)} branchName={branches.find((b: any) => b.id === activeCustomer.branchId)?.name || ''} onClose={() => { setIsRenewModalOpen(false); setActiveCustomer(null); }} onSubmit={(data: any) => handleRenewCustomer(activeCustomer.id, data)} /> )}
       {isPauseBranchModalOpen && ( <PauseBranchModal branches={branches} customers={customers} onClose={() => setIsPauseBranchModalOpen(false)} onSubmit={handlePauseBranch} /> )}
@@ -499,17 +477,14 @@ const Customers = () => {
   );
 };
 
-// --- HELPER LOGIC FOR EXPANDED VIEW ---
-
 const generateTimeline = (cust: GlobalCustomer) => {
+   if (!cust || !cust.startDate || !cust.endDate) return [];
    const start = new Date(cust.startDate);
    const end = new Date(cust.endDate);
    const now = new Date();
    const months = [];
-   
    let current = new Date(start.getFullYear(), start.getMonth(), 1);
    const limit = new Date(Math.max(end.getTime(), now.getTime()));
-
    while (current <= limit) {
       const key = `${current.getFullYear()}-${current.getMonth()}`;
       const status = current <= end ? (cust.renewalCount > 0 && current.getTime() > start.getTime() ? 'renewed' : 'active') : 'expired';
@@ -529,38 +504,28 @@ const generateMonthDays = (monthKey: string | null) => {
    const [year, month] = monthKey.split('-').map(Number);
    const daysInMonth = new Date(year, month + 1, 0).getDate();
    const days = [];
-   
-   // Padding for calendar view
    const firstDay = new Date(year, month, 1).getDay();
    for (let i = 0; i < firstDay; i++) days.push({ empty: true });
-
    for (let i = 1; i <= daysInMonth; i++) {
       days.push({ day: i, date: new Date(year, month, i) });
    }
    return days;
 };
 
-// Fix: Explicitly type return value to include all possible statuses used in the app, 
-// avoiding narrowing errors in getMonthSummary and render logic.
-const getDayStatus = (cust: GlobalCustomer, date: Date, plans: any[]): 'empty' | 'no-plan' | 'sunday' | 'delivered' | 'user-paused' | 'branch-paused' => {
+const getDayStatus = (cust: GlobalCustomer, date: Date | undefined, plans: any[]): 'empty' | 'no-plan' | 'sunday' | 'delivered' | 'user-paused' | 'branch-paused' => {
    if (!date) return 'empty';
    const d = new Date(date);
    d.setHours(0,0,0,0);
+   if (!cust.startDate || !cust.endDate) return 'no-plan';
    const start = new Date(cust.startDate);
    start.setHours(0,0,0,0);
    const end = new Date(cust.endDate);
    end.setHours(0,0,0,0);
-
    if (d < start || d > end) return 'no-plan';
    if (d.getDay() === 0) return 'sunday';
-
-   const plan = plans.find(p => p.id === cust.planId);
+   const plan = (plans || []).find(p => p.id === cust.planId);
    const weekdays = plan?.weekdays || [0,1,2,3,4,5,6];
-   
    if (!weekdays.includes(d.getDay())) return 'no-plan';
-
-   // In real app, we'd check a logs collection for specific pauses.
-   // For now, if active and within range, it's delivered.
    return 'delivered';
 };
 
@@ -568,7 +533,6 @@ const getMonthSummary = (cust: GlobalCustomer, monthKey: string | null, plans: a
    if (!monthKey) return { delivered: 0, sundays: 0, userPaused: 0, branchPaused: 0, noPlan: 0 };
    const [year, month] = monthKey.split('-').map(Number);
    const daysInMonth = new Date(year, month + 1, 0).getDate();
-   
    const summary = { delivered: 0, sundays: 0, userPaused: 0, branchPaused: 0, noPlan: 0 };
    for (let i = 1; i <= daysInMonth; i++) {
       const status = getDayStatus(cust, new Date(year, month, i), plans);
@@ -581,11 +545,9 @@ const getMonthSummary = (cust: GlobalCustomer, monthKey: string | null, plans: a
    return summary;
 };
 
-// --- SUB COMPONENTS (Kept original for brevity) ---
-// Note: Keeping Original Modal definitions from provided source file to ensure full functionality.
 const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState<any>({
-      branchId: branches[0]?.id || '', 
+      branchId: branches?.[0]?.id || '', 
       name: '', mobile: '', address: '', area: '', 
       planId: '', 
       paymentStatus: 'Paid', 
@@ -598,10 +560,8 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       mealTime: 'Lunch', 
       ...initialData
    });
-   
-   const branchPlans = useMemo(() => plans.filter((p: any) => p.branchId === formData.branchId), [plans, formData.branchId]);
-   const branchStaff = useMemo(() => staff.filter((s: any) => s.branchId === formData.branchId), [staff, formData.branchId]);
-
+   const branchPlans = useMemo(() => (plans || []).filter((p: any) => p.branchId === formData.branchId), [plans, formData.branchId]);
+   const branchStaff = useMemo(() => (staff || []).filter((s: any) => s.branchId === formData.branchId), [staff, formData.branchId]);
    useEffect(() => {
       if (!initialData) {
          const isValidPlan = branchPlans.find((p:any) => p.id === formData.planId);
@@ -622,7 +582,6 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
          }
       }
    }, [formData.branchId, branchPlans, branchStaff, initialData]); 
-
    const handlePlanChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
       const newPlanId = e.target.value;
       const selectedPlan = plans.find((p:any) => p.id === newPlanId);
@@ -631,7 +590,6 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
          setFormData({ ...formData, planId: newPlanId, planPrice: selectedPlan.price, amountPaid: totalContract, pendingAmount: 0, paymentStatus: 'Paid' });
       }
    };
-
    const handleDeliveryChargesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const charges = Number(e.target.value) || 0;
       const totalContract = formData.planPrice + charges;
@@ -639,7 +597,6 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
       setFormData({ ...formData, deliveryCharges: charges, pendingAmount: newPending, paymentStatus: newStatus });
    };
-
    const handlePaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newPaid = Number(e.target.value);
       const totalContract = formData.planPrice + (formData.deliveryCharges || 0);
@@ -647,7 +604,6 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
       setFormData({ ...formData, amountPaid: newPaid, pendingAmount: newPending, paymentStatus: newStatus });
    };
-
    const handlePendingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newPending = Number(e.target.value);
       const totalContract = formData.planPrice + (formData.deliveryCharges || 0);
@@ -655,7 +611,6 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       const newStatus = newPending > 0 ? 'Pending' : 'Paid';
       setFormData({ ...formData, amountPaid: newPaid, pendingAmount: newPending, paymentStatus: newStatus });
    };
-
    const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       const selectedPlan = plans.find((p: any) => p.id === formData.planId);
@@ -665,7 +620,6 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
       const daysLeft = calculateRemainingDeliveries(endDate, weekdays);
       onSubmit({ ...formData, isActive: true, daysLeft, endDate, planPrice: formData.planPrice, deliveryCharges: Number(formData.deliveryCharges), amountPaid: Number(formData.amountPaid), pendingAmount: Number(formData.pendingAmount), paymentStatus: formData.paymentStatus, renewalCount: initialData ? initialData.renewalCount : 0, routeOrder: initialData ? initialData.routeOrder : 999 });
    };
-
    return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
          <div className="bg-white w-full max-w-lg rounded-2xl p-6 overflow-y-auto max-h-[90vh] shadow-2xl">
@@ -675,7 +629,7 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
                   <div>
                      <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Branch</label>
                      <select disabled={!!initialData} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 disabled:bg-slate-100 outline-none focus:ring-2 focus:ring-blue-500" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>
-                        {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                        {(branches || []).map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                      </select>
                   </div>
                   <div>
@@ -740,7 +694,7 @@ const CustomerModal = ({ branches, plans, staff, initialData, onClose, onSubmit 
 const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState({ planId: customer.planId, startDate: new Date().toISOString().split('T')[0], paymentStatus: 'Paid', amountPaid: 0, pendingAmount: 0, planPrice: 0, deliveryCharges: customer.deliveryCharges || 0, deliveryBoyId: customer.deliveryBoyId || '' });
    useEffect(() => {
-      const plan = plans.find((p:any) => p.id === customer.planId);
+      const plan = (plans || []).find((p:any) => p.id === customer.planId);
       if(plan) {
          const totalContract = plan.price + (formData.deliveryCharges || 0);
          setFormData(prev => ({ ...prev, planPrice: plan.price, amountPaid: totalContract, pendingAmount: 0, paymentStatus: 'Paid' }));
@@ -794,9 +748,9 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
                </div>
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
-               <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select New Plan</label><select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 outline-none" value={formData.planId} onChange={handlePlanChange}>{plans.map((p:any) => <option key={p.id} value={p.id}>{p.name} (₹{p.price})</option>)}</select></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select New Plan</label><select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 outline-none" value={formData.planId} onChange={handlePlanChange}>{(plans || []).map((p:any) => <option key={p.id} value={p.id}>{p.name} (₹{p.price})</option>)}</select></div>
                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Start Date</label><input required type="date" value={formData.startDate} className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, startDate: e.target.value})} /></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Delivery Boy</label><select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" value={formData.deliveryBoyId} onChange={e => setFormData({...formData, deliveryBoyId: e.target.value})}><option value="">-- Assign Delivery Boy --</option>{staff.map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Delivery Boy</label><select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" value={formData.deliveryBoyId} onChange={e => setFormData({...formData, deliveryBoyId: e.target.value})}><option value="">-- Assign Delivery Boy --</option>{(staff || []).map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <div className="flex justify-between items-center mb-3"><span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Calculator size={14}/> Payment</span><span className={`text-xs font-bold px-2 py-1 rounded ${formData.paymentStatus === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{formData.paymentStatus}</span></div>
                   <div className="grid grid-cols-2 gap-4 mb-4">
@@ -817,15 +771,15 @@ const RenewCustomerModal = ({ customer, plans, staff, branchName, onClose, onSub
 }
 
 const PauseBranchModal = ({ branches, customers, onClose, onSubmit }: any) => {
-   const [formData, setFormData] = useState({ branchId: branches[0]?.id || '', pauseStart: '', pauseEnd: '' });
+   const [formData, setFormData] = useState({ branchId: branches?.[0]?.id || '', pauseStart: '', pauseEnd: '' });
    const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!formData.branchId || !formData.pauseStart || !formData.pauseEnd) return; onSubmit(formData.branchId, formData.pauseStart, formData.pauseEnd); };
    return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
          <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl">
             <h3 className="font-bold text-lg mb-4 text-slate-900">Pause Branch Operations</h3>
-            <p className="text-sm text-slate-500 mb-4">This will automatically extend the subscription end dates for all active customers in this branch by the number of delivery days missed.</p>
+            <p className="text-sm text-slate-500 mb-4">This will automatically extend end dates for all active customers.</p>
             <form onSubmit={handleSubmit} className="space-y-4">
-               <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select Branch</label><select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>{branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Select Branch</label><select className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>{(branches || []).map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
                <div className="grid grid-cols-2 gap-4">
                   <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Pause From</label><input required type="date" className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, pauseStart: e.target.value})} /></div>
                   <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Resume On</label><input required type="date" className="w-full p-2.5 border border-slate-300 rounded-lg bg-white text-slate-900" onChange={e => setFormData({...formData, pauseEnd: e.target.value})} /></div>
@@ -839,7 +793,7 @@ const PauseBranchModal = ({ branches, customers, onClose, onSubmit }: any) => {
 
 const PauseCustomerModal = ({ customers, plans, branches, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState({ customerId: '', pauseStart: '', pauseEnd: '' });
-   const activeCustomers = useMemo(() => customers.filter((c:any) => c.isActive), [customers]);
+   const activeCustomers = useMemo(() => (customers || []).filter((c:any) => c.isActive), [customers]);
    const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!formData.customerId) return; onSubmit(formData.customerId, formData.pauseStart, formData.pauseEnd); };
    return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">

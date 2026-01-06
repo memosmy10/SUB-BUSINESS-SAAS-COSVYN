@@ -44,7 +44,7 @@ const KitchenPrepWidget = ({ title, date, metrics, isTomorrow }: any) => (
             </p>
         </div>
         <div className={`${isTomorrow ? 'bg-slate-200 text-slate-700' : 'bg-orange-50 text-orange-700'} px-3 py-1 rounded-full text-xs font-bold border ${isTomorrow ? 'border-slate-300' : 'border-orange-100'}`}>
-           {metrics.Total} Boxes
+           {metrics?.Total || 0} Boxes
         </div>
      </div>
      
@@ -57,17 +57,17 @@ const KitchenPrepWidget = ({ title, date, metrics, isTomorrow }: any) => (
                   {meal === 'Dinner' && <Moon size={16} className="text-indigo-500" />}
                   <span className="font-bold text-slate-700 text-xs">{meal}</span>
                   <span className="ml-auto bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                    {metrics[meal].count}
+                    {metrics?.[meal]?.count || 0}
                   </span>
                </div>
                <div className="space-y-1 overflow-y-auto max-h-32 custom-scrollbar">
-                  {Object.entries(metrics[meal].plans).map(([plan, count]) => (
+                  {metrics?.[meal] && Object.entries(metrics[meal].plans || {}).map(([plan, count]) => (
                      <div key={plan} className="flex justify-between text-xs">
                         <span className="text-slate-500 truncate pr-1" title={plan as string}>{plan as string}</span>
                         <span className="font-bold text-slate-900">{count as number}</span>
                      </div>
                   ))}
-                  {metrics[meal].count === 0 && <div className="text-[10px] text-slate-300 italic">No orders</div>}
+                  {(!metrics?.[meal] || metrics[meal].count === 0) && <div className="text-[10px] text-slate-300 italic">No orders</div>}
                </div>
             </div>
         ))}
@@ -76,83 +76,49 @@ const KitchenPrepWidget = ({ title, date, metrics, isTomorrow }: any) => (
 );
 
 const Dashboard = () => {
-  // Fetch Real Data
-  const { data: customers, loading: l1 } = useStreamCollection<any>('customers');
-  const { data: payments, loading: l2 } = useStreamCollection<any>('payments');
-  const { data: expenses, loading: l3 } = useStreamCollection<any>('expenses');
-  const { data: plans, loading: l4 } = useStreamCollection<any>('plans');
-  const { data: branches, loading: l5 } = useStreamCollection<any>('branches');
+  const { data: customers = [], loading: l1 } = useStreamCollection<any>('customers');
+  const { data: payments = [], loading: l2 } = useStreamCollection<any>('payments');
+  const { data: expenses = [], loading: l3 } = useStreamCollection<any>('expenses');
+  const { data: plans = [], loading: l4 } = useStreamCollection<any>('plans');
+  const { data: branches = [], loading: l5 } = useStreamCollection<any>('branches');
 
   const isLoading = l1 || l2 || l3 || l4 || l5;
-
-  // States
   const [selectedBranch, setSelectedBranch] = useState('All');
   const [aiInsight, setAiInsight] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // --- FILTERED DATA ---
-  const filteredCustomers = useMemo(() => {
-    return selectedBranch === 'All' 
-      ? customers 
-      : customers.filter((c: any) => c.branchId === selectedBranch);
-  }, [customers, selectedBranch]);
-
+  const filteredCustomers = useMemo(() => (selectedBranch === 'All' ? customers : customers.filter((c: any) => c.branchId === selectedBranch)) || [], [customers, selectedBranch]);
   const filteredPayments = useMemo(() => {
     const allCustomerIds = new Set(customers.map((c: any) => c.id));
     const validPayments = payments.filter((p: any) => allCustomerIds.has(p.customerId));
-
-    if (selectedBranch === 'All') {
-        return validPayments;
-    } else {
-        const branchCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
-        return validPayments.filter((p: any) => branchCustomerIds.has(p.customerId));
-    }
+    if (selectedBranch === 'All') return validPayments;
+    const branchCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
+    return validPayments.filter((p: any) => branchCustomerIds.has(p.customerId));
   }, [payments, customers, filteredCustomers, selectedBranch]);
+  const filteredExpenses = useMemo(() => (selectedBranch === 'All' ? expenses : expenses.filter((e: any) => e.branchId === selectedBranch)) || [], [expenses, selectedBranch]);
 
-  const filteredExpenses = useMemo(() => {
-    return selectedBranch === 'All'
-      ? expenses
-      : expenses.filter((e: any) => e.branchId === selectedBranch);
-  }, [expenses, selectedBranch]);
-
-
-  // --- KPI CALCULATIONS ---
   const kpis = useMemo(() => {
     if (isLoading) return { revenue: 0, pending: 0, expenses: 0, activeUsers: 0, deliveriesToday: 0, renewalRate: 0 };
-
     const totalCollected = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
     const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
-    const revenue = totalCollected + totalPending;
-
     const expensesTotal = filteredExpenses.reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
-    
     const activeCusts = filteredCustomers.filter((c: any) => c.isActive && c.daysLeft > 0);
-    const activeUsers = activeCusts.length;
-
     const todayDayId = new Date().getDay();
     const deliveriesToday = activeCusts.filter((c: any) => {
       const plan = plans.find((p: any) => p.id === c.planId);
       return plan && plan.weekdays ? plan.weekdays.includes(todayDayId) : true;
     }).length;
-
     const totalRenewals = filteredCustomers.reduce((acc: number, c: any) => acc + (c.renewalCount || 0), 0);
     const totalUnique = filteredCustomers.length;
     const renewalRate = totalUnique > 0 ? Math.round((totalRenewals / (totalUnique + totalRenewals)) * 100) : 0;
-
-    return { revenue, pending: totalPending, expenses: expensesTotal, activeUsers, deliveriesToday, renewalRate };
+    return { revenue: totalCollected + totalPending, pending: totalPending, expenses: expensesTotal, activeUsers: activeCusts.length, deliveriesToday, renewalRate };
   }, [filteredCustomers, filteredExpenses, filteredPayments, plans, isLoading]);
 
-  // --- KITCHEN PREP METRICS ---
   const kitchenMetrics = useMemo(() => {
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
     const getBreakdown = (targetDate: Date) => {
         const targetDayId = targetDate.getDay();
         const targetDateZero = new Date(targetDate);
         targetDateZero.setHours(0,0,0,0);
-
         const activeForDay = filteredCustomers.filter((c: any) => {
            if (!c.isActive) return false;
            const endDate = new Date(c.endDate);
@@ -161,14 +127,7 @@ const Dashboard = () => {
            const plan = plans.find((p: any) => p.id === c.planId);
            return plan && plan.weekdays ? plan.weekdays.includes(targetDayId) : true;
         });
-
-        const breakdown = {
-           Breakfast: { count: 0, plans: {} as Record<string, number> },
-           Lunch: { count: 0, plans: {} as Record<string, number> },
-           Dinner: { count: 0, plans: {} as Record<string, number> },
-           Total: activeForDay.length
-        };
-
+        const breakdown = { Breakfast: { count: 0, plans: {} as Record<string, number> }, Lunch: { count: 0, plans: {} as Record<string, number> }, Dinner: { count: 0, plans: {} as Record<string, number> }, Total: activeForDay.length };
         activeForDay.forEach((c: any) => {
            const meal = c.mealTime || 'Lunch'; 
            const planName = plans.find((p: any) => p.id === c.planId)?.name || 'Unknown Plan';
@@ -180,27 +139,15 @@ const Dashboard = () => {
         });
         return breakdown;
     };
-
-    return {
-        today: getBreakdown(today),
-        tomorrow: getBreakdown(tomorrow)
-    };
+    return { today: getBreakdown(new Date()), tomorrow: getBreakdown(new Date(Date.now() + 86400000)) };
   }, [filteredCustomers, plans]);
 
-
-  // --- CHART DATA ---
   const barChartData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return months.map(month => {
-      const monthlyRevenue = filteredPayments
-        .filter((p: any) => new Date(p.date).toLocaleString('default', { month: 'short' }) === month)
-        .reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
-      
-      const monthlyExpenses = filteredExpenses
-        .filter((e: any) => new Date(e.date).toLocaleString('default', { month: 'short' }) === month)
-        .reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
-
-      return { name: month, value: monthlyRevenue, secondaryValue: monthlyExpenses };
+      const rev = filteredPayments.filter((p: any) => new Date(p.date).toLocaleString('default', { month: 'short' }) === month).reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+      const exp = filteredExpenses.filter((e: any) => new Date(e.date).toLocaleString('default', { month: 'short' }) === month).reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
+      return { name: month, value: rev, secondaryValue: exp };
     });
   }, [filteredPayments, filteredExpenses]);
 
@@ -217,7 +164,6 @@ const Dashboard = () => {
     return Object.keys(map).map(k => ({ name: k, value: map[k] }));
   }, [filteredPayments, customers, plans]);
 
-  // AI INSIGHTS TRIGGER
   useEffect(() => {
     const fetchAI = async () => {
       if (isLoading || barChartData.every(d => d.value === 0 && d.secondaryValue === 0)) return;
@@ -227,12 +173,7 @@ const Dashboard = () => {
       setIsAiLoading(false);
     };
     fetchAI();
-  }, [isLoading, selectedBranch]); // Refetch when branch changes
-
-  const todayDate = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  const tomorrowDateObj = new Date();
-  tomorrowDateObj.setDate(tomorrowDateObj.getDate() + 1);
-  const tomorrowDate = tomorrowDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  }, [isLoading, selectedBranch]);
 
   if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
 
@@ -240,20 +181,10 @@ const Dashboard = () => {
     <div className="space-y-6 pb-12">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
-            Dashboard 
-            <span className="text-sm font-normal text-slate-400 bg-slate-100 px-3 py-1 rounded-full flex items-center gap-1">
-              <Calendar size={14}/> {todayDate}
-            </span>
-          </h1>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">Dashboard <span className="text-sm font-normal text-slate-400 bg-slate-100 px-3 py-1 rounded-full">{new Date().toLocaleDateString()}</span></h1>
           <p className="text-slate-500 mt-1">Overview of your meal subscription business.</p>
         </div>
-        
-        <select 
-           className="px-4 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:ring-2 focus:ring-primary-500 outline-none w-full md:w-auto shadow-sm"
-           value={selectedBranch}
-           onChange={(e) => setSelectedBranch(e.target.value)}
-        >
+        <select className="px-4 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:ring-2 focus:ring-primary-500 outline-none w-full md:w-auto shadow-sm" value={selectedBranch} onChange={(e) => setSelectedBranch(e.target.value)}>
            <option value="All">All Branches</option>
            {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
@@ -269,68 +200,23 @@ const Dashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-         <KitchenPrepWidget title="Daily Kitchen Prep" date={`Today, ${todayDate}`} metrics={kitchenMetrics.today} isTomorrow={false} />
-         <KitchenPrepWidget title="Tomorrow's Plan" date={`Tomorrow, ${tomorrowDate}`} metrics={kitchenMetrics.tomorrow} isTomorrow={true} />
+         <KitchenPrepWidget title="Daily Prep" date="Today" metrics={kitchenMetrics.today} isTomorrow={false} />
+         <KitchenPrepWidget title="Tomorrow's Plan" date="Tomorrow" metrics={kitchenMetrics.tomorrow} isTomorrow={true} />
       </div>
 
-      {/* AI INSIGHTS CARD */}
       <div className="bg-gradient-to-br from-primary-50 to-violet-50 p-6 rounded-2xl border border-primary-100 shadow-sm relative overflow-hidden group">
-         <div className="absolute top-[-20px] right-[-20px] opacity-10 group-hover:scale-110 transition-transform duration-700">
-            <Sparkles size={120} className="text-primary-600" />
-         </div>
-         <div className="flex items-center gap-3 mb-4 relative z-10">
-            <div className="p-2 bg-white rounded-xl shadow-sm text-primary-600 animate-pulse">
-               <Lightbulb size={20} fill="currentColor" />
-            </div>
-            <h3 className="font-bold text-primary-900">AI Kitchen Intelligence</h3>
-         </div>
-         {isAiLoading ? (
-            <div className="flex items-center gap-3 text-slate-400 py-4">
-               <Loader2 size={16} className="animate-spin" />
-               <span className="text-sm font-medium italic">Analyzing your cash flow and growth metrics...</span>
-            </div>
-         ) : (
-            <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line relative z-10 bg-white/40 p-4 rounded-xl backdrop-blur-sm border border-white/60">
-               {aiInsight || "Add more payment and expense records to unlock AI financial analysis."}
-            </div>
-         )}
+         <div className="flex items-center gap-3 mb-4 relative z-10"><div className="p-2 bg-white rounded-xl shadow-sm text-primary-600"><Lightbulb size={20} fill="currentColor" /></div><h3 className="font-bold text-primary-900">AI Kitchen Intelligence</h3></div>
+         {isAiLoading ? <div className="flex items-center gap-3 text-slate-400 py-4"><Loader2 size={16} className="animate-spin" /><span className="text-sm font-medium italic">Analyzing...</span></div> : <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line relative z-10 bg-white/40 p-4 rounded-xl backdrop-blur-sm">{aiInsight || "No insights available."}</div>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 mb-6">Cash Flow (Collections vs Expenses)</h2>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barChartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(value) => `₹${value/1000}k`} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}
-                  cursor={{ fill: '#f1f5f9' }}
-                  formatter={(value: number) => [`₹${value.toLocaleString()}`, '']}
-                />
-                <Bar dataKey="value" name="Collections" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="secondaryValue" name="Expenses" fill="#cbd5e1" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <h2 className="text-lg font-bold text-slate-900 mb-6">Cash Flow</h2>
+          <div className="h-80"><ResponsiveContainer width="100%" height="100%"><BarChart data={barChartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} /><YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(v) => `₹${v/1000}k`} /><Tooltip contentStyle={{ borderRadius: '8px' }} formatter={(v: number) => [`₹${v.toLocaleString()}`, '']} /><Bar dataKey="value" name="Collections" fill="#8b5cf6" radius={[4, 4, 0, 0]} /><Bar dataKey="secondaryValue" name="Expenses" fill="#cbd5e1" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div>
         </div>
-
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
-          <h2 className="text-lg font-bold text-slate-900 mb-6">Revenue by Plan</h2>
-          <div className="flex-1 min-h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={planPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} paddingAngle={5}>
-                  {planPieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                </Pie>
-                <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
-                <Legend verticalAlign="bottom" layout="horizontal" />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-center text-slate-400 mt-2">Based on total revenue collected</p>
+          <h2 className="text-lg font-bold text-slate-900 mb-6">By Plan</h2>
+          <div className="flex-1 min-h-[300px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={planPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} paddingAngle={5}>{planPieData.map((e, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip formatter={(v: number) => `₹${v.toLocaleString()}`} /><Legend /></PieChart></ResponsiveContainer></div>
         </div>
       </div>
     </div>

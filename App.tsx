@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useEffect, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, Outlet, NavLink, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import LandingPage from './pages/LandingPage';
@@ -44,25 +44,49 @@ import { useStreamCollection } from './services/dbService';
 
 // --- ERROR BOUNDARY ---
 interface Props { children: ReactNode; }
-interface State { hasError: boolean; }
-class ErrorBoundary extends Component<Props, State> {
-  public state: State = { hasError: false };
-  public static getDerivedStateFromError(_: Error): State { return { hasError: true }; }
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) { console.error("Uncaught error:", error, errorInfo); }
+interface State { hasError: boolean; error: Error | null; }
+
+// Use React.Component explicitly to ensure TypeScript correctly resolves the 'props' property
+class ErrorBoundary extends React.Component<Props, State> {
+  public state: State = { hasError: false, error: null };
+  public static getDerivedStateFromError(error: Error): State { return { hasError: true, error }; }
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) { 
+    console.group("ScaleKitchen Runtime Crash");
+    console.error("Error:", error);
+    console.error("Info:", errorInfo);
+    console.groupEnd();
+  }
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-          <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm border border-slate-200">
-             <AlertTriangle className="text-red-500 mx-auto mb-4" size={48} />
-             <h1 className="text-xl font-bold text-slate-900 mb-2">Something went wrong</h1>
-             <p className="text-slate-500 text-sm mb-6">A small glitch occurred. Please refresh the page to continue.</p>
-             <button onClick={() => window.location.reload()} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-colors">Refresh App</button>
+        <div className="min-h-screen w-full flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
+          <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl max-w-md border border-slate-200">
+             <div className="w-20 h-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <AlertTriangle size={40} />
+             </div>
+             <h1 className="text-2xl font-black text-slate-900 mb-2">Something went wrong</h1>
+             <p className="text-slate-500 text-sm mb-8 leading-relaxed">
+                The application encountered an unexpected error. This usually happens due to a temporary network glitch or missing data.
+             </p>
+             <div className="space-y-3">
+                <button onClick={() => window.location.reload()} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-lg active:scale-95">
+                  Try Refreshing
+                </button>
+                <button onClick={() => window.location.href = '/'} className="w-full bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold hover:bg-slate-200 transition-all">
+                  Back to Home
+                </button>
+             </div>
+             {/* Check process.env defensively for cases where it might not be fully polyfilled */}
+             {typeof process !== 'undefined' && process?.env?.NODE_ENV === 'development' && (
+               <div className="mt-6 p-4 bg-slate-50 rounded-xl text-left overflow-auto max-h-40">
+                  <p className="text-[10px] font-mono text-red-600">{this.state.error?.toString()}</p>
+               </div>
+             )}
           </div>
         </div>
       );
     }
-    // Fixed: children must be accessed from this.props in a class component to resolve type error
+    // Fix: Access props from the correct base class instance
     return this.props.children;
   }
 }
@@ -75,19 +99,21 @@ const SubscriptionManager = () => {
 
   useEffect(() => {
     const capturePaymentParams = () => {
-      const rawParams = new URLSearchParams(window.location.search);
-      const urlStatus = rawParams.get('status');
-      if (urlStatus === 'success') {
-        const planId = rawParams.get('plan_id');
-        const paymentId = rawParams.get('payment_id');
-        if (planId) {
-          localStorage.setItem('pending_subscription', JSON.stringify({
-            planId, paymentId: paymentId || 'manual_entry', timestamp: Date.now()
-          }));
-          const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + window.location.hash;
-          window.history.replaceState({}, document.title, cleanUrl);
+      try {
+        const rawParams = new URLSearchParams(window.location.search);
+        const urlStatus = rawParams.get('status');
+        if (urlStatus === 'success') {
+          const planId = rawParams.get('plan_id');
+          const paymentId = rawParams.get('payment_id');
+          if (planId) {
+            localStorage.setItem('pending_subscription', JSON.stringify({
+              planId, paymentId: paymentId || 'manual_entry', timestamp: Date.now()
+            }));
+            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + window.location.hash;
+            window.history.replaceState({}, document.title, cleanUrl);
+          }
         }
-      }
+      } catch (e) { console.error("URL Param processing failed:", e); }
     };
     capturePaymentParams();
 
@@ -103,6 +129,7 @@ const SubscriptionManager = () => {
       if (!currentUser || !currentUser.email || status !== 'idle') return;
       const pendingStr = localStorage.getItem('pending_subscription');
       let pendingFirestoreData = null;
+      
       if (!pendingStr) {
          try {
             const docRef = doc(db, 'pending_activations', currentUser.email);
@@ -110,6 +137,7 @@ const SubscriptionManager = () => {
             if (docSnap.exists()) { pendingFirestoreData = { ...docSnap.data(), ref: docRef }; }
          } catch (e) {}
       }
+
       if (pendingStr || pendingFirestoreData) {
         setStatus('processing');
         try {
@@ -124,6 +152,7 @@ const SubscriptionManager = () => {
           const now = new Date();
           now.setMonth(now.getMonth() + durationMonths);
           const newExpiryDate = now.toISOString().split('T')[0];
+          
           await updateDoc(doc(db, 'businesses', currentUser.uid), {
             planName: `COSVYN ONE (${internalPlanName})`,
             planStatus: 'Active',
@@ -131,11 +160,16 @@ const SubscriptionManager = () => {
             lastPaymentId: paymentId,
             updatedAt: new Date().toISOString()
           });
+
           if (pendingStr) localStorage.removeItem('pending_subscription');
           if (pendingFirestoreData) await deleteDoc(pendingFirestoreData.ref);
+          
           setStatus('success');
           setTimeout(() => { setStatus('idle'); navigate('/app/dashboard', { replace: true }); }, 2000);
-        } catch (error) { setStatus('error'); }
+        } catch (error) { 
+          console.error("Subscription Activation Error:", error);
+          setStatus('error'); 
+        }
       }
     };
     processActivation();
@@ -162,19 +196,28 @@ const SubscriptionManager = () => {
 const ProtectedRoute = () => {
   const { currentUser, loading } = useAuth();
   const [hasActivePlan, setHasActivePlan] = useState<boolean | null>(null);
+
   useEffect(() => {
     if (currentUser && currentUser.email !== ADMIN_EMAIL) {
       const unsubscribe = onSnapshot(doc(db, 'businesses', currentUser.uid), (docSnap) => {
         if (docSnap.exists()) { setHasActivePlan(docSnap.data().planStatus === 'Active'); } 
         else { setHasActivePlan(false); }
-      }, () => setHasActivePlan(false));
+      }, (err) => {
+        console.error("Protected Route Error:", err);
+        setHasActivePlan(false);
+      });
       return () => unsubscribe();
     } else if (currentUser) { setHasActivePlan(true); }
   }, [currentUser]);
-  if (loading || (currentUser && hasActivePlan === null)) return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin" size={40} /></div>;
+
+  if (loading || (currentUser && hasActivePlan === null)) {
+    return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-primary-600" size={40} /></div>;
+  }
+  
   if (currentUser?.email === ADMIN_EMAIL) return <Navigate to="/admin/dashboard" replace />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (hasActivePlan === false) return <Navigate to="/onboarding" replace />;
+  
   return <AppLayout />;
 };
 
@@ -191,22 +234,33 @@ const AppLayout = () => {
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
   const [planExpiryDate, setPlanExpiryDate] = useState<string | null>(null);
-  const [businessProfile, setBusinessProfile] = useState<any>(null);
+  
   const { data: customers = [] } = useStreamCollection<any>('customers');
   const { data: plans = [] } = useStreamCollection<any>('plans');
-  const { data: branches = [] } = useStreamCollection<any>('branches');
-  const expiringCustomers = React.useMemo(() => (customers || []).filter((c: any) => c.isActive && c.daysLeft <= 10).sort((a: any, b: any) => a.daysLeft - b.daysLeft), [customers]);
+
+  const expiringCustomers = React.useMemo(() => {
+    return (customers || [])
+      .filter((c: any) => c && c.isActive && c.daysLeft <= 10)
+      .sort((a: any, b: any) => (a.daysLeft || 0) - (b.daysLeft || 0));
+  }, [customers]);
+
   useEffect(() => {
     if (currentUser) {
       const unsubscribe = onSnapshot(doc(db, 'businesses', currentUser.uid), (docSnap) => {
-        if (docSnap.exists()) { const d = docSnap.data(); setPlanExpiryDate(d.planExpiryDate); setBusinessProfile(d); }
+        if (docSnap.exists()) { 
+          const d = docSnap.data(); 
+          setPlanExpiryDate(d.planExpiryDate || null); 
+        }
       });
       return () => unsubscribe();
     }
   }, [currentUser]);
+
   const daysToExpiry = planExpiryDate ? getDaysDifference(new Date().toISOString().split('T')[0], planExpiryDate) : 100;
-  const showExpiryWarning = daysToExpiry <= 10;
+  const showExpiryWarning = daysToExpiry <= 10 && daysToExpiry >= 0;
+
   const handleLogout = async () => { await logout(); navigate('/'); };
+
   const navItems = [
     { label: 'Dashboard', path: '/app' }, { label: 'Customers', path: '/app/customers' }, { label: 'Payments', path: '/app/payments' },
     { label: 'Expenses', path: '/app/expenses' }, { label: 'Deliveries', path: '/app/deliveries' }, { label: 'Inventory', path: '/app/inventory' },
@@ -226,30 +280,36 @@ const AppLayout = () => {
         </div>
       )}
       <div className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden">
-        {showExpiryWarning && (<div className="bg-red-600 text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4"><AlertTriangle size={18} /><span>SaaS Expiry in {daysToExpiry} days! Renew now.</span><button onClick={() => navigate('/app/profile')} className="bg-white text-red-600 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase">Renew Now</button></div>)}
+        {showExpiryWarning && (<div className="bg-red-600 text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4 animate-in slide-in-from-top-full duration-500"><AlertTriangle size={18} /><span>SaaS Expiry in {daysToExpiry} days! Renew now.</span><button onClick={() => navigate('/app/profile')} className="bg-white text-red-600 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase transition-transform active:scale-95">Renew Now</button></div>)}
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 z-30 shrink-0">
            <button onClick={() => setIsMobileNavOpen(true)} className="md:hidden p-2 text-slate-600"><Menu size={24} /></button>
            <div className="flex items-center gap-4 ml-auto">
               <div className="relative">
-                <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 text-slate-500 hover:text-primary-600 relative"><Bell size={20} />{expiringCustomers.length > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />}</button>
+                <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 text-slate-500 hover:text-primary-600 relative transition-colors"><Bell size={20} />{expiringCustomers.length > 0 && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />}</button>
                 {isNotificationsOpen && (
-                   <><div className="fixed inset-0 z-30" onClick={() => setIsNotificationsOpen(false)} /><div className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl z-40 overflow-hidden"><div className="p-3 border-b border-slate-100 flex justify-between bg-slate-50"><h4 className="font-bold text-slate-900 text-sm">Customer Expiries</h4><span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">{expiringCustomers.length}</span></div><div className="max-h-[450px] overflow-y-auto">{expiringCustomers.length === 0 ? (<div className="p-8 text-center text-slate-400">No expiries soon.</div>) : expiringCustomers.map((cust: any) => {
+                   <><div className="fixed inset-0 z-30" onClick={() => setIsNotificationsOpen(false)} /><div className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-200"><div className="p-4 border-b border-slate-100 flex justify-between bg-slate-50/50"><h4 className="font-bold text-slate-900 text-sm">Customer Expiries</h4><span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">{expiringCustomers.length}</span></div><div className="max-h-[450px] overflow-y-auto">{expiringCustomers.length === 0 ? (<div className="p-10 text-center text-slate-400 text-sm font-medium">No expiries soon.</div>) : expiringCustomers.map((cust: any) => {
                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'N/A';
-                         const whatsappMsg = `Hello ${cust.name}, plan expires on ${cust.endDate}. Please renew!`;
+                         const whatsappMsg = `Hello ${cust.name}, your subscription plan expires on ${cust.endDate}. Please renew!`;
                          const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
                          return (
-                            <div key={cust.id} className="p-4 border-b border-slate-100 hover:bg-slate-50"><div className="flex justify-between items-start mb-2"><div className="flex-1 min-w-0"><h5 className="font-bold text-slate-900 text-sm truncate">{cust.name}</h5><div className="text-[11px] text-slate-500 mt-1">{cust.mobile}</div></div><div className="flex flex-col items-end gap-1.5"><span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-red-100 text-red-700">{cust.daysLeft} Days Left</span><div className="flex gap-1.5"><a href={whatsappLink} target="_blank" rel="noreferrer" className="p-2 bg-green-50 text-green-600 rounded-lg shadow-sm"><MessageSquare size={14} /></a><a href={`tel:${cust.mobile}`} className="p-2 bg-blue-50 text-blue-600 rounded-lg shadow-sm"><Phone size={14} /></a></div></div></div><div className="mt-3 pt-2 border-t border-slate-50 flex items-center justify-between"><span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">{planName}</span><button onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} className="text-[11px] text-primary-600 font-extrabold uppercase flex items-center gap-1">Renew <ArrowRight size={12} /></button></div></div>
+                            <div key={cust.id} className="p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors"><div className="flex justify-between items-start mb-2"><div className="flex-1 min-w-0"><h5 className="font-bold text-slate-900 text-sm truncate">{cust.name}</h5><div className="text-[11px] text-slate-500 mt-1">{cust.mobile}</div></div><div className="flex flex-col items-end gap-1.5"><span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${cust.daysLeft <= 0 ? 'bg-slate-200 text-slate-600' : 'bg-red-100 text-red-700'}`}>{cust.daysLeft <= 0 ? 'Expired' : `${cust.daysLeft} Days Left`}</span><div className="flex gap-1.5"><a href={whatsappLink} target="_blank" rel="noreferrer" className="p-2 bg-green-50 text-green-600 rounded-lg shadow-sm hover:bg-green-100"><MessageSquare size={14} /></a><a href={`tel:${cust.mobile}`} className="p-2 bg-blue-50 text-blue-600 rounded-lg shadow-sm hover:bg-blue-100"><Phone size={14} /></a></div></div></div><div className="mt-3 pt-2 border-t border-slate-50 flex items-center justify-between"><span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">{planName}</span><button onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} className="text-[11px] text-primary-600 font-extrabold uppercase flex items-center gap-1 hover:underline">Renew <ArrowRight size={12} /></button></div></div>
                          );
                       })}</div></div></>
                 )}
               </div>
-              <button onClick={() => navigate('/app/profile')} className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-100 hover:border-slate-300">
-                <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold">{currentUser?.displayName?.charAt(0) || 'U'}</div>
-                <span className="hidden sm:block text-sm font-medium text-slate-700">{currentUser?.displayName || 'Owner'}</span>
+              <button onClick={() => navigate('/app/profile')} className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-100 hover:border-slate-300 transition-all hover:bg-slate-50">
+                <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold text-xs">{currentUser?.displayName?.charAt(0) || 'U'}</div>
+                <span className="hidden sm:block text-xs font-bold text-slate-700">{currentUser?.displayName || 'Owner'}</span>
               </button>
            </div>
         </header>
-        <main className="flex-1 overflow-y-auto p-4 md:p-8"><div className="max-w-7xl mx-auto"><ErrorBoundary><Outlet /></ErrorBoundary></div></main>
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50/30">
+          <div className="max-w-7xl mx-auto">
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
+          </div>
+        </main>
       </div>
     </div>
   );

@@ -1,223 +1,311 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
-  ArrowUpRight, ArrowDownRight, Users, DollarSign, Package, Loader2, 
-  AlertCircle, TrendingUp, RefreshCw, Calendar, Utensils, Sunrise, Sun, Moon, Sparkles, Lightbulb
+  Users, DollarSign, Package, Loader2, 
+  AlertCircle, Calendar, ChevronDown, TrendingUp, ShoppingBag, Activity, BarChart3, PieChart as PieIcon, MapPin
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, Legend 
+  PieChart, Pie, Cell, Legend, LineChart, Line
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
-import { generateBusinessInsights } from '../services/geminiService';
+import { calculateRemainingDeliveries } from '../services/store';
 
-const COLORS = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
+const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#6366f1'];
 
-const StatCard = ({ title, value, change, icon: Icon, isPositive, colorClass }: any) => (
-  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between h-full">
-    <div className="flex justify-between items-start mb-2">
-      <div className={`p-2 rounded-lg ${colorClass} bg-opacity-10 text-opacity-100`}>
-        <Icon size={20} className={colorClass.replace('bg-', 'text-')} />
+const StatCard = ({ title, value, icon: Icon, colorClass, iconColor, subtext }: any) => (
+  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-32">
+    <div className="flex justify-between items-start">
+      <div className="space-y-0.5 overflow-hidden">
+        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest truncate">{title}</p>
+        <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">
+          {typeof value === 'number' && (title.toLowerCase().includes('revenue') || title.toLowerCase().includes('payment')) 
+            ? `₹${Math.round(value).toLocaleString('en-IN')}` 
+            : value}
+        </h3>
       </div>
-      {change && (
-        <div className={`flex items-center text-xs font-bold ${isPositive ? 'text-green-600' : 'text-red-500'}`}>
-          {isPositive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-          {change}
-        </div>
-      )}
+      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${colorClass} bg-opacity-10`}>
+        <Icon size={18} className={iconColor} />
+      </div>
     </div>
-    <div>
-      <h3 className="text-xl md:text-2xl font-bold text-slate-900">{value}</h3>
-      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-1">{title}</p>
-    </div>
-  </div>
-);
-
-const KitchenPrepWidget = ({ title, date, metrics, isTomorrow }: any) => (
-  <div className={`p-6 rounded-xl border shadow-sm flex flex-col h-full ${isTomorrow ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200'}`}>
-     <div className="flex justify-between items-start mb-4">
-        <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-               <Utensils className={isTomorrow ? "text-slate-500" : "text-orange-500"} size={20} /> {title}
-            </h2>
-            <p className="text-sm text-slate-500 font-bold ml-7 flex items-center gap-1">
-               <Calendar size={12}/> {date}
-            </p>
-        </div>
-        <div className={`${isTomorrow ? 'bg-slate-200 text-slate-700' : 'bg-orange-50 text-orange-700'} px-3 py-1 rounded-full text-xs font-bold border ${isTomorrow ? 'border-slate-300' : 'border-orange-100'}`}>
-           {metrics?.Total || 0} Boxes
-        </div>
-     </div>
-     
-     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
-        {['Breakfast', 'Lunch', 'Dinner'].map((meal) => (
-            <div key={meal} className="bg-white rounded-xl p-3 border border-slate-100 shadow-sm flex flex-col">
-               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-100">
-                  {meal === 'Breakfast' && <Sunrise size={16} className="text-yellow-500" />}
-                  {meal === 'Lunch' && <Sun size={16} className="text-orange-500" />}
-                  {meal === 'Dinner' && <Moon size={16} className="text-indigo-500" />}
-                  <span className="font-bold text-slate-700 text-xs">{meal}</span>
-                  <span className="ml-auto bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                    {metrics?.[meal]?.count || 0}
-                  </span>
-               </div>
-               <div className="space-y-1 overflow-y-auto max-h-32 custom-scrollbar">
-                  {metrics?.[meal] && Object.entries(metrics[meal].plans || {}).map(([plan, count]) => (
-                     <div key={plan} className="flex justify-between text-xs">
-                        <span className="text-slate-500 truncate pr-1" title={plan as string}>{plan as string}</span>
-                        <span className="font-bold text-slate-900">{count as number}</span>
-                     </div>
-                  ))}
-                  {(!metrics?.[meal] || metrics[meal].count === 0) && <div className="text-[10px] text-slate-300 italic">No orders</div>}
-               </div>
-            </div>
-        ))}
-     </div>
+    {subtext && (
+      <div className="mt-1">
+        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tight truncate">{subtext}</p>
+      </div>
+    )}
   </div>
 );
 
 const Dashboard = () => {
   const { data: customers = [], loading: l1 } = useStreamCollection<any>('customers');
-  const { data: payments = [], loading: l2 } = useStreamCollection<any>('payments');
-  const { data: expenses = [], loading: l3 } = useStreamCollection<any>('expenses');
-  const { data: plans = [], loading: l4 } = useStreamCollection<any>('plans');
-  const { data: branches = [], loading: l5 } = useStreamCollection<any>('branches');
+  const { data: singleOrders = [], loading: l2 } = useStreamCollection<any>('single_orders');
+  const { data: plans = [], loading: l3 } = useStreamCollection<any>('plans');
+  const { data: branches = [], loading: l4 } = useStreamCollection<any>('branches');
+  const { data: payments = [], loading: l5 } = useStreamCollection<any>('payments');
 
   const isLoading = l1 || l2 || l3 || l4 || l5;
-  const [selectedBranch, setSelectedBranch] = useState('All');
-  const [aiInsight, setAiInsight] = useState<string>('');
-  const [isAiLoading, setIsAiLoading] = useState(false);
 
-  const filteredCustomers = useMemo(() => (selectedBranch === 'All' ? customers : customers.filter((c: any) => c.branchId === selectedBranch)) || [], [customers, selectedBranch]);
-  const filteredPayments = useMemo(() => {
-    const allCustomerIds = new Set(customers.map((c: any) => c.id));
-    const validPayments = payments.filter((p: any) => allCustomerIds.has(p.customerId));
-    if (selectedBranch === 'All') return validPayments;
-    const branchCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
-    return validPayments.filter((p: any) => branchCustomerIds.has(p.customerId));
-  }, [payments, customers, filteredCustomers, selectedBranch]);
-  const filteredExpenses = useMemo(() => (selectedBranch === 'All' ? expenses : expenses.filter((e: any) => e.branchId === selectedBranch)) || [], [expenses, selectedBranch]);
+  // Defaults: All Branches, All Years
+  const [selectedBranch, setSelectedBranch] = useState('All');
+  const [selectedYear, setSelectedYear] = useState('All');
+
+  const today = new Date();
+  const formattedToday = today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+
+  const yearOptions = useMemo(() => {
+    const years = new Set<string>();
+    years.add(new Date().getFullYear().toString());
+    customers.forEach(c => { if(c.createdAt) years.add(new Date(c.createdAt).getFullYear().toString()); });
+    singleOrders.forEach(o => { if(o.date) years.add(new Date(o.date).getFullYear().toString()); });
+    return Array.from(years).sort((a, b) => b.localeCompare(a));
+  }, [customers, singleOrders]);
 
   const kpis = useMemo(() => {
-    if (isLoading) return { revenue: 0, pending: 0, expenses: 0, activeUsers: 0, deliveriesToday: 0, renewalRate: 0 };
-    const totalCollected = filteredPayments.reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
-    const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
-    const expensesTotal = filteredExpenses.reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
-    const activeCusts = filteredCustomers.filter((c: any) => c.isActive && c.daysLeft > 0);
-    const todayDayId = new Date().getDay();
-    const deliveriesToday = activeCusts.filter((c: any) => {
-      const plan = plans.find((p: any) => p.id === c.planId);
-      return plan && plan.weekdays ? plan.weekdays.includes(todayDayId) : true;
+    if (isLoading) return { subRevenue: 0, pending: 0, unqCust: 0, activeCust: 0, plansToday: 0, singleRev: 0, singleCount: 0 };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dayOfWeek = new Date().getDay();
+
+    const filteredCust = customers.filter((c: any) => {
+      const matchesBranch = selectedBranch === 'All' || c.branchId === selectedBranch;
+      const matchesYear = selectedYear === 'All' || !c.createdAt || new Date(c.createdAt).getFullYear().toString() === selectedYear;
+      return matchesBranch && matchesYear;
+    });
+
+    const filteredSingles = singleOrders.filter((o: any) => {
+      const matchesBranch = selectedBranch === 'All' || o.branchId === selectedBranch;
+      const matchesYear = selectedYear === 'All' || !o.date || new Date(o.date).getFullYear().toString() === selectedYear;
+      return matchesBranch && matchesYear;
+    });
+
+    const subRevenue = filteredCust.reduce((acc, c) => acc + (Number(c.planPrice) || 0) + (Number(c.deliveryCharges) || 0), 0);
+    const pending = filteredCust.reduce((acc, c) => acc + (Number(c.pendingAmount) || 0), 0);
+    
+    // FIX: LIVE DATA CALCULATION - Matches Customer Page Logic
+    const unqCust = filteredCust.length;
+    const activeCust = filteredCust.filter(c => {
+      if (!c.isActive) return false;
+      
+      // Real-time calculation of remaining days based on current clock and active plans
+      const realDaysLeft = (c.activePlans || []).reduce((max: number, p: any) => {
+        const planConfig = plans.find((pl: any) => pl.id === p.planId);
+        if (!planConfig) return max;
+        // The core helper that correctly handles holidays and pauses against the current date
+        const left = calculateRemainingDeliveries(p.endDate, planConfig.weekdays || [], p.pauses || []);
+        return Math.max(max, left);
+      }, 0);
+
+      return realDaysLeft > 0;
     }).length;
-    const totalRenewals = filteredCustomers.reduce((acc: number, c: any) => acc + (c.renewalCount || 0), 0);
-    const totalUnique = filteredCustomers.length;
-    const renewalRate = totalUnique > 0 ? Math.round((totalRenewals / (totalUnique + totalRenewals)) * 100) : 0;
-    return { revenue: totalCollected + totalPending, pending: totalPending, expenses: expensesTotal, activeUsers: activeCusts.length, deliveriesToday, renewalRate };
-  }, [filteredCustomers, filteredExpenses, filteredPayments, plans, isLoading]);
 
-  const kitchenMetrics = useMemo(() => {
-    const getBreakdown = (targetDate: Date) => {
-        const targetDayId = targetDate.getDay();
-        const targetDateZero = new Date(targetDate);
-        targetDateZero.setHours(0,0,0,0);
-        const activeForDay = filteredCustomers.filter((c: any) => {
-           if (!c.isActive) return false;
-           const endDate = new Date(c.endDate);
-           endDate.setHours(0,0,0,0);
-           if (targetDateZero > endDate) return false;
-           const plan = plans.find((p: any) => p.id === c.planId);
-           return plan && plan.weekdays ? plan.weekdays.includes(targetDayId) : true;
-        });
-        const breakdown = { Breakfast: { count: 0, plans: {} as Record<string, number> }, Lunch: { count: 0, plans: {} as Record<string, number> }, Dinner: { count: 0, plans: {} as Record<string, number> }, Total: activeForDay.length };
-        activeForDay.forEach((c: any) => {
-           const meal = c.mealTime || 'Lunch'; 
-           const planName = plans.find((p: any) => p.id === c.planId)?.name || 'Unknown Plan';
-           if (breakdown[meal as keyof typeof breakdown]) {
-              const target = breakdown[meal as keyof typeof breakdown] as { count: number, plans: Record<string, number> };
-              target.count++;
-              target.plans[planName] = (target.plans[planName] || 0) + 1;
-           }
-        });
-        return breakdown;
-    };
-    return { today: getBreakdown(new Date()), tomorrow: getBreakdown(new Date(Date.now() + 86400000)) };
-  }, [filteredCustomers, plans]);
+    let plansToday = 0;
+    customers.filter(c => c.isActive && (selectedBranch === 'All' || c.branchId === selectedBranch)).forEach(c => {
+      (c.activePlans || []).forEach((ap: any) => {
+        const planConfig = plans.find(p => p.id === ap.planId);
+        if (!planConfig) return;
+        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
+        const isValidDay = planConfig.weekdays.includes(dayOfWeek);
+        const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
+        if (isWithinRange && isValidDay && !isPaused) plansToday++;
+      });
+    });
 
-  const barChartData = useMemo(() => {
+    const singleRev = filteredSingles.reduce((acc, o) => acc + (Number(o.amount) || 0) + (Number(o.deliveryCharges) || 0), 0);
+    const singleCount = filteredSingles.length;
+
+    return { subRevenue, pending, unqCust, activeCust, plansToday, singleRev, singleCount };
+  }, [customers, singleOrders, plans, selectedBranch, selectedYear, isLoading]);
+
+  const cashFlowData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return months.map(month => {
-      const rev = filteredPayments.filter((p: any) => new Date(p.date).toLocaleString('default', { month: 'short' }) === month).reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
-      const exp = filteredExpenses.filter((e: any) => new Date(e.date).toLocaleString('default', { month: 'short' }) === month).reduce((acc: number, e: any) => acc + (e.amount || 0), 0);
-      return { name: month, value: rev, secondaryValue: exp };
-    });
-  }, [filteredPayments, filteredExpenses]);
+    return months.map((m, idx) => {
+      const subRev = payments
+        .filter((p: any) => {
+          const d = new Date(p.date);
+          const matchesDate = d.getMonth() === idx && (selectedYear === 'All' || d.getFullYear().toString() === selectedYear);
+          const cust = customers.find(c => c.id === p.customerId);
+          const matchesBranch = selectedBranch === 'All' || (cust && cust.branchId === selectedBranch);
+          return matchesDate && matchesBranch;
+        })
+        .reduce((a, b) => a + Number(b.amount || 0), 0);
 
-  const planPieData = useMemo(() => {
+      const sRev = singleOrders
+        .filter((o: any) => {
+          const d = new Date(o.date);
+          const matchesDate = d.getMonth() === idx && (selectedYear === 'All' || d.getFullYear().toString() === selectedYear);
+          const matchesBranch = selectedBranch === 'All' || o.branchId === selectedBranch;
+          return matchesDate && matchesBranch;
+        })
+        .reduce((a, b) => a + (Number(b.amount) || 0) + (Number(b.deliveryCharges) || 0), 0);
+
+      return { name: m, amount: subRev + sRev };
+    });
+  }, [payments, singleOrders, customers, selectedBranch, selectedYear]);
+
+  const planRevenueData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredPayments.forEach((p: any) => {
-       const customer = customers.find((c: any) => c.id === p.customerId);
-       if (customer) {
-          const plan = plans.find((pl: any) => pl.id === customer.planId);
-          const planName = plan ? plan.name : 'Unknown Plan';
-          map[planName] = (map[planName] || 0) + (p.amount || 0);
-       }
+    customers.filter(c => {
+      const matchesBranch = selectedBranch === 'All' || c.branchId === selectedBranch;
+      const matchesYear = selectedYear === 'All' || !c.createdAt || new Date(c.createdAt).getFullYear().toString() === selectedYear;
+      return matchesBranch && matchesYear;
+    }).forEach(c => {
+      (c.activePlans || []).forEach((ap: any) => {
+        map[ap.planName] = (map[ap.planName] || 0) + Number(ap.price || 0);
+      });
     });
-    return Object.keys(map).map(k => ({ name: k, value: map[k] }));
-  }, [filteredPayments, customers, plans]);
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [customers, selectedBranch, selectedYear]);
 
-  useEffect(() => {
-    const fetchAI = async () => {
-      if (isLoading || barChartData.every(d => d.value === 0 && d.secondaryValue === 0)) return;
-      setIsAiLoading(true);
-      const result = await generateBusinessInsights(barChartData);
-      setAiInsight(result);
-      setIsAiLoading(false);
-    };
-    fetchAI();
-  }, [isLoading, selectedBranch]);
+  const customerGrowthData = useMemo(() => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months.map((m, idx) => {
+      const count = customers.filter(c => {
+        const d = new Date(c.createdAt);
+        const matchesDate = d.getMonth() === idx && (selectedYear === 'All' || d.getFullYear().toString() === selectedYear);
+        const matchesBranch = selectedBranch === 'All' || c.branchId === selectedBranch;
+        return matchesDate && matchesBranch;
+      }).length;
+      return { name: m, count };
+    });
+  }, [customers, selectedBranch, selectedYear]);
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
+  if (isLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-primary-600" size={48} /></div>;
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-3">Dashboard <span className="text-sm font-normal text-slate-400 bg-slate-100 px-3 py-1 rounded-full">{new Date().toLocaleDateString()}</span></h1>
-          <p className="text-slate-500 mt-1">Overview of your meal subscription business.</p>
+    <div className="space-y-6 pb-16 pt-2 animate-in fade-in duration-500">
+      
+      {/* Header & Filters Unified Row (Horizontal Scroll on Mobile) */}
+      <div className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-3 shrink-0">
+          <h1 className="text-lg font-black text-slate-900 tracking-tight uppercase">Dashboard</h1>
+          <div className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg text-[10px] font-black text-slate-500 whitespace-nowrap">
+            <Calendar size={12} /> {formattedToday}
+          </div>
         </div>
-        <select className="px-4 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:ring-2 focus:ring-primary-500 outline-none w-full md:w-auto shadow-sm" value={selectedBranch} onChange={(e) => setSelectedBranch(e.target.value)}>
-           <option value="All">All Branches</option>
-           {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-      </div>
+        
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="relative">
+            <select 
+              className="pl-2 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-black shadow-none outline-none focus:ring-1 focus:ring-primary-500 appearance-none uppercase tracking-tighter cursor-pointer" 
+              value={selectedBranch} 
+              onChange={(e) => setSelectedBranch(e.target.value)}
+            >
+              <option value="All">All Branches</option>
+              {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+          </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <StatCard title="Total Revenue" value={`₹${kpis.revenue.toLocaleString()}`} icon={DollarSign} isPositive={true} colorClass="bg-green-600 text-green-600" />
-        <StatCard title="Pending Payments" value={`₹${kpis.pending.toLocaleString()}`} icon={AlertCircle} isPositive={false} colorClass="bg-red-500 text-red-500" />
-        <StatCard title="Total Expenses" value={`₹${kpis.expenses.toLocaleString()}`} icon={TrendingUp} isPositive={true} colorClass="bg-orange-500 text-orange-500" />
-        <StatCard title="Active Customers" value={kpis.activeUsers} icon={Users} isPositive={true} colorClass="bg-blue-600 text-blue-600" />
-        <StatCard title="Deliveries Today" value={kpis.deliveriesToday} icon={Package} isPositive={true} colorClass="bg-violet-600 text-violet-600" />
-        <StatCard title="Renewal Rate" value={`${kpis.renewalRate}%`} icon={RefreshCw} isPositive={kpis.renewalRate > 50} colorClass="bg-cyan-500 text-cyan-500" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-         <KitchenPrepWidget title="Daily Prep" date="Today" metrics={kitchenMetrics.today} isTomorrow={false} />
-         <KitchenPrepWidget title="Tomorrow's Plan" date="Tomorrow" metrics={kitchenMetrics.tomorrow} isTomorrow={true} />
-      </div>
-
-      <div className="bg-gradient-to-br from-primary-50 to-violet-50 p-6 rounded-2xl border border-primary-100 shadow-sm relative overflow-hidden group">
-         <div className="flex items-center gap-3 mb-4 relative z-10"><div className="p-2 bg-white rounded-xl shadow-sm text-primary-600"><Lightbulb size={20} fill="currentColor" /></div><h3 className="font-bold text-primary-900">AI Kitchen Intelligence</h3></div>
-         {isAiLoading ? <div className="flex items-center gap-3 text-slate-400 py-4"><Loader2 size={16} className="animate-spin" /><span className="text-sm font-medium italic">Analyzing...</span></div> : <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line relative z-10 bg-white/40 p-4 rounded-xl backdrop-blur-sm">{aiInsight || "No insights available."}</div>}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 mb-6">Cash Flow</h2>
-          <div className="h-80"><ResponsiveContainer width="100%" height="100%"><BarChart data={barChartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} /><YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(v) => `₹${v/1000}k`} /><Tooltip contentStyle={{ borderRadius: '8px' }} formatter={(v: number) => [`₹${v.toLocaleString()}`, '']} /><Bar dataKey="value" name="Collections" fill="#8b5cf6" radius={[4, 4, 0, 0]} /><Bar dataKey="secondaryValue" name="Expenses" fill="#cbd5e1" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div>
+          <div className="relative">
+            <select 
+              className="pl-2 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-black shadow-none outline-none focus:ring-1 focus:ring-primary-500 appearance-none uppercase tracking-tighter cursor-pointer" 
+              value={selectedYear} 
+              onChange={(e) => setSelectedYear(e.target.value)}
+            >
+              <option value="All">All Years</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+          </div>
         </div>
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
-          <h2 className="text-lg font-bold text-slate-900 mb-6">By Plan</h2>
-          <div className="flex-1 min-h-[300px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={planPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} paddingAngle={5}>{planPieData.map((e, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip formatter={(v: number) => `₹${v.toLocaleString()}`} /><Legend /></PieChart></ResponsiveContainer></div>
+      </div>
+
+      {/* KPI Section - Paired Rows for Mobile Efficiency */}
+      <div className="space-y-4">
+        {/* Row 1: Revenue & Pending */}
+        <div className="grid grid-cols-2 gap-4">
+          <StatCard title="Total Revenue" value={kpis.subRevenue} icon={DollarSign} colorClass="bg-emerald-600" iconColor="text-emerald-600" subtext="Collected Total" />
+          <StatCard title="Pending Payments" value={kpis.pending} icon={AlertCircle} colorClass="bg-rose-500" iconColor="text-rose-500" subtext="Collection Due" />
         </div>
+
+        {/* Row 2: Unique & Active (FIXED LOGIC) */}
+        <div className="grid grid-cols-2 gap-4">
+          <StatCard title="Unq Customers" value={kpis.unqCust} icon={Users} colorClass="bg-blue-600" iconColor="text-blue-600" subtext="Total Historical" />
+          <StatCard title="Active Users" value={kpis.activeCust} icon={Activity} colorClass="bg-indigo-600" iconColor="text-indigo-600" subtext="Running Plans" />
+        </div>
+
+        {/* Row 3: Single Orders */}
+        <div className="grid grid-cols-2 gap-4">
+          <StatCard title="Single Rev" value={kpis.singleRev} icon={TrendingUp} colorClass="bg-cyan-600" iconColor="text-cyan-600" subtext="Order Sales" />
+          <StatCard title="Single Orders" value={kpis.singleCount} icon={ShoppingBag} colorClass="bg-violet-600" iconColor="text-violet-600" subtext="Order Count" />
+        </div>
+
+        {/* Row 4: Plans Today (Full Width) */}
+        <div className="w-full">
+           <div className="bg-slate-900 p-5 rounded-3xl flex items-center justify-between shadow-xl relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                <Package size={80} className="text-white" />
+              </div>
+              <div className="relative z-10">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Plans Scheduled Today</p>
+                 <h3 className="text-3xl font-black text-white">{kpis.plansToday} <span className="text-sm font-bold text-slate-500 ml-1 uppercase">Boxes</span></h3>
+              </div>
+              <div className="w-12 h-12 bg-primary-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary-500/20">
+                 <Package size={24} />
+              </div>
+           </div>
+        </div>
+      </div>
+
+      {/* Charts Section - Vertical Stack for Selected Years */}
+      <div className="space-y-6">
+        
+        {/* Cash Flow Chart */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+           <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 bg-primary-50 text-primary-600 rounded-xl"><BarChart3 size={18}/></div>
+              <h3 className="text-lg font-black text-slate-900 tracking-tight truncate uppercase">Monthly Cash Flow {selectedYear === 'All' ? '(History)' : `(${selectedYear})`}</h3>
+           </div>
+           <div className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                 <BarChart data={cashFlowData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
+                    <Bar dataKey="amount" fill="#4f46e5" radius={[6, 6, 0, 0]} barSize={24} />
+                 </BarChart>
+              </ResponsiveContainer>
+           </div>
+        </div>
+
+        {/* Plan Wise Revenue Pie */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+           <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 bg-orange-50 text-orange-600 rounded-xl"><PieIcon size={18}/></div>
+              <h3 className="text-lg font-black text-slate-900 tracking-tight truncate uppercase">Plan-wise Revenue {selectedYear === 'All' ? '(History)' : `(${selectedYear})`}</h3>
+           </div>
+           <div className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                 <PieChart>
+                    <Pie data={planRevenueData} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={5} dataKey="value">
+                       {planRevenueData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
+                    <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
+                 </PieChart>
+              </ResponsiveContainer>
+           </div>
+        </div>
+
+        {/* Customer Growth Line Chart */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+           <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><TrendingUp size={18}/></div>
+              <h3 className="text-lg font-black text-slate-900 tracking-tight truncate uppercase">Monthly Signups {selectedYear === 'All' ? '(History)' : `(${selectedYear})`}</h3>
+           </div>
+           <div className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                 <LineChart data={customerGrowthData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} allowDecimals={false} />
+                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
+                    <Line type="monotone" dataKey="count" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981' }} activeDot={{ r: 6 }} name="New Signups" />
+                 </LineChart>
+              </ResponsiveContainer>
+           </div>
+        </div>
+
       </div>
     </div>
   );

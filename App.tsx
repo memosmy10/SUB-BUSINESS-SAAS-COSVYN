@@ -1,4 +1,4 @@
-import React, { useState, useEffect, ErrorInfo, ReactNode, Component } from 'react';
+import React, { useState, useEffect, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, Outlet, NavLink, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import LandingPage from './pages/LandingPage';
@@ -6,7 +6,10 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import OnboardingPayment from './pages/OnboardingPayment';
 import Dashboard from './pages/Dashboard';
+import Prep from './pages/Prep';
 import Customers from './pages/Customers';
+import SingleOrders from './pages/SingleOrders';
+import Notes from './pages/Notes';
 import Analytics from './pages/Analytics';
 import Support from './pages/Support';
 import Profile from './pages/Profile';
@@ -15,6 +18,7 @@ import Payments from './pages/Payments';
 import Expenses from './pages/Expenses';
 import Deliveries from './pages/Deliveries';
 import Inventory from './pages/Inventory';
+import Messages from './pages/Messages';
 import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminUsers from './pages/admin/AdminUsers';
@@ -24,6 +28,7 @@ import AdminFeatureSupport from './pages/admin/AdminFeatureSupport';
 import AdminProfile from './pages/admin/AdminProfile';
 import AdminPlans from './pages/admin/AdminPlans';
 import AdminLogin from './pages/admin/AdminLogin';
+import AdminMessages from './pages/admin/AdminMessages';
 
 // Legal Pages
 import Terms from './pages/legal/Terms';
@@ -35,7 +40,7 @@ import Contact from './pages/legal/Contact';
 import { 
   Menu, X, Zap, LogOut, Bell, AlertTriangle, Loader2, User, CheckCircle, Phone, MapPin, ArrowRight, MessageSquare
 } from 'lucide-react';
-import { getDaysDifference } from './services/store';
+import { getDaysDifference, calculateRemainingDeliveries } from './services/store';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ADMIN_EMAIL } from './services/adminStore';
 import { doc, onSnapshot, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
@@ -43,14 +48,16 @@ import { db } from './services/firebase';
 import { useStreamCollection } from './services/dbService';
 
 // --- ERROR BOUNDARY ---
-interface ErrorBoundaryProps { children: ReactNode; }
+interface ErrorBoundaryProps { children?: ReactNode; }
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 
-// Fix: Adding an explicit constructor and using direct Component import from React to resolve 'props' visibility
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public props: ErrorBoundaryProps;
+  public state: ErrorBoundaryState = { hasError: false, error: null };
+
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.props = props;
   }
 
   public static getDerivedStateFromError(error: Error): ErrorBoundaryState { 
@@ -84,17 +91,10 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
                   Back to Home
                 </button>
              </div>
-             {/* Check process.env defensively for cases where it might not be fully polyfilled */}
-             {typeof process !== 'undefined' && process?.env?.NODE_ENV === 'development' && (
-               <div className="mt-6 p-4 bg-slate-50 rounded-xl text-left overflow-auto max-h-40">
-                  <p className="text-[10px] font-mono text-red-600">{this.state.error?.toString()}</p>
-               </div>
-             )}
           </div>
         </div>
       );
     }
-    // Fix: Accessing children from props safely inside render method
     return this.props.children;
   }
 }
@@ -117,7 +117,7 @@ const SubscriptionManager = () => {
             localStorage.setItem('pending_subscription', JSON.stringify({
               planId, paymentId: paymentId || 'manual_entry', timestamp: Date.now()
             }));
-            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + window.location.hash;
+            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + window.history.state;
             window.history.replaceState({}, document.title, cleanUrl);
           }
         }
@@ -246,11 +246,22 @@ const AppLayout = () => {
   const { data: customers = [] } = useStreamCollection<any>('customers');
   const { data: plans = [] } = useStreamCollection<any>('plans');
 
+  // FIX: SYNCED LIVE CALCULATION FOR NOTIFICATIONS
   const expiringCustomers = React.useMemo(() => {
     return (customers || [])
-      .filter((c: any) => c && c.isActive && c.daysLeft <= 10)
-      .sort((a: any, b: any) => (a.daysLeft || 0) - (b.daysLeft || 0));
-  }, [customers]);
+      .map((c: any) => {
+        // Calculate the TRUE days left for each customer based on their active plans
+        const realDaysLeft = (c.activePlans || []).reduce((max: number, p: any) => {
+          const planConfig = plans.find((pl: any) => pl.id === p.planId);
+          if (!planConfig) return max;
+          const left = calculateRemainingDeliveries(p.endDate, planConfig.weekdays || [], p.pauses || []);
+          return Math.max(max, left);
+        }, 0);
+        return { ...c, realDaysLeft };
+      })
+      .filter((c: any) => c.isActive && c.realDaysLeft <= 10 && c.realDaysLeft > 0)
+      .sort((a: any, b: any) => a.realDaysLeft - b.realDaysLeft);
+  }, [customers, plans]);
 
   useEffect(() => {
     if (currentUser) {
@@ -270,9 +281,19 @@ const AppLayout = () => {
   const handleLogout = async () => { await logout(); navigate('/'); };
 
   const navItems = [
-    { label: 'Dashboard', path: '/app' }, { label: 'Customers', path: '/app/customers' }, { label: 'Payments', path: '/app/payments' },
-    { label: 'Expenses', path: '/app/expenses' }, { label: 'Deliveries', path: '/app/deliveries' }, { label: 'Inventory', path: '/app/inventory' },
-    { label: 'Analytics', path: '/app/analytics' }, { label: 'Support', path: '/app/support' }, { label: 'Settings', path: '/app/settings' },
+    { label: 'Dashboard', path: '/app' }, 
+    { label: 'Kitchen Prep', path: '/app/prep' }, 
+    { label: 'Customers', path: '/app/customers' }, 
+    { label: 'Single Orders', path: '/app/single-orders' },
+    { label: 'Payments', path: '/app/payments' },
+    { label: 'Expenses', path: '/app/expenses' }, 
+    { label: 'Deliveries', path: '/app/deliveries' }, 
+    { label: 'Inventory', path: '/app/inventory' },
+    { label: 'Notes', path: '/app/notes' },
+    { label: 'Analytics', path: '/app/analytics' }, 
+    { label: 'Messages', path: '/app/messages' }, 
+    { label: 'Support', path: '/app/support' }, 
+    { label: 'Settings', path: '/app/settings' },
   ];
 
   return (
@@ -293,16 +314,71 @@ const AppLayout = () => {
            <button onClick={() => setIsMobileNavOpen(true)} className="md:hidden p-2 text-slate-600"><Menu size={24} /></button>
            <div className="flex items-center gap-4 ml-auto">
               <div className="relative">
-                <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 text-slate-500 hover:text-primary-600 relative transition-colors"><Bell size={20} />{expiringCustomers.length > 0 && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />}</button>
+                <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 text-slate-500 hover:text-primary-600 relative transition-colors">
+                   <Bell size={20} />
+                   {expiringCustomers.length > 0 && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white" />}
+                </button>
                 {isNotificationsOpen && (
-                   <><div className="fixed inset-0 z-30" onClick={() => setIsNotificationsOpen(false)} /><div className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-200"><div className="p-4 border-b border-slate-100 flex justify-between bg-slate-50/50"><h4 className="font-bold text-slate-900 text-sm">Customer Expiries</h4><span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">{expiringCustomers.length}</span></div><div className="max-h-[450px] overflow-y-auto">{expiringCustomers.length === 0 ? (<div className="p-10 text-center text-slate-400 text-sm font-medium">No expiries soon.</div>) : expiringCustomers.map((cust: any) => {
-                         const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'N/A';
-                         const whatsappMsg = `Hello ${cust.name}, your subscription plan expires on ${cust.endDate}. Please renew!`;
-                         const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
-                         return (
-                            <div key={cust.id} className="p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors"><div className="flex justify-between items-start mb-2"><div className="flex-1 min-w-0"><h5 className="font-bold text-slate-900 text-sm truncate">{cust.name}</h5><div className="text-[11px] text-slate-500 mt-1">{cust.mobile}</div></div><div className="flex flex-col items-end gap-1.5"><span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${cust.daysLeft <= 0 ? 'bg-slate-200 text-slate-600' : 'bg-red-100 text-red-700'}`}>{cust.daysLeft <= 0 ? 'Expired' : `${cust.daysLeft} Days Left`}</span><div className="flex gap-1.5"><a href={whatsappLink} target="_blank" rel="noreferrer" className="p-2 bg-green-50 text-green-600 rounded-lg shadow-sm hover:bg-green-100"><MessageSquare size={14} /></a><a href={`tel:${cust.mobile}`} className="p-2 bg-blue-50 text-blue-600 rounded-lg shadow-sm hover:bg-blue-100"><Phone size={14} /></a></div></div></div><div className="mt-3 pt-2 border-t border-slate-50 flex items-center justify-between"><span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">{planName}</span><button onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} className="text-[11px] text-primary-600 font-extrabold uppercase flex items-center gap-1 hover:underline">Renew <ArrowRight size={12} /></button></div></div>
-                         );
-                      })}</div></div></>
+                   <>
+                    <div className="fixed inset-0 z-30" onClick={() => setIsNotificationsOpen(false)} />
+                    <div className="absolute right-0 top-full mt-3 w-80 sm:w-96 bg-white border border-slate-100 rounded-[2rem] shadow-2xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                      <div className="p-6 border-b border-slate-50 flex justify-between items-center bg-white">
+                        <h4 className="font-black text-slate-900 text-lg uppercase tracking-tight">Customer Expiries</h4>
+                        <span className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full font-black">{expiringCustomers.length}</span>
+                      </div>
+                      <div className="max-h-[550px] overflow-y-auto no-scrollbar">
+                        {expiringCustomers.length === 0 ? (
+                          <div className="p-16 text-center text-slate-300 flex flex-col items-center">
+                            <CheckCircle size={40} className="mb-3 opacity-20" />
+                            <p className="text-xs font-black uppercase tracking-widest">No pending expiries</p>
+                          </div>
+                        ) : expiringCustomers.map((cust: any) => {
+                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'N/A';
+                          const whatsappMsg = `Hello ${cust.name}, your subscription plan (${planName}) expires on ${cust.endDate}. Please renew!`;
+                          const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
+                          
+                          return (
+                            <div key={cust.id} className="p-5 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-0.5">
+                                  <h5 className="font-black text-slate-900 text-base">{cust.name}</h5>
+                                  <p className="text-slate-400 font-mono text-sm tracking-tight">{cust.mobile}</p>
+                                </div>
+                                <div className="flex flex-col items-end gap-3">
+                                  <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-md ${
+                                    cust.realDaysLeft <= 0 
+                                      ? 'bg-slate-100 text-slate-500 border border-slate-200' 
+                                      : 'bg-rose-50 text-rose-600 border border-rose-100'
+                                  }`}>
+                                    {cust.realDaysLeft <= 0 ? 'EXPIRED' : `${cust.realDaysLeft} DAYS LEFT`}
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <a href={whatsappLink} target="_blank" rel="noreferrer" className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100/50 hover:bg-emerald-100 transition-colors">
+                                      <MessageSquare size={18} />
+                                    </a>
+                                    <a href={`tel:${cust.mobile}`} className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center border border-blue-100/50 hover:bg-blue-100 transition-colors">
+                                      <Phone size={18} />
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="mt-5 flex items-center justify-between">
+                                <span className="text-[10px] font-black text-slate-500 bg-slate-50 border border-slate-100 px-3 py-1 rounded-lg uppercase">
+                                  {planName}
+                                </span>
+                                <button 
+                                  onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} 
+                                  className="text-blue-600 font-black text-[11px] uppercase tracking-widest flex items-center gap-1.5 hover:text-blue-800 transition-colors"
+                                >
+                                  RENEW <ArrowRight size={14} strokeWidth={4} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
               <button onClick={() => navigate('/app/profile')} className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-100 hover:border-slate-300 transition-all hover:bg-slate-50">
@@ -343,12 +419,16 @@ const App = () => {
             <Route path="/app" element={<ProtectedRoute />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
+              <Route path="prep" element={<Prep />} />
               <Route path="customers" element={<Customers />} />
+              <Route path="single-orders" element={<SingleOrders />} />
               <Route path="payments" element={<Payments />} />
               <Route path="expenses" element={<Expenses />} />
               <Route path="deliveries" element={<Deliveries />} />
               <Route path="inventory" element={<Inventory />} />
+              <Route path="notes" element={<Notes />} />
               <Route path="analytics" element={<Analytics />} />
+              <Route path="messages" element={<Messages />} />
               <Route path="support" element={<Support />} />
               <Route path="settings" element={<Settings />} />
               <Route path="profile" element={<Profile />} />
@@ -360,6 +440,7 @@ const App = () => {
               <Route path="plans" element={<AdminPlans />} />
               <Route path="analytics" element={<AdminAnalytics />} />
               <Route path="feature-support" element={<AdminFeatureSupport />} />
+              <Route path="messages" element={<AdminMessages />} />
               <Route path="profile" element={<AdminProfile />} />
               <Route index element={<Navigate to="dashboard" replace />} />
             </Route>

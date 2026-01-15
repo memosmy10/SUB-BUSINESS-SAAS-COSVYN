@@ -12,57 +12,66 @@ export interface GlobalPlan {
   branchId: string;
   name: string;
   price: number;
-  numberOfDeliveryDays: number; // e.g., 26 for monthly
-  weekdays: number[]; // [1,2,3,4,5] (0=Sun, 1=Mon)
+  numberOfDeliveryDays: number;
+  weekdays: number[];
 }
 
-export interface GlobalDeliveryBoy {
-  id: string;
-  branchId: string;
-  name: string;
-  mobile: string;
+export interface PauseEvent {
+  start: string;
+  end: string;
+  type: 'User' | 'Branch';
+}
+
+export interface SubscribedPlan {
+  planId: string;
+  planName: string;
+  mealTime: 'Breakfast' | 'Lunch' | 'Dinner';
+  startDate: string;
+  endDate: string;
+  price: number;
+  pauses: PauseEvent[];
+  isStarred?: boolean; // NEW: Track special preparation requirements per plan
 }
 
 export interface GlobalCustomer {
   id: string;
-  branchId: string;
   name: string;
   mobile: string;
   address: string;
   area: string;
   locationLink?: string;
-  planId: string;
+  createdAt: string;
+  branchId: string;
   deliveryBoyId: string;
-  mealTime: 'Breakfast' | 'Lunch' | 'Dinner'; 
   
-  // Status & Dates
+  // NEW: Multi-plan support
+  activePlans: SubscribedPlan[];
+  
+  // Flattened for quick table access (primary plan)
+  planId: string; 
+  mealTime: string[]; // ['Breakfast', 'Lunch']
   isActive: boolean;
   startDate: string;
-  endDate: string;
-  daysLeft: number; // This is a snapshot, but UI should calculate live
+  endDate: string; // Max end date across all plans
+  daysLeft: number; // Max days left across all plans
   
   // Financials
   paymentStatus: 'Paid' | 'Pending';
   amountPaid: number;
-  planPrice: number;
-  deliveryCharges?: number; // Optional delivery charges
+  planPrice: number; // Total price of all plans
+  deliveryCharges: number;
   pendingAmount: number;
   renewalCount: number;
   
-  // Delivery Logic
   routeOrder: number;
+  updatedAt?: string;
+
+  // NEW: Highlight and Notes
+  highlightMark?: 'None' | 'VIP' | 'Dietary' | 'Allergy' | 'Urgent';
+  notes?: string;
 }
 
-export interface PaymentRecord {
-  id: string;
-  customerId: string;
-  amount: number;
-  date: string;
-  month: string; // e.g., 'Jan'
-}
-
-export type ExpenseCategory = 'Food' | 'Salaries' | 'Packaging' | 'Rent' | 'Marketing' | 'Transportation' | 'Others';
-
+// Fix: Added missing Expense types used in Expenses.tsx
 export interface ExpenseItem {
   name: string;
   quantity: number;
@@ -73,116 +82,107 @@ export interface ExpenseItem {
 export interface GlobalExpense {
   id: string;
   branchId: string;
-  category: ExpenseCategory;
-  title: string;
-  description: string;
   date: string;
+  category: string;
+  title: string;
+  description?: string;
   paymentStatus: 'Paid' | 'Pending';
-  paymentMethod: 'UPI' | 'Cash' | 'Card';
+  paymentMethod: string;
   amount: number;
   items?: ExpenseItem[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
+// Fix: Added missing InventoryItem type used in Inventory.tsx
 export interface InventoryItem {
   id: string;
-  branchId: string;
   name: string;
   category: string;
   quantity: number;
   unit: string;
   minThreshold: number;
-  costPerUnit?: number;
+  costPerUnit: number;
+  branchId: string;
   lastUpdated: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // --- HELPER LOGIC ---
 
-/**
- * Calculates End Date by adding 'count' valid delivery days to Start Date.
- * Skips days NOT in allowedWeekdays.
- */
-export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number, allowedWeekdays: number[]): string => {
+export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number, allowedWeekdays: number[], pauses: PauseEvent[] = []): string => {
   if (!startDateStr || totalDeliveryDays <= 0 || !allowedWeekdays || allowedWeekdays.length === 0) return startDateStr;
   
   let currentDate = new Date(startDateStr);
   let deliveriesCounted = 0;
   
-  // If the start date itself is a delivery day, count it (depends on business logic, usually subscription starts ON the day)
-  if (allowedWeekdays.includes(currentDate.getDay())) {
-    deliveriesCounted++;
-  }
+  const isPaused = (dateStr: string) => {
+    // FIX: Replaced undefined 'dStr' with the correct parameter 'dateStr'
+    return pauses.some(p => dateStr >= p.start && dateStr <= p.end);
+  };
 
-  // Safety break to prevent infinite loops if something is wrong
   let safetyLoop = 0; 
-  while (deliveriesCounted < totalDeliveryDays && safetyLoop < 730) { // Max 2 years loop
-    currentDate.setDate(currentDate.getDate() + 1);
-    if (allowedWeekdays.includes(currentDate.getDay())) {
+  while (deliveriesCounted < totalDeliveryDays && safetyLoop < 1000) {
+    const dStr = currentDate.toISOString().split('T')[0];
+    const dayOfWeek = currentDate.getDay();
+    
+    if (allowedWeekdays.includes(dayOfWeek) && !isPaused(dStr)) {
       deliveriesCounted++;
+    }
+    
+    if (deliveriesCounted < totalDeliveryDays) {
+      currentDate.setDate(currentDate.getDate() + 1);
     }
     safetyLoop++;
   }
-  
   return currentDate.toISOString().split('T')[0];
 };
 
-/**
- * Calculates how many VALID delivery days are left between Today and EndDate.
- */
-export const calculateRemainingDeliveries = (endDateStr: string, allowedWeekdays: number[]): number => {
+export const calculateRemainingDeliveries = (endDateStr: string, allowedWeekdays: number[], pauses: PauseEvent[] = []): number => {
   if (!endDateStr || !allowedWeekdays || allowedWeekdays.length === 0) return 0;
-
   const today = new Date();
   today.setHours(0,0,0,0);
-  
   const end = new Date(endDateStr);
   end.setHours(0,0,0,0);
-
+  
   if (today > end) return 0;
-
+  
   let count = 0;
   let current = new Date(today);
+  
+  const isPaused = (dateStr: string) => {
+    // FIX: Replaced undefined 'dStr' with the correct parameter 'dateStr'
+    return pauses.some(p => dateStr >= p.start && dateStr <= p.end);
+  };
 
-  // Loop from Today until End Date
-  // Safety loop 365 days
   let safetyLoop = 0;
   while (current <= end && safetyLoop < 366) {
-    if (allowedWeekdays.includes(current.getDay())) {
+    const dStr = current.toISOString().split('T')[0];
+    if (allowedWeekdays.includes(current.getDay()) && !isPaused(dStr)) {
       count++;
     }
     current.setDate(current.getDate() + 1);
     safetyLoop++;
   }
-
   return count;
 };
 
-/**
- * Counts how many delivery days fall within a specific date range (inclusive).
- * Used for Pause calculation.
- */
 export const countDeliveryDays = (startStr: string, endStr: string, allowedWeekdays: number[]): number => {
   const start = new Date(startStr);
   const end = new Date(endStr);
   start.setHours(0,0,0,0);
   end.setHours(0,0,0,0);
-
   if (start > end) return 0;
-
   let count = 0;
   let current = new Date(start);
-  
   while (current <= end) {
-    if (allowedWeekdays.includes(current.getDay())) {
-      count++;
-    }
+    if (allowedWeekdays.includes(current.getDay())) count++;
     current.setDate(current.getDate() + 1);
   }
   return count;
 }
 
-/**
- * Checks if a specific date is a valid delivery day for a plan
- */
 export const isDeliveryDay = (date: Date, allowedWeekdays: number[]): boolean => {
   if (!allowedWeekdays) return false;
   return allowedWeekdays.includes(date.getDay());
@@ -195,13 +195,6 @@ export const getDaysDifference = (date1: string, date2: string): number => {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 };
 
-export const addDaysToDate = (dateStr: string, days: number): string => {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
-};
-
-// --- MOCK DATA FOR INITIALIZATION ---
 export const INDIA_STATES = [
   "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", 
   "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", 
@@ -227,17 +220,8 @@ export interface BusinessProfile {
 }
 
 export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
-  ownerName: "",
-  email: "",
-  mobile: "", 
-  businessName: "",
-  description: "",
-  category: "Cloud Kitchen",
-  country: "India",
-  state: "",
-  city: "",
-  isProfileComplete: false,
-  planName: "None",
-  planExpiryDate: new Date().toISOString().split('T')[0],
+  ownerName: "", email: "", mobile: "", businessName: "", description: "",
+  category: "Cloud Kitchen", country: "India", state: "", city: "",
+  isProfileComplete: false, planName: "None", planExpiryDate: new Date().toISOString().split('T')[0],
   planStatus: 'Inactive'
 };

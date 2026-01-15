@@ -1,382 +1,369 @@
-
 import React, { useMemo, useState } from 'react';
 import { 
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+  BarChart, Bar, PieChart, Pie, Cell, 
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LineChart, Line
 } from 'recharts';
 import { 
-  DollarSign, AlertCircle, TrendingUp, Calendar, Filter, Search, ArrowRight, Loader2, Phone, UserX
+  DollarSign, AlertCircle, TrendingUp, Calendar, Search, 
+  Loader2, Phone, ChevronDown, Receipt, Filter, ArrowRight, Wallet, Building2
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
-import { calculateRemainingDeliveries } from '../services/store';
+
+const COLORS = ['#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const StatCard = ({ title, value, icon: Icon, colorClass, iconColor, subtext }: any) => (
+  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-36">
+    <div className="flex justify-between items-start">
+      <div className="space-y-1">
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
+        <h3 className="text-2xl font-black text-slate-900 tracking-tight">
+          {typeof value === 'number' 
+            ? `₹${Math.round(value).toLocaleString('en-IN')}` 
+            : value}
+        </h3>
+      </div>
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorClass} bg-opacity-10`}>
+        <Icon size={20} className={iconColor} />
+      </div>
+    </div>
+    {subtext && (
+      <div className="mt-2">
+        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{subtext}</p>
+      </div>
+    )}
+  </div>
+);
 
 const Payments = () => {
-  // Real Data
-  const { data: customers, loading: l1 } = useStreamCollection<any>('customers');
-  const { data: payments, loading: l2 } = useStreamCollection<any>('payments');
-  const { data: branches, loading: l3 } = useStreamCollection<any>('branches');
-  const { data: plans, loading: l4 } = useStreamCollection<any>('plans');
+  const { data: customers = [], loading: l1 } = useStreamCollection<any>('customers');
+  const { data: payments = [], loading: l2 } = useStreamCollection<any>('payments');
+  const { data: branches = [], loading: l3 } = useStreamCollection<any>('branches');
 
-  const isLoading = l1 || l2 || l3 || l4;
+  const isLoading = l1 || l2 || l3;
 
+  // Top Global Filters - UPDATED DEFAULT TO 'All'
   const [selectedBranch, setSelectedBranch] = useState('All');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedYear, setSelectedYear] = useState('All');
 
-  // --- DATA PROCESSING ---
+  // Outstanding List Specific Filters
+  const [listBranch, setListBranch] = useState('All');
+  const [listYear, setListYear] = useState('All');
+  const [listMonth, setListMonth] = useState('All');
+  const [listSearch, setListSearch] = useState('');
 
-  // Filter customers by branch
-  const filteredCustomers = useMemo(() => {
-    return selectedBranch === 'All' 
-      ? customers 
-      : customers.filter((c:any) => c.branchId === selectedBranch);
-  }, [selectedBranch, customers]);
+  const yearOptions = useMemo(() => {
+    const years = new Set<string>();
+    years.add(new Date().getFullYear().toString());
+    customers.forEach(c => { if(c.createdAt) years.add(new Date(c.createdAt).getFullYear().toString()); });
+    return Array.from(years).sort((a, b) => b.localeCompare(a));
+  }, [customers]);
 
-  // Valid Payments (filtered by existing customers)
-  const validPayments = useMemo(() => {
-     const custIds = new Set(customers.map((c:any) => c.id));
-     return payments.filter((p:any) => custIds.has(p.customerId));
-  }, [payments, customers]);
-
-  // Metrics Calculation
+  // Derived Metrics based on Global Filters
   const metrics = useMemo(() => {
-    const totalPending = filteredCustomers.reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
-    
-    // Total Revenue Logic: Total Collected (Payments) + Total Pending (Customers)
-    // 1. Filter payments for the selected branch's customers
-    const filteredCustomerIds = new Set(filteredCustomers.map((c: any) => c.id));
-    const totalCollected = validPayments
-       .filter((p: any) => filteredCustomerIds.has(p.customerId))
-       .reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
-
-    // 2. Sum up pending dues from current customers state
-    // Total Revenue (Lifetime Value) = Collected + Pending
-    const totalRevenue = totalCollected + totalPending;
-    
-    // Calculate pending explicitly for expired customers
-    const expiredPending = filteredCustomers
-      .filter((c:any) => {
-         if ((c.pendingAmount || 0) <= 0) return false;
-
-         // 1. Check explicit inactive flag
-         if (!c.isActive) return true;
-
-         // 2. Check calculated expiry (active flag might be stale)
-         const plan = plans.find((p:any) => p.id === c.planId);
-         // If no plan found, assume default weekdays to calculate. If no end date, it handles gracefully.
-         const weekdays = plan?.weekdays || [0,1,2,3,4,5,6];
-         const daysLeft = calculateRemainingDeliveries(c.endDate, weekdays);
-         
-         // If days are exhausted, they are effectively expired for payment purposes
-         return daysLeft <= 0;
-      })
-      .reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
-
-    return { totalPending, totalRevenue, totalCollected, expiredPending };
-  }, [filteredCustomers, selectedBranch, validPayments, customers, plans]);
-
-  // Branch-wise Pending Data
-  const branchPendingData = useMemo(() => {
-    return branches.map((b: any) => {
-      const pending = customers
-        .filter((c: any) => c.branchId === b.id)
-        .reduce((acc: number, c: any) => acc + (c.pendingAmount || 0), 0);
-      return { name: b.name, value: pending };
-    }).filter((d: any) => d.value > 0);
-  }, [branches, customers]);
-
-  // Chart Data: Collections Over Time (Line)
-  const revenueData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return months.map(m => {
-       const total = validPayments
-         .filter((tx: any) => new Date(tx.date).toLocaleString('default', { month: 'short' }) === m)
-         .reduce((acc: number, tx: any) => {
-            if (selectedBranch !== 'All') {
-               const cust = customers.find((c:any) => c.id === tx.customerId);
-               if (cust?.branchId !== selectedBranch) return acc;
-            }
-            return acc + (tx.amount || 0);
-         }, 0);
-       return { name: m, revenue: total };
+    const filteredCust = customers.filter(c => {
+      const matchesBranch = selectedBranch === 'All' || c.branchId === selectedBranch;
+      const matchesYear = selectedYear === 'All' || !c.createdAt || new Date(c.createdAt).getFullYear().toString() === selectedYear;
+      return matchesBranch && matchesYear;
     });
-  }, [selectedBranch, validPayments, customers]);
 
-  // Chart Data: Monthly Pending Dues (Bar)
-  const pendingByMonthData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const data = months.map(m => ({ name: m, value: 0 }));
+    const totalRevenue = filteredCust.reduce((acc, c) => acc + (Number(c.planPrice) || 0) + (Number(c.deliveryCharges) || 0), 0);
+    const totalCollected = filteredCust.reduce((acc, c) => acc + (Number(c.amountPaid) || 0), 0);
+    const totalPending = filteredCust.reduce((acc, c) => acc + (Number(c.pendingAmount) || 0), 0);
 
-    filteredCustomers.forEach((c: any) => {
-       if ((c.pendingAmount || 0) > 0 && c.endDate) {
-          const date = new Date(c.endDate);
-          const m = date.toLocaleString('default', { month: 'short' });
-          const idx = months.indexOf(m);
-          if (idx !== -1) {
-             data[idx].value += c.pendingAmount;
-          }
-       }
+    const branchPending: Record<string, number> = {};
+    filteredCust.forEach(c => {
+      const bName = branches.find(b => b.id === c.branchId)?.name || 'Main';
+      branchPending[bName] = (branchPending[bName] || 0) + (Number(c.pendingAmount) || 0);
     });
-    return data;
-  }, [filteredCustomers]);
 
-  // Chart Data: Paid vs Pending (Pie)
-  const pieData = [
-    { name: 'Paid', value: metrics.totalCollected, color: '#16a34a' }, // green-600
-    { name: 'Pending', value: metrics.totalPending, color: '#dc2626' } // red-600
+    return { totalRevenue, totalCollected, totalPending, branchPending };
+  }, [customers, branches, selectedBranch, selectedYear]);
+
+  // Charts Logic
+  const chartYear = selectedYear === 'All' ? new Date().getFullYear().toString() : selectedYear;
+
+  const cashFlowTrend = useMemo(() => {
+    return MONTHS.map((m, idx) => {
+      const total = payments
+        .filter((p: any) => {
+          const d = new Date(p.date);
+          const matchesDate = d.getMonth() === idx && d.getFullYear().toString() === chartYear;
+          const cust = customers.find(c => c.id === p.customerId);
+          const matchesBranch = selectedBranch === 'All' || (cust && cust.branchId === selectedBranch);
+          return matchesDate && matchesBranch;
+        })
+        .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      return { name: m, amount: total };
+    });
+  }, [payments, customers, chartYear, selectedBranch]);
+
+  const pendingDuesTrend = useMemo(() => {
+    return MONTHS.map((m, idx) => {
+      const total = customers
+        .filter((c: any) => {
+          const d = new Date(c.createdAt || c.startDate);
+          const matchesDate = d.getMonth() === idx && d.getFullYear().toString() === chartYear;
+          const matchesBranch = selectedBranch === 'All' || c.branchId === selectedBranch;
+          return matchesDate && matchesBranch;
+        })
+        .reduce((acc, c) => acc + (Number(c.pendingAmount) || 0), 0);
+      return { name: m, amount: total };
+    });
+  }, [customers, chartYear, selectedBranch]);
+
+  const realizationData = [
+    { name: 'Paid', value: metrics.totalCollected },
+    { name: 'Pending', value: metrics.totalPending }
   ];
 
-  // --- SUB-COMPONENTS ---
+  // Outstanding List Logic
+  const outstandingList = useMemo(() => {
+    return customers.filter(c => {
+      if ((Number(c.pendingAmount) || 0) <= 0) return false;
+      const d = new Date(c.createdAt || c.startDate);
+      const matchesBranch = listBranch === 'All' || c.branchId === listBranch;
+      const matchesYear = listYear === 'All' || d.getFullYear().toString() === listYear;
+      const matchesMonth = listMonth === 'All' || d.getMonth().toString() === listMonth;
+      const matchesSearch = c.name.toLowerCase().includes(listSearch.toLowerCase()) || c.mobile.includes(listSearch);
+      return matchesBranch && matchesYear && matchesMonth && matchesSearch;
+    }).sort((a, b) => (Number(b.pendingAmount) || 0) - (Number(a.pendingAmount) || 0));
+  }, [customers, listBranch, listYear, listMonth, listSearch]);
 
-  const MetricCard = ({ title, value, subtext, icon: Icon, colorClass }: any) => (
-    <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-between h-32 relative overflow-hidden group">
-      <div className="flex justify-between items-start z-10">
-        <div>
-          <p className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">{title}</p>
-          <h3 className="text-2xl font-extrabold text-slate-900">{value}</h3>
-        </div>
-        <div className={`p-2 rounded-lg ${colorClass} bg-opacity-10 text-opacity-100`}>
-           <Icon size={20} className={colorClass.replace('bg-', 'text-')} />
-        </div>
-      </div>
-      {subtext && <p className="text-xs text-slate-500 mt-2 z-10 font-medium">{subtext}</p>}
-      <div className={`absolute -bottom-4 -right-4 w-20 h-20 rounded-full opacity-5 group-hover:scale-110 transition-transform ${colorClass}`} />
-    </div>
-  );
-
-  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
+  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" size={48} /></div>;
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-8 pb-20 pt-2 animate-in fade-in duration-500">
       
-      {/* 1. HEADER & CONTROLS */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      {/* Header & Global Filters */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Payments</h1>
-          <p className="text-slate-500">Track revenue, pending dues, and financial health.</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+             Payments
+          </h1>
+          <p className="text-slate-500 font-medium mt-1">Track revenue, pending dues, and financial health.</p>
         </div>
-        <div className="w-full md:w-64">
-           <select 
-             className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-primary-500 outline-none shadow-sm"
-             value={selectedBranch}
-             onChange={(e) => setSelectedBranch(e.target.value)}
-           >
-             <option value="All">All Branches</option>
-             {branches.map((b: any) => (
-               <option key={b.id} value={b.id}>{b.name}</option>
-             ))}
-           </select>
+        <div className="flex flex-wrap gap-3 w-full md:w-auto">
+          <div className="relative flex-1 md:flex-none md:w-48">
+            <select 
+              className="w-full p-3 bg-white border border-slate-200 rounded-xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer" 
+              value={selectedBranch} 
+              onChange={(e) => setSelectedBranch(e.target.value)}
+            >
+              <option value="All">All Branches</option>
+              {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+          </div>
+          <div className="relative flex-1 md:flex-none md:w-36">
+            <select 
+              className="w-full p-3 bg-white border border-slate-200 rounded-xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer" 
+              value={selectedYear} 
+              onChange={(e) => setSelectedYear(e.target.value)}
+            >
+              <option value="All">All Years</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+          </div>
         </div>
       </div>
 
-      {/* 2. TOP METRICS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard 
-          title="Total Revenue" 
-          value={`₹${metrics.totalRevenue.toLocaleString()}`} 
-          subtext="Total Contract Value" 
-          icon={DollarSign} 
-          colorClass="bg-green-600 text-green-600" 
-        />
-        <MetricCard 
-          title="Total Pending" 
-          value={`₹${metrics.totalPending.toLocaleString()}`} 
-          subtext="From Active & Expired" 
-          icon={AlertCircle} 
-          colorClass="bg-red-600 text-red-600" 
-        />
-        <MetricCard 
-          title="Expired & Pending" 
-          value={`₹${metrics.expiredPending.toLocaleString()}`} 
-          subtext="Due from inactive users" 
-          icon={UserX} 
-          colorClass="bg-slate-700 text-slate-700" 
-        />
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm flex flex-col relative overflow-hidden h-32">
-           <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-2">Branch-wise Pending</h4>
-           <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-             {branchPendingData.length > 0 ? branchPendingData.map((d: any, i: number) => (
-               <div key={i} className="flex justify-between items-center text-sm">
-                 <span className="text-slate-600 truncate max-w-[100px]">{d.name}</span>
-                 <span className="font-bold text-red-600">₹{d.value}</span>
-               </div>
-             )) : <span className="text-slate-400 text-sm italic">No pending dues</span>}
+      {/* KPI Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard title="Total Revenue" value={metrics.totalRevenue} icon={DollarSign} colorClass="bg-blue-600" iconColor="text-blue-600" subtext="Plans + Delivery Charges" />
+        <StatCard title="Total Collected" value={metrics.totalCollected} icon={Receipt} colorClass="bg-emerald-600" iconColor="text-emerald-600" subtext="Total Paid by Customers" />
+        <StatCard title="Total Pending" value={metrics.totalPending} icon={AlertCircle} colorClass="bg-rose-500" iconColor="text-rose-500" subtext="Outstanding Dues" />
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm h-36 flex flex-col justify-between overflow-hidden">
+           <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Branch-wise Pending</p>
+              <div className="space-y-1 max-h-[60px] overflow-y-auto no-scrollbar">
+                 {Object.entries(metrics.branchPending).map(([name, amt]) => (
+                   <div key={name} className="flex justify-between items-center text-[11px]">
+                      <span className="font-bold text-slate-600">{name}</span>
+                      <span className="font-black text-rose-600">₹{amt.toLocaleString()}</span>
+                   </div>
+                 ))}
+                 {Object.keys(metrics.branchPending).length === 0 && <p className="text-xs text-slate-300 italic">No data</p>}
+              </div>
+           </div>
+           <Building2 className="absolute -right-2 -bottom-2 text-slate-50" size={60} />
+        </div>
+      </div>
+
+      {/* Charts Row 1 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Cash Flow */}
+        <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+           <div className="flex items-center gap-3 mb-8">
+              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><TrendingUp size={20}/></div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">Month-on-Month Cash Flow ({chartYear})</h3>
+           </div>
+           <div className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                 <LineChart data={cashFlowTrend}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12, fontWeight: 900}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12, fontWeight: 900}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(1) + 'k' : v}`} />
+                    <Tooltip cursor={{stroke: '#e2e8f0', strokeWidth: 2}} contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '12px' }} formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Collected']} />
+                    <Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={4} dot={{ r: 6, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 8 }} />
+                 </LineChart>
+              </ResponsiveContainer>
+           </div>
+        </div>
+
+        {/* Realization Pie */}
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+           <div className="flex items-center gap-3 mb-8">
+              <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Wallet size={20}/></div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">Revenue Realization</h3>
+           </div>
+           <div className="flex-1 relative">
+              <ResponsiveContainer width="100%" height="100%">
+                 <PieChart>
+                    <Pie data={realizationData} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={5} dataKey="value">
+                       {realizationData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Amount']} />
+                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                 </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none mt-[-18px]">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</p>
+                 <p className="text-lg font-black text-slate-900">₹{Math.round(metrics.totalRevenue / 1000)}k</p>
+              </div>
            </div>
         </div>
       </div>
 
-      {/* 3. CHARTS ROW */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Revenue Line Chart */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h3 className="font-bold text-slate-900 mb-6 flex items-center gap-2">
-            <TrendingUp size={18} className="text-primary-600"/> Cash Flow (Collections)
-          </h3>
-          <div className="h-64">
+      {/* Pending Dues Trend */}
+      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[350px]">
+         <div className="flex items-center gap-3 mb-8">
+            <div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><AlertCircle size={20}/></div>
+            <h3 className="text-xl font-black text-slate-900 tracking-tight">Month-on-Month Pending Dues ({chartYear})</h3>
+         </div>
+         <div className="flex-1">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData}>
-                <defs>
-                  <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#7c3aed" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(val) => `₹${val}`} />
-                <Tooltip 
-                   contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}
-                   formatter={(val: number) => [`₹${val}`, 'Collected']}
-                />
-                <Area type="monotone" dataKey="revenue" stroke="#7c3aed" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Paid vs Pending Pie */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h3 className="font-bold text-slate-900 mb-6">Revenue Realization</h3>
-          <div className="h-64 relative">
-             <ResponsiveContainer width="100%" height="100%">
-               <PieChart>
-                 <Pie 
-                   data={pieData} 
-                   innerRadius={60} 
-                   outerRadius={80} 
-                   paddingAngle={5} 
-                   dataKey="value"
-                 >
-                   {pieData.map((entry, index) => (
-                     <Cell key={`cell-${index}`} fill={entry.color} />
-                   ))}
-                 </Pie>
-                 <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
-                 <Legend verticalAlign="bottom" height={36}/>
-               </PieChart>
-             </ResponsiveContainer>
-             {/* Center Text */}
-             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
-                <div className="text-xs text-slate-400 font-bold uppercase">Total</div>
-                <div className="text-xl font-extrabold text-slate-900">₹{metrics.totalRevenue.toLocaleString()}</div>
-             </div>
-          </div>
-        </div>
-
-      </div>
-
-      {/* 4. NEW: MONTHLY PENDING DUES CHART */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-         <h3 className="font-bold text-slate-900 mb-6 flex items-center gap-2">
-            <AlertCircle size={18} className="text-red-500"/> Month-on-Month Pending Dues
-         </h3>
-         <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-               <BarChart data={pendingByMonthData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b'}} tickFormatter={(val) => `₹${val}`} />
-                  <Tooltip 
-                     cursor={{fill: '#fee2e2'}}
-                     contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}
-                     formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Pending Amount']}
-                  />
-                  <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={40} />
+               <BarChart data={pendingDuesTrend}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12, fontWeight: 900}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12, fontWeight: 900}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(1) + 'k' : v}`} />
+                  <Tooltip cursor={{fill: '#fff1f2'}} contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '12px' }} formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Pending']} />
+                  <Bar dataKey="amount" fill="#f43f5e" radius={[10, 10, 0, 0]} barSize={40} />
                </BarChart>
             </ResponsiveContainer>
          </div>
       </div>
 
-      {/* 5. PENDING PAYMENTS TABLE */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50/50">
-           <h3 className="font-bold text-slate-900 flex items-center gap-2">
-             <AlertCircle size={18} className="text-red-500" /> Outstanding Payments List
-           </h3>
-           <div className="relative w-full sm:w-64">
-             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-             <input 
-               type="text"
-               placeholder="Search..."
-               className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm bg-white text-slate-900 placeholder:text-slate-400"
-               value={searchQuery}
-               onChange={(e) => setSearchQuery(e.target.value)}
-             />
-           </div>
-        </div>
+      {/* Outstanding Payments List Section */}
+      <div className="space-y-6">
+         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex items-center gap-3">
+               <div className="p-2 bg-rose-100 text-rose-600 rounded-xl"><AlertCircle size={24}/></div>
+               <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Outstanding Payments List</h2>
+                  <p className="text-slate-500 font-medium text-sm">Customers with remaining balance.</p>
+               </div>
+            </div>
+            
+            {/* List Sub-Filters */}
+            <div className="flex flex-wrap gap-3 w-full md:w-auto">
+               <div className="relative flex-1 md:flex-none">
+                  <select 
+                    className="w-full md:w-32 p-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none appearance-none pr-8"
+                    value={listBranch} onChange={e => setListBranch(e.target.value)}
+                  >
+                     <option value="All">All Branches</option>
+                     {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={12}/>
+               </div>
+               <div className="relative flex-1 md:flex-none">
+                  <select 
+                    className="w-full md:w-28 p-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none appearance-none pr-8"
+                    value={listYear} onChange={e => setListYear(e.target.value)}
+                  >
+                     <option value="All">All Years</option>
+                     {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={12}/>
+               </div>
+               <div className="relative flex-1 md:flex-none">
+                  <select 
+                    className="w-full md:w-28 p-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none appearance-none pr-8"
+                    value={listMonth} onChange={e => setListMonth(e.target.value)}
+                  >
+                     <option value="All">All Months</option>
+                     {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" size={12}/>
+               </div>
+            </div>
+         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[800px]">
-            <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 tracking-wider">
-              <tr>
-                <th className="px-6 py-4">Customer</th>
-                <th className="px-6 py-4">Branch</th>
-                <th className="px-6 py-4">Plan</th>
-                <th className="px-6 py-4">Subscription</th>
-                <th className="px-6 py-4 text-right">Paid</th>
-                <th className="px-6 py-4 text-right">Pending Amount</th>
-                <th className="px-6 py-4 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {filteredCustomers
-                .filter((c: any) => (c.pendingAmount || 0) > 0) // Only show pending
-                .filter((c: any) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .sort((a: any, b: any) => (b.pendingAmount || 0) - (a.pendingAmount || 0)) // Highest pending first
-                .map((c: any) => {
-                   const branchName = branches.find((b: any) => b.id === c.branchId)?.name;
-                   const plan = plans.find((p:any) => p.id === c.planId);
-                   const planName = plan?.name || 'Unknown Plan';
-                   
-                   // Recalculate expiry status to be sure
-                   const weekdays = plan?.weekdays || [0,1,2,3,4,5,6];
-                   const daysLeft = calculateRemainingDeliveries(c.endDate, weekdays);
-                   const isExpired = !c.isActive || daysLeft <= 0;
-
-                   return (
-                     <tr key={c.id} className={`hover:bg-red-50/10 transition-colors ${isExpired ? 'bg-red-50/20' : ''}`}>
-                       <td className="px-6 py-4">
-                         <div className="font-bold text-slate-900">{c.name}</div>
-                         <div className="text-xs text-slate-500">{c.mobile}</div>
-                       </td>
-                       <td className="px-6 py-4 text-sm text-slate-600">{branchName || 'Unknown'}</td>
-                       <td className="px-6 py-4 text-sm text-slate-600">{planName}</td>
-                       <td className="px-6 py-4">
-                         {isExpired ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                               <UserX size={12} /> Expired
-                            </span>
-                         ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
-                               <div className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse"/> Active
-                            </span>
-                         )}
-                       </td>
-                       <td className="px-6 py-4 text-right font-medium text-slate-500">₹{c.amountPaid}</td>
-                       <td className="px-6 py-4 text-right">
-                          <span className="font-bold text-red-600 text-lg">₹{c.pendingAmount}</span>
-                       </td>
-                       <td className="px-6 py-4 text-center">
-                          <a 
-                            href={`tel:${c.mobile}`}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 px-3 py-1.5 rounded-lg transition-colors"
-                          >
-                            <Phone size={12} /> Call
-                          </a>
-                       </td>
+         <div className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm">
+            <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+               <Search className="text-slate-400" size={18} />
+               <input 
+                 className="flex-1 bg-transparent border-none outline-none font-bold text-slate-600 text-xs placeholder:text-slate-300" 
+                 placeholder="Search by name or number..." 
+                 value={listSearch} onChange={e => setListSearch(e.target.value)}
+               />
+            </div>
+            <div className="overflow-x-auto">
+               <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-200">
+                     <tr>
+                        <th className="p-5">Customer</th>
+                        <th className="p-5">Branch</th>
+                        <th className="p-5">Plan Status</th>
+                        <th className="p-5 text-right">Paid</th>
+                        <th className="p-5 text-right">Pending Amount</th>
+                        <th className="p-5 text-center">Action</th>
                      </tr>
-                   );
-                })}
-              {filteredCustomers.filter((c: any) => (c.pendingAmount || 0) > 0).length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400 italic">
-                     No pending payments found. Great job!
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                     {outstandingList.map((c) => {
+                        const branchName = branches.find(b => b.id === c.branchId)?.name || 'Main';
+                        const primaryPlan = (c.activePlans && c.activePlans.length > 0) ? c.activePlans[0].planName : 'No Plan';
+
+                        return (
+                           <tr key={c.id} className="hover:bg-slate-50 transition-colors group">
+                              <td className="p-5">
+                                 <div className="font-black text-slate-900 text-sm uppercase">{c.name}</div>
+                                 <div className="text-[10px] font-mono text-slate-400">{c.mobile}</div>
+                              </td>
+                              <td className="p-5">
+                                 <span className="text-[10px] font-black text-slate-500 uppercase">{branchName}</span>
+                              </td>
+                              <td className="p-5">
+                                 <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${c.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                                    <span className="text-xs font-bold text-slate-700">{primaryPlan}</span>
+                                 </div>
+                              </td>
+                              <td className="p-5 text-right font-black text-slate-400 text-sm">₹{c.amountPaid || 0}</td>
+                              <td className="p-5 text-right">
+                                 <div className="font-black text-rose-600 text-lg">₹{c.pendingAmount}</div>
+                              </td>
+                              <td className="p-5 text-center">
+                                 <a 
+                                   href={`tel:${c.mobile}`}
+                                   className="inline-flex items-center gap-2 bg-slate-900 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg active:scale-95"
+                                 >
+                                    <Phone size={14}/> Call
+                                 </a>
+                              </td>
+                           </tr>
+                        );
+                     })}
+                     {outstandingList.length === 0 && (
+                        <tr><td colSpan={6} className="p-20 text-center text-slate-300 font-black uppercase tracking-widest">No outstanding payments found.</td></tr>
+                     )}
+                  </tbody>
+               </table>
+            </div>
+         </div>
       </div>
 
     </div>

@@ -2,413 +2,400 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Truck, Package, MapPin, ChevronDown, ChevronUp, 
-  Share2, Loader2, ArrowUp, ArrowDown, Phone, Calendar, Sunrise, Sun, Moon, Layers
+  Loader2, ArrowUp, ArrowDown, Phone,
+  Sunrise, Sun, Moon, Star, CheckCircle2, UserX, 
+  ArrowRight, MessageSquare, ClipboardList, ExternalLink, Users
 } from 'lucide-react';
 import { useStreamCollection, updateItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
-import { calculateRemainingDeliveries, isDeliveryDay } from '../services/store';
+import { calculateRemainingDeliveries } from '../services/store';
 
-// Extracted Component to keep Render Pure and Clean
-const DeliveryBoyCard = ({ 
-  boy, 
-  orders, 
-  plans, 
-  activeTab, 
-  isExpanded, 
-  onToggle, 
-  onShare, 
-  onMoveOrder 
-}: any) => {
-  
-  // Calculate Breakdown for this specific delivery boy
-  const breakdown = useMemo(() => {
-     const data = {
-        Breakfast: { count: 0, plans: {} as Record<string, number> },
-        Lunch: { count: 0, plans: {} as Record<string, number> },
-        Dinner: { count: 0, plans: {} as Record<string, number> },
-     };
-
-     orders.forEach((o: any) => {
-        const meal = (o.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner';
-        const planName = plans.find((p: any) => p.id === o.planId)?.name || 'Unknown';
-        
-        if (data[meal]) {
-           data[meal].count++;
-           data[meal].plans[planName] = (data[meal].plans[planName] || 0) + 1;
-        }
-     });
-     return data;
-  }, [orders, plans]);
-
-  // If no orders for the *active tab*, we shouldn't have reached here if parent filters correctly,
-  // but if we show all boys and just empty state:
-  const currentTabOrders = orders.filter((o: any) => (o.mealTime || 'Lunch') === activeTab);
-  
-  if (currentTabOrders.length === 0) return null;
-
-  return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm transition-all">
-      <div 
-         className={`p-4 flex justify-between items-center cursor-pointer transition-colors ${isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50'}`} 
-         onClick={() => onToggle(boy.id)}
-      >
-         <div className="flex items-center gap-4">
-            <div className={`p-3 rounded-full ${isExpanded ? 'bg-slate-200 text-slate-700' : 'bg-primary-50 text-primary-600'}`}>
-               <Truck size={20}/>
-            </div>
-            <div>
-               <h3 className="font-bold text-slate-900 text-lg">{boy.name}</h3>
-               <div className="text-sm text-slate-500 flex items-center gap-3">
-                  <span className="flex items-center gap-1 font-medium text-slate-700">
-                     {activeTab}: <span className="bg-slate-100 px-2 rounded-full">{currentTabOrders.length} Orders</span>
-                  </span>
-                  <span className="flex items-center gap-1"><Phone size={14}/> {boy.mobile}</span>
-               </div>
-            </div>
-         </div>
-         <div className="flex items-center gap-3">
-            {isExpanded && (
-               <button 
-                  onClick={(e) => onShare(e, boy, currentTabOrders)}
-                  className="hidden sm:flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold transition-colors shadow-sm"
-               >
-                  <Share2 size={16}/> WhatsApp
-               </button>
-            )}
-            <div className="text-slate-400">{isExpanded ? <ChevronUp/> : <ChevronDown/>}</div>
-         </div>
+const StatCard = ({ title, value, icon: Icon, colorClass, subtext }: any) => (
+  <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-40">
+    <div className="flex justify-between items-start">
+      <div className="space-y-1">
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
+        <h3 className="text-4xl font-black text-slate-900 tracking-tight">{value}</h3>
       </div>
-      
-      {isExpanded && (
-         <div className="border-t border-slate-200">
-            {/* Mobile Share Button */}
-            <div className="sm:hidden p-4 pb-0">
-               <button 
-                  onClick={(e) => onShare(e, boy, currentTabOrders)}
-                  className="w-full flex items-center justify-center gap-2 bg-green-500 text-white py-2 rounded-lg font-bold"
-               >
-                  <Share2 size={16}/> Share WhatsApp Route
-               </button>
-            </div>
-
-            <div className="overflow-x-auto p-4">
-               <table className="w-full text-left border-collapse min-w-[700px]">
-                  <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                     <tr>
-                        <th className="p-3 rounded-l-lg w-16 text-center">Seq</th>
-                        <th className="p-3 w-16 text-center">Move</th>
-                        <th className="p-3">Customer</th>
-                        <th className="p-3">Number</th>
-                        <th className="p-3">Plan</th>
-                        <th className="p-3">Address & Area</th>
-                        <th className="p-3 text-center rounded-r-lg">Days Left</th>
-                     </tr>
-                  </thead>
-                  <tbody className="text-sm">
-                     {currentTabOrders.map((order:any, idx:number) => {
-                        const plan = plans.find((p: any) => p.id === order.planId);
-                        const weekdays = plan ? plan.weekdays : [0,1,2,3,4,5,6];
-                        const daysLeft = calculateRemainingDeliveries(order.endDate, weekdays);
-                        const isFirst = idx === 0;
-                        const isLast = idx === currentTabOrders.length - 1;
-
-                        return (
-                           <tr key={order.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors group">
-                              <td className="p-3 text-center font-bold text-slate-400 bg-slate-50/50">{idx + 1}</td>
-                              
-                              {/* REORDER BUTTONS */}
-                              <td className="p-3 text-center">
-                                 <div className="flex items-center justify-center gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
-                                    <button disabled={isFirst} onClick={(e) => onMoveOrder(e, currentTabOrders, idx, 'up')} className="hover:text-blue-600 disabled:text-slate-300 p-1 rounded hover:bg-blue-50"><ArrowUp size={16}/></button>
-                                    <button disabled={isLast} onClick={(e) => onMoveOrder(e, currentTabOrders, idx, 'down')} className="hover:text-blue-600 disabled:text-slate-300 p-1 rounded hover:bg-blue-50"><ArrowDown size={16}/></button>
-                                 </div>
-                              </td>
-
-                              <td className="p-3 font-bold text-slate-900">{order.name}</td>
-                              <td className="p-3 font-mono text-slate-600">{order.mobile}</td>
-                              <td className="p-3">
-                                 <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap">
-                                    {plan?.name || 'Unknown'}
-                                 </span>
-                              </td>
-                              <td className="p-3 max-w-[250px] text-slate-600">
-                                 <div className="flex items-start gap-1">
-                                    <MapPin size={14} className="shrink-0 text-slate-400 mt-0.5"/> 
-                                    <span className="line-clamp-2">{order.address}, {order.area}</span>
-                                 </div>
-                              </td>
-                              <td className="p-3 text-center">
-                                 <span className={`font-bold ${daysLeft <= 3 ? 'text-red-500' : 'text-slate-700'}`}>
-                                    {daysLeft}
-                                 </span>
-                              </td>
-                           </tr>
-                        );
-                     })}
-                  </tbody>
-               </table>
-            </div>
-         </div>
-      )}
+      <div className={`p-3 rounded-2xl ${colorClass} bg-opacity-10`}>
+        <Icon size={24} className={colorClass.replace('bg-', 'text-')} />
+      </div>
     </div>
-  );
-};
+    <div className="mt-2">
+      <p className="text-xs text-slate-500 font-bold uppercase tracking-tight">{subtext}</p>
+    </div>
+  </div>
+);
 
 const Deliveries = () => {
   const { currentUser } = useAuth();
+  const { data: customers = [], loading: l1 } = useStreamCollection<any>('customers');
+  const { data: staff = [], loading: l2 } = useStreamCollection<any>('staff');
+  const { data: plans = [], loading: l3 } = useStreamCollection<any>('plans');
+  const { data: branches = [], loading: l4 } = useStreamCollection<any>('branches');
 
-  // Data Fetching
-  const { data: customers, loading: l1 } = useStreamCollection<any>('customers');
-  const { data: staff, loading: l2 } = useStreamCollection<any>('staff');
-  const { data: branches, loading: l3 } = useStreamCollection<any>('branches');
-  const { data: plans, loading: l4 } = useStreamCollection<any>('plans');
-
+  const [activeMealTab, setActiveMealTab] = useState<'Breakfast' | 'Lunch' | 'Dinner'>('Lunch');
   const [selectedBranch, setSelectedBranch] = useState('All');
-  const [activeTab, setActiveTab] = useState<'Breakfast' | 'Lunch' | 'Dinner'>('Lunch'); 
   const [expandedBoyId, setExpandedBoyId] = useState<string | null>(null);
 
-  // Filter Data
-  const filteredStaff = useMemo(() => 
-    staff.filter((s:any) => selectedBranch === 'All' || s.branchId === selectedBranch),
-  [staff, selectedBranch]);
-  
-  // Filter ACTIVE customers for TODAY'S delivery
-  const activeCustomers = useMemo(() => {
-    const today = new Date();
-    
-    return customers.filter((c:any) => {
-       if (!c.isActive) return false;
-       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
+  const isLoading = l1 || l2 || l3 || l4;
 
-       // Find Plan to check weekdays & remaining days
-       const plan = plans.find((p:any) => p.id === c.planId);
-       if (!plan) return false;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const dayOfWeek = new Date().getDay();
 
-       const weekdays = plan.weekdays || [0,1,2,3,4,5,6];
-       
-       // 1. Check if Today is a delivery day
-       if (!isDeliveryDay(today, weekdays)) return false;
+  // 1. Filter customers scheduled for TODAY and current Meal Session
+  const deliveriesToday = useMemo(() => {
+    return customers.filter(c => {
+      if (!c.isActive) return false;
+      if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
+      
+      const mealPlansToday = (c.activePlans || []).filter((ap: any) => {
+        const planConfig = plans.find(p => p.id === ap.planId);
+        if (!planConfig) return false;
+        
+        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
+        const isValidDay = planConfig.weekdays.includes(dayOfWeek);
+        const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
+        const matchesMeal = ap.mealTime === activeMealTab;
+        
+        return isWithinRange && isValidDay && !isPaused && matchesMeal;
+      });
 
-       // 2. Check if remaining deliveries > 0
-       const remaining = calculateRemainingDeliveries(c.endDate, weekdays);
-       return remaining > 0;
+      return mealPlansToday.length > 0;
     });
-  }, [customers, selectedBranch, plans]);
+  }, [customers, plans, activeMealTab, selectedBranch, todayStr, dayOfWeek]);
 
-  // --- STATS CALCULATIONS ---
-  const stats = useMemo(() => {
-    const data = {
-      Breakfast: { count: 0, plans: {} as Record<string, number> },
-      Lunch: { count: 0, plans: {} as Record<string, number> },
-      Dinner: { count: 0, plans: {} as Record<string, number> },
-      Total: activeCustomers.length
+  // 2. Global Level Metrics for Today's Session
+  const globalMetrics = useMemo(() => {
+    let totalBoxes = 0;
+    let totalStarBoxes = 0;
+
+    deliveriesToday.forEach(c => {
+      const sessionPlans = (c.activePlans || []).filter((ap: any) => {
+        const planConfig = plans.find(p => p.id === ap.planId);
+        if (!planConfig) return false;
+        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
+        return ap.mealTime === activeMealTab && 
+               planConfig.weekdays.includes(dayOfWeek) && 
+               todayStr >= ap.startDate && todayStr <= ap.endDate && !isPaused;
+      });
+
+      totalBoxes += sessionPlans.length;
+      totalStarBoxes += sessionPlans.filter((p: any) => p.isStarred || (c.highlightMark && c.highlightMark !== 'None')).length;
+    });
+
+    return {
+      customers: deliveriesToday.length,
+      plans: totalBoxes,
+      starPlans: totalStarBoxes
     };
+  }, [deliveriesToday, activeMealTab, plans, todayStr, dayOfWeek]);
 
-    activeCustomers.forEach((c: any) => {
-      const meal = (c.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner';
-      const planName = plans.find((p: any) => p.id === c.planId)?.name || 'Unknown';
-
-      if (data[meal]) {
-        data[meal].count++;
-        data[meal].plans[planName] = (data[meal].plans[planName] || 0) + 1;
-      }
-    });
-
-    return data;
-  }, [activeCustomers, plans]);
-
-  const todayDate = new Date().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-
-  // --- ACTIONS ---
-
-  const handleMoveOrder = async (e: React.MouseEvent, list: any[], index: number, direction: 'up' | 'down') => {
-    e.stopPropagation();
+  // 3. Helpers
+  const handleMoveOrder = async (customerId: string, direction: 'up' | 'down') => {
     if (!currentUser) return;
+    const cust = customers.find(c => c.id === customerId);
+    if (!cust) return;
+    const newOrder = direction === 'up' ? (cust.routeOrder || 0) - 1 : (cust.routeOrder || 0) + 1;
+    await updateItem(currentUser.uid, 'customers', customerId, { routeOrder: Math.max(0, newOrder) });
+  };
+
+  const handleShareRoute = (boy: any, boyCustomers: any[]) => {
+    const body = boyCustomers
+      .sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999))
+      .map((c, i) => {
+        const sessionPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
+        const planSummary = sessionPlans.map(p => `• ${p.planName}${p.isStarred ? ' ⭐' : ''}`).join('\n');
+        let str = `${i + 1}. *${c.name}* (Total: ${sessionPlans.length} boxes)\n${planSummary}\n📍 ${c.address}${c.area ? `, ${c.area}` : ''}\n📞 ${c.mobile}`;
+        if (c.locationLink) str += `\n🗺️ Map: ${c.locationLink}`;
+        if (c.notes) str += `\n📝 Note: ${c.notes}`;
+        return str;
+      }).join('\n\n');
     
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= list.length) return;
-
-    const itemCurrent = list[index];
-    const itemTarget = list[targetIndex];
-
-    const newOrderCurrent = targetIndex + 1;
-    const newOrderTarget = index + 1;
-
-    await Promise.all([
-      updateItem(currentUser.uid, 'customers', itemCurrent.id, { routeOrder: newOrderCurrent }),
-      updateItem(currentUser.uid, 'customers', itemTarget.id, { routeOrder: newOrderTarget })
-    ]);
+    const whatsappMsg = `🚚 *${activeMealTab} Route - ${boy.name}*\n📅 Date: ${todayStr}\n\n${body}`;
+    window.open(`https://wa.me/${(boy.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
   };
 
-  const handleShareRoute = (e: React.MouseEvent, boy: any, orders: any[]) => {
-    e.stopPropagation();
-    const header = `🚚 *${activeTab} Route - ${boy.name}*\n📅 ${todayDate}\n------------------\n`;
-    const body = orders.map((o, i) => {
-       const planName = plans.find((p: any) => p.id === o.planId)?.name || 'Plan';
-       return `${i+1}. *${o.name}* (${planName})\n   📍 ${o.address}, ${o.area}\n   📞 ${o.mobile}`;
-    }).join('\n\n');
-    const footer = `\n------------------\nTotal Boxes: ${orders.length}`;
-    const text = encodeURIComponent(header + body + footer);
-    window.open(`https://wa.me/?text=${text}`, '_blank');
-  };
-
-  if (l1 || l2 || l3 || l4) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
+  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" size={40} /></div>;
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-8 pb-20 pt-2 animate-in fade-in duration-500">
       
-      {/* HEADER & BRANCH FILTER */}
+      {/* Header Area */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-         <div>
-            <h1 className="text-2xl font-bold text-slate-900">Deliveries</h1>
-            <p className="text-slate-500">Daily packing and route management.</p>
-         </div>
-         <select className="border border-slate-300 rounded-lg px-4 py-2 bg-white text-slate-900 font-medium focus:ring-2 focus:ring-primary-500 outline-none w-full md:w-auto" value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}>
+        <div>
+          <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
+            Deliveries
+          </h1>
+          <p className="text-slate-500 font-medium mt-1">Daily packing and route management.</p>
+        </div>
+        <div className="w-full md:w-64 relative">
+          <select 
+            className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm font-bold shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10"
+            value={selectedBranch}
+            onChange={(e) => setSelectedBranch(e.target.value)}
+          >
             <option value="All">All Branches</option>
-            {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
-         </select>
+            {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+        </div>
       </div>
 
-      {/* TOP WIDGETS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-         {/* WIDGET 1: TOTAL SUMMARY */}
-         <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between relative overflow-hidden">
-            <div className="flex justify-between items-start z-10">
-               <div>
-                  <div className="text-xs text-slate-400 font-bold uppercase mb-1">Total Orders Today</div>
-                  <div className="text-4xl font-extrabold text-slate-900">{stats.Total}</div>
-                  <div className="flex items-center gap-1 text-sm text-slate-500 mt-1 font-medium">
-                     <Calendar size={14}/> {todayDate}
-                  </div>
-               </div>
-               <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Package size={24}/></div>
-            </div>
-            <div className="flex gap-2 mt-4 pt-4 border-t border-slate-100 z-10">
-               <div className="px-2 py-1 bg-yellow-50 text-yellow-700 rounded text-xs font-bold">B: {stats.Breakfast.count}</div>
-               <div className="px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-bold">L: {stats.Lunch.count}</div>
-               <div className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">D: {stats.Dinner.count}</div>
-            </div>
-         </div>
-
-         {/* WIDGET 2: DETAILED BREAKDOWN (Plans) */}
-         <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 lg:col-span-1 flex flex-col justify-center">
-            <div className="flex justify-between items-center mb-3">
-               <span className="text-xs font-bold uppercase text-slate-400">Plan Breakdown</span>
-               <Layers size={16} className="text-slate-300"/>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-xs h-full">
-               
-               {/* Breakfast Column */}
-               <div className="bg-yellow-50/50 rounded-lg p-2 border border-yellow-100">
-                  <div className="font-bold text-yellow-800 mb-1 flex items-center gap-1"><Sunrise size={10}/> Breakfast</div>
-                  <div className="space-y-0.5 overflow-y-auto max-h-[80px] custom-scrollbar">
-                     {Object.entries(stats.Breakfast.plans).map(([plan, count]) => (
-                        <div key={plan} className="flex justify-between text-slate-600">
-                           <span className="truncate pr-1">{plan}</span> <b>{count}</b>
-                        </div>
-                     ))}
-                     {stats.Breakfast.count === 0 && <div className="italic text-slate-400">-</div>}
-                  </div>
-               </div>
-
-               {/* Lunch Column */}
-               <div className="bg-orange-50/50 rounded-lg p-2 border border-orange-100">
-                  <div className="font-bold text-orange-800 mb-1 flex items-center gap-1"><Sun size={10}/> Lunch</div>
-                  <div className="space-y-0.5 overflow-y-auto max-h-[80px] custom-scrollbar">
-                     {Object.entries(stats.Lunch.plans).map(([plan, count]) => (
-                        <div key={plan} className="flex justify-between text-slate-600">
-                           <span className="truncate pr-1">{plan}</span> <b>{count}</b>
-                        </div>
-                     ))}
-                     {stats.Lunch.count === 0 && <div className="italic text-slate-400">-</div>}
-                  </div>
-               </div>
-
-               {/* Dinner Column */}
-               <div className="bg-indigo-50/50 rounded-lg p-2 border border-indigo-100">
-                  <div className="font-bold text-indigo-800 mb-1 flex items-center gap-1"><Moon size={10}/> Dinner</div>
-                  <div className="space-y-0.5 overflow-y-auto max-h-[80px] custom-scrollbar">
-                     {Object.entries(stats.Dinner.plans).map(([plan, count]) => (
-                        <div key={plan} className="flex justify-between text-slate-600">
-                           <span className="truncate pr-1">{plan}</span> <b>{count}</b>
-                        </div>
-                     ))}
-                     {stats.Dinner.count === 0 && <div className="italic text-slate-400">-</div>}
-                  </div>
-               </div>
-
-            </div>
-         </div>
-
-         {/* WIDGET 3: DELIVERY STAFF */}
-         <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
-            <div>
-               <div className="text-xs text-slate-400 font-bold uppercase mb-1">Total Delivery Boys</div>
-               <div className="text-3xl font-bold text-slate-900">{filteredStaff.length}</div>
-               <div className="text-sm text-slate-500 mt-1">Available for assignment</div>
-            </div>
-            <div className="p-3 bg-slate-100 text-slate-600 rounded-xl"><Truck size={24}/></div>
-         </div>
+      {/* Global Summary Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <StatCard 
+          title="Total Customers Today" 
+          value={globalMetrics.customers} 
+          icon={Users} 
+          colorClass="bg-blue-600" 
+          subtext={`Unique customers for ${activeMealTab}`}
+        />
+        <StatCard 
+          title="Total Plans / Boxes" 
+          value={globalMetrics.plans} 
+          icon={Package} 
+          colorClass="bg-primary-600" 
+          subtext="Total delivery items" 
+        />
+        <StatCard 
+          title="Total Star Plans" 
+          value={globalMetrics.starPlans} 
+          icon={Star} 
+          colorClass="bg-amber-600" 
+          subtext="Special requirements today" 
+        />
       </div>
 
-      {/* TABS NAVIGATION */}
-      <div className="flex bg-white p-1 rounded-xl shadow-sm border border-slate-200 w-full md:w-fit">
-         {['Breakfast', 'Lunch', 'Dinner'].map((meal) => (
-            <button
-               key={meal}
-               onClick={() => setActiveTab(meal as any)}
-               className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${
-                  activeTab === meal 
-                     ? meal === 'Breakfast' ? 'bg-yellow-100 text-yellow-800' 
-                     : meal === 'Lunch' ? 'bg-orange-100 text-orange-800' 
-                     : 'bg-indigo-100 text-indigo-800'
-                     : 'text-slate-500 hover:bg-slate-50'
-               }`}
-            >
-               {meal === 'Breakfast' && <Sunrise size={16}/>}
-               {meal === 'Lunch' && <Sun size={16}/>}
-               {meal === 'Dinner' && <Moon size={16}/>}
-               {meal}
-            </button>
-         ))}
+      {/* Meal Tabs */}
+      <div className="bg-slate-100/50 p-1.5 rounded-2xl flex gap-2 w-full md:w-fit">
+        {[
+          { id: 'Breakfast', icon: Sunrise, color: 'text-orange-600', bg: 'bg-orange-100' },
+          { id: 'Lunch', icon: Sun, color: 'text-blue-600', bg: 'bg-blue-100' },
+          { id: 'Dinner', icon: Moon, color: 'text-purple-600', bg: 'bg-purple-100' }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => { setActiveMealTab(tab.id as any); setExpandedBoyId(null); }}
+            className={`flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-black transition-all ${
+              activeMealTab === tab.id 
+                ? 'bg-white text-slate-900 shadow-md ring-1 ring-slate-200' 
+                : 'text-slate-500 hover:bg-white/50'
+            }`}
+          >
+            <tab.icon size={18} className={tab.color} />
+            {tab.id}
+          </button>
+        ))}
       </div>
 
-      {/* DELIVERY LIST */}
+      {/* Delivery Boys List */}
       <div className="space-y-4">
-         {filteredStaff.map((boy: any) => {
-            // Filter orders for this specific boy
-            const boyOrders = activeCustomers
-               .filter((c:any) => c.deliveryBoyId === boy.id)
-               .sort((a: any, b: any) => (a.routeOrder || 999) - (b.routeOrder || 999));
-            
-            return (
-               <DeliveryBoyCard
-                  key={boy.id}
-                  boy={boy}
-                  orders={boyOrders}
-                  plans={plans}
-                  activeTab={activeTab}
-                  isExpanded={expandedBoyId === boy.id}
-                  onToggle={(id: string) => setExpandedBoyId(expandedBoyId === id ? null : id)}
-                  onShare={handleShareRoute}
-                  onMoveOrder={handleMoveOrder}
-               />
-            );
-         })}
-         
-         {/* Empty State Check */}
-         {!filteredStaff.some((boy: any) => 
-            activeCustomers.some((c:any) => c.deliveryBoyId === boy.id && c.mealTime === activeTab)
-         ) && (
-            <div className="text-center py-12 bg-white rounded-xl border border-slate-200 border-dashed">
-               <div className="inline-flex p-4 bg-slate-50 rounded-full mb-3 text-slate-400">
-                  <Package size={32} />
-               </div>
-               <h3 className="text-lg font-bold text-slate-900">No {activeTab} Orders</h3>
-               <p className="text-slate-500">No active orders scheduled for {activeTab} today.</p>
+        {/* Unassigned Section */}
+        {deliveriesToday.filter(c => !c.deliveryBoyId).length > 0 && (
+          <div className="bg-rose-50 border-2 border-dashed border-rose-200 rounded-[2.5rem] p-8 mb-8">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
+                <UserX size={24} />
+              </div>
+              <h3 className="text-xl font-black text-rose-900">Unassigned Customers</h3>
             </div>
-         )}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+               {deliveriesToday.filter(c => !c.deliveryBoyId).map(c => (
+                 <div key={c.id} className="bg-white p-4 rounded-2xl border border-rose-100 shadow-sm flex justify-between items-center group">
+                    <div>
+                       <p className="font-black text-slate-900 text-sm">{c.name}</p>
+                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{c.area}</p>
+                    </div>
+                    <div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><ArrowRight size={14} /></div>
+                 </div>
+               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Staff / Delivery Boys Loop */}
+        {staff.filter(s => selectedBranch === 'All' || s.branchId === selectedBranch).map(boy => {
+          const boyCustomers = deliveriesToday.filter(c => c.deliveryBoyId === boy.id);
+          if (boyCustomers.length === 0) return null;
+
+          const isExpanded = expandedBoyId === boy.id;
+
+          // Calculate Boy Level Stats
+          let boyTotalBoxes = 0;
+          let boyStarBoxes = 0;
+          boyCustomers.forEach(c => {
+            const cPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
+            boyTotalBoxes += cPlans.length;
+            boyStarBoxes += cPlans.filter((p: any) => p.isStarred || (c.highlightMark && c.highlightMark !== 'None')).length;
+          });
+
+          return (
+            <div key={boy.id} className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden transition-all">
+              <div 
+                onClick={() => setExpandedBoyId(isExpanded ? null : boy.id)}
+                className={`p-6 flex flex-col xl:flex-row justify-between items-center cursor-pointer gap-6 ${isExpanded ? 'bg-slate-50/80' : 'hover:bg-slate-50/50'}`}
+              >
+                <div className="flex items-center gap-4 w-full xl:w-auto">
+                  <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400">
+                    <Truck size={28} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">{boy.name}</h3>
+                    <p className="flex items-center gap-1.5 text-xs font-bold text-slate-400 mt-0.5"><Phone size={14}/> {boy.mobile}</p>
+                  </div>
+                </div>
+
+                {/* Sub Stats Tally Row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full xl:w-auto flex-1 md:flex-none">
+                  <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
+                    <p className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Customers</p>
+                    <p className="font-black text-slate-900">{boyCustomers.length}</p>
+                  </div>
+                  <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
+                    <p className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Total Boxes</p>
+                    <p className="font-black text-primary-600">{boyTotalBoxes}</p>
+                  </div>
+                  <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
+                    <p className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Normal</p>
+                    <p className="font-black text-slate-600">{boyTotalBoxes - boyStarBoxes}</p>
+                  </div>
+                  <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
+                    <p className="text-[8px] font-black text-amber-600 uppercase mb-0.5">Starred</p>
+                    <p className="font-black text-amber-700">{boyStarBoxes}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 w-full xl:w-auto">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleShareRoute(boy, boyCustomers); }}
+                    className="flex-1 xl:flex-none bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                  >
+                    <MessageSquare size={16} fill="currentColor" /> Share Route
+                  </button>
+                  <div className={`p-2 rounded-xl border ${isExpanded ? 'bg-slate-900 border-slate-900 text-white' : 'border-slate-200 text-slate-400'}`}>
+                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                  </div>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="border-t border-slate-100 animate-in slide-in-from-top-2 duration-300">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[1100px]">
+                      <thead className="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">
+                        <tr>
+                          <th className="p-4 w-12 text-center">Seq</th>
+                          <th className="p-4 w-20 text-center">Move</th>
+                          <th className="p-4">Customer</th>
+                          <th className="p-4">Number</th>
+                          <th className="p-4 min-w-[200px]">Plans (Quantity)</th>
+                          <th className="p-4 text-center">Star</th>
+                          <th className="p-4">Area / Address</th>
+                          <th className="p-4 text-center">Days Left</th>
+                          <th className="p-4 text-center">Location</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {boyCustomers
+                          .sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999))
+                          .map((c, idx) => {
+                            const sessionPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
+                            
+                            // Group identical plans for display
+                            const groupedPlans = sessionPlans.reduce((acc: any, p: any) => {
+                               acc[p.planName] = acc[p.planName] || { name: p.planName, count: 0, isStarred: p.isStarred, pConfig: plans.find(pc => pc.id === p.planId), endDate: p.endDate, pauses: p.pauses };
+                               acc[p.planName].count++;
+                               if (p.isStarred) acc[p.planName].isStarred = true;
+                               return acc;
+                            }, {});
+
+                            const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
+
+                            return (
+                              <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${overallStarred ? 'bg-amber-50/20' : ''}`}>
+                                <td className="p-4 text-center font-black text-slate-300">{idx + 1}</td>
+                                <td className="p-4">
+                                   <div className="flex items-center justify-center gap-1">
+                                      <button onClick={() => handleMoveOrder(c.id, 'up')} className="p-1 hover:bg-slate-200 rounded text-slate-400"><ArrowUp size={14}/></button>
+                                      <button onClick={() => handleMoveOrder(c.id, 'down')} className="p-1 hover:bg-slate-200 rounded text-slate-400"><ArrowDown size={14}/></button>
+                                   </div>
+                                </td>
+                                <td className="p-4">
+                                  <div className="flex items-center gap-2">
+                                     <span className="font-black text-slate-900 text-sm truncate max-w-[140px] uppercase">{c.name}</span>
+                                     {overallStarred && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                                  </div>
+                                </td>
+                                <td className="p-4 font-mono text-[10px] text-slate-500">{c.mobile}</td>
+                                <td className="p-4">
+                                  <div className="space-y-1.5">
+                                     {Object.values(groupedPlans).map((gp: any, i) => (
+                                       <div key={i} className="flex items-center justify-between gap-4 bg-white border border-slate-100 p-1.5 rounded-lg shadow-xs">
+                                          <div className="flex items-center gap-2">
+                                             <span className="text-[10px] font-bold text-slate-700 truncate max-w-[120px]">{gp.name}</span>
+                                             {gp.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}
+                                          </div>
+                                          <span className="bg-slate-900 text-white text-[10px] font-black w-5 h-5 rounded flex items-center justify-center shrink-0">{gp.count}</span>
+                                       </div>
+                                     ))}
+                                  </div>
+                                </td>
+                                <td className="p-4 text-center">
+                                  {overallStarred ? <Star size={16} className="text-amber-500 mx-auto" fill="currentColor" /> : <span className="text-slate-200">—</span>}
+                                </td>
+                                <td className="p-4">
+                                  <div className="max-w-[200px]">
+                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter truncate">{c.area}</p>
+                                     <p className="text-xs font-bold text-slate-600 truncate">{c.address}</p>
+                                  </div>
+                                </td>
+                                <td className="p-4 text-center">
+                                   <div className="space-y-1">
+                                      {Object.values(groupedPlans).map((gp: any, i) => (
+                                         <div key={i} className="text-[10px] font-black text-slate-900 bg-slate-50 border border-slate-100 rounded py-0.5 px-1">
+                                            {calculateRemainingDeliveries(gp.endDate, gp.pConfig?.weekdays || [], gp.pauses || [])}
+                                         </div>
+                                      ))}
+                                   </div>
+                                </td>
+                                <td className="p-4 text-center">
+                                  {c.locationLink ? (
+                                    <a 
+                                      href={c.locationLink.startsWith('http') ? c.locationLink : `https://${c.locationLink}`} 
+                                      target="_blank" 
+                                      rel="noreferrer" 
+                                      className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors inline-flex"
+                                    >
+                                      <ExternalLink size={16} />
+                                    </a>
+                                  ) : (
+                                    <span className="text-slate-200">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      {deliveriesToday.length === 0 && (
+        <div className="py-20 flex flex-col items-center justify-center text-center bg-white rounded-[3rem] border border-slate-100 shadow-sm">
+          <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-6 border-4 border-dashed border-slate-100">
+             <Truck size={48} />
+          </div>
+          <h3 className="text-2xl font-black text-slate-900">No deliveries scheduled</h3>
+          <p className="text-slate-500 mt-2 max-w-sm mx-auto font-medium">There are no active plans for the {activeMealTab} session today.</p>
+        </div>
+      )}
+
     </div>
   );
 };

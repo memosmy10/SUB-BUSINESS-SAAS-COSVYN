@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Users, CreditCard, BarChart3, MessageSquare, User, 
-  Menu, X, LogOut, ShieldCheck, Bell, AlertCircle, Tag 
+  Menu, X, LogOut, ShieldCheck, Bell, AlertCircle, Tag, Send
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAdminTenants } from '../services/dbService';
@@ -52,6 +52,7 @@ const AdminLayout = () => {
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/admin/dashboard' },
     { icon: Users, label: 'Owners', path: '/admin/users' },
+    { icon: Send, label: 'Broadcast', path: '/admin/messages' },
     { icon: CreditCard, label: 'Payments', path: '/admin/payments' },
     { icon: Tag, label: 'Plans & Offers', path: '/admin/plans' },
     { icon: BarChart3, label: 'Analytics', path: '/admin/analytics' },
@@ -86,7 +87,7 @@ const AdminLayout = () => {
            </div>
         </div>
 
-        <nav className="flex-1 py-6 px-3 space-y-2 overflow-y-auto">
+        <nav className="flex-1 py-6 px-3 space-y-2 overflow-y-auto no-scrollbar">
            {navItems.map((item) => {
              const isActive = location.pathname === item.path;
              return (
@@ -127,7 +128,7 @@ const AdminLayout = () => {
                  </span>
                  <button onClick={() => setIsMobileNavOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
               </div>
-              <nav className="flex-1 py-6 px-3 space-y-2">
+              <nav className="flex-1 py-6 px-3 space-y-2 no-scrollbar overflow-y-auto">
                  {navItems.map((item) => {
                    const isActive = location.pathname === item.path;
                    return (
@@ -198,7 +199,7 @@ const AdminLayout = () => {
                               <h4 className="font-bold text-white text-sm">Expiring Soon</h4>
                               <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">{expiringTenants.length}</span>
                            </div>
-                           <div className="max-h-64 overflow-y-auto">
+                           <div className="max-h-64 overflow-y-auto no-scrollbar">
                               {expiringTenants.length === 0 ? (
                                  <div className="p-4 text-center text-slate-500 text-sm">No alerts.</div>
                               ) : (

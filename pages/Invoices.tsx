@@ -31,6 +31,7 @@ const THEMES: Record<ThemeColor, string> = {
 const Invoices = () => {
   const { currentUser } = useAuth();
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: customers = [], loading: l1 } = useStreamCollection<any>('customers');
   const { data: branches = [], loading: l2 } = useStreamCollection<any>('branches');
   
@@ -40,6 +41,7 @@ const Invoices = () => {
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedTheme, setSelectedTheme] = useState<ThemeColor>('blue');
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   // Sharing Inputs
   const [sharePhone, setSharePhone] = useState('');
@@ -122,6 +124,22 @@ const Invoices = () => {
   const removeItem = (id: string) => setInvoiceData(prev => ({ ...prev, items: prev.items.filter(i => i.id !== id) }));
   const updateItem = (id: string, field: keyof LineItem, value: any) => setInvoiceData(prev => ({ ...prev, items: prev.items.map(item => item.id === id ? { ...item, [field]: value } : item) }));
 
+  // --- LOGO UPLOAD LOGIC ---
+  const handleLogoClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setLogoUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // --- PDF & PRINT LOGIC ---
   const handleDownloadPDF = () => {
     if (!invoiceRef.current) return;
@@ -163,7 +181,7 @@ const Invoices = () => {
       {/* 1. REFINED HEADER ACTIONS */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-6 no-print">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">COSVYN ScaleKitchen Maker</h1>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">cosvyn invoice maker</h1>
           <p className="text-slate-500 font-medium mt-1">Create and customize professional tax invoices.</p>
         </div>
         
@@ -201,9 +219,24 @@ const Invoices = () => {
             {/* Header & From */}
             <div className="flex flex-col md:flex-row justify-between gap-8">
               <div className="space-y-6 flex-1">
-                <div className="w-40 h-40 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-400 hover:border-primary-400 hover:text-primary-600 transition-colors cursor-pointer group no-print">
-                   <Upload size={32} className="mb-2 group-hover:scale-110 transition-transform" />
-                   <span className="text-[10px] font-black uppercase tracking-widest text-center">Upload Logo<br/><span className="font-medium text-slate-300">240 x 240px</span></span>
+                <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={handleLogoUpload} />
+                <div 
+                  onClick={handleLogoClick}
+                  className={`w-40 h-40 rounded-2xl flex flex-col items-center justify-center transition-colors cursor-pointer group relative overflow-hidden ${logoUrl ? '' : 'border-2 border-dashed border-slate-200 text-slate-400 hover:border-primary-400 hover:text-primary-600'}`}
+                >
+                   {logoUrl ? (
+                     <>
+                        <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity no-print">
+                           <Upload size={24} className="text-white" />
+                        </div>
+                     </>
+                   ) : (
+                     <>
+                        <Upload size={32} className="mb-2 group-hover:scale-110 transition-transform no-print" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-center no-print">Upload Logo<br/><span className="font-medium text-slate-300">240 x 240px</span></span>
+                     </>
+                   )}
                 </div>
                 <div className="space-y-2 max-w-xs">
                   <EditableInput placeholder="Your Company" value={invoiceData.from.company} onChange={v => setInvoiceData({...invoiceData, from: {...invoiceData.from, company: v}})} className="text-xl font-black uppercase text-slate-900" />
@@ -338,9 +371,12 @@ const Invoices = () => {
 
             {/* Branding */}
             <div className="pt-12 border-t border-slate-100 text-center space-y-2">
-               <div className="flex items-center justify-center gap-2 opacity-30 grayscale">
-                  <Zap size={14} fill="currentColor" className="text-slate-900" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Powered by ScaleKitchen ONE</span>
+               <div className="flex flex-col items-center justify-center gap-1 opacity-40">
+                  <div className="flex items-center gap-2">
+                    <Zap size={12} fill="currentColor" className="text-slate-900" />
+                    <span className="text-[9px] font-black uppercase tracking-widest">Powered by ScaleKitchen | Crafted with ease using COSVYN Invoice</span>
+                  </div>
+                  <span className="text-[8px] font-bold text-slate-500 uppercase">Visit cosvyn.space/invoice to create truly professional invoices.</span>
                </div>
             </div>
           </div>

@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Users, CreditCard, BarChart3, MessageSquare, User, 
-  Menu, X, LogOut, ShieldCheck, Bell, AlertCircle, Tag, Send
+  Menu, X, LogOut, ShieldCheck, Bell, AlertCircle, Tag, Send, FileStack
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAdminTenants } from '../services/dbService';
@@ -52,6 +51,7 @@ const AdminLayout = () => {
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/admin/dashboard' },
     { icon: Users, label: 'Owners', path: '/admin/users' },
+    { icon: FileStack, label: 'Invoice Credits', path: '/admin/invoice-credits' },
     { icon: Send, label: 'Broadcast', path: '/admin/messages' },
     { icon: CreditCard, label: 'Payments', path: '/admin/payments' },
     { icon: Tag, label: 'Plans & Offers', path: '/admin/plans' },
@@ -139,7 +139,7 @@ const AdminLayout = () => {
                        className={`flex items-center gap-4 px-3 py-3 rounded-xl transition-all duration-200
                          ${isActive 
                            ? 'bg-gradient-to-r from-cyan-500/10 to-violet-500/10 border border-cyan-500/20 text-cyan-400' 
-                           : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/50'}
+                           : 'text-slate-400 hover:text-white hover:bg-slate-800'}
                        `}
                      >
                        <item.icon size={20} />

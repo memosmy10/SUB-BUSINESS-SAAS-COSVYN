@@ -30,6 +30,7 @@ import AdminProfile from './pages/admin/AdminProfile';
 import AdminPlans from './pages/admin/AdminPlans';
 import AdminLogin from './pages/admin/AdminLogin';
 import AdminMessages from './pages/admin/AdminMessages';
+import AdminInvoiceCredits from './pages/admin/AdminInvoiceCredits';
 
 // Legal Pages
 import Terms from './pages/legal/Terms';
@@ -444,6 +445,7 @@ const App = () => {
               <Route path="analytics" element={<AdminAnalytics />} />
               <Route path="feature-support" element={<AdminFeatureSupport />} />
               <Route path="messages" element={<AdminMessages />} />
+              <Route path="invoice-credits" element={<AdminInvoiceCredits />} />
               <Route path="profile" element={<AdminProfile />} />
               <Route index element={<Navigate to="dashboard" replace />} />
             </Route>

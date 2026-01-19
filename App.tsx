@@ -239,7 +239,7 @@ const AdminRoute = () => {
 };
 
 const AppLayout = () => {
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
@@ -282,40 +282,25 @@ const AppLayout = () => {
 
   const handleLogout = async () => { await logout(); navigate('/'); };
 
-  const navItems = [
-    { label: 'Dashboard', path: '/app' }, 
-    { label: 'Kitchen Prep', path: '/app/prep' }, 
-    { label: 'Customers', path: '/app/customers' }, 
-    { label: 'Single Orders', path: '/app/single-orders' },
-    { label: 'Payments', path: '/app/payments' },
-    { label: 'Invoices', path: '/app/invoices' },
-    { label: 'Expenses', path: '/app/expenses' }, 
-    { label: 'Deliveries', path: '/app/deliveries' }, 
-    { label: 'Inventory', path: '/app/inventory' },
-    { label: 'Notes', path: '/app/notes' },
-    { label: 'Analytics', path: '/app/analytics' }, 
-    { label: 'Messages', path: '/app/messages' }, 
-    { label: 'Support', path: '/app/support' }, 
-    { label: 'Settings', path: '/app/settings' },
-  ];
-
   return (
     <div className="flex min-h-screen bg-slate-50">
-      <Sidebar />
-      {isMobileNavOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm md:hidden animate-in fade-in duration-200" onClick={() => setIsMobileNavOpen(false)}>
-           <div className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-2xl p-4 flex flex-col" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center mb-6 p-2"><div className="flex items-center gap-2"><div className="w-8 h-8 bg-gradient-to-br from-primary-600 to-violet-600 rounded-lg flex items-center justify-center text-white"><Zap size={18} fill="currentColor" /></div><span className="text-xl font-bold text-slate-900">ScaleKitchen</span></div><button onClick={() => setIsMobileNavOpen(false)} className="p-2 text-slate-500"><X size={20} /></button></div>
-              <div className="flex-1 overflow-y-auto space-y-2">{navItems.map(item => (<NavLink key={item.path} to={item.path} onClick={() => setIsMobileNavOpen(false)} className={({ isActive }) => `block px-4 py-3 rounded-lg font-medium ${isActive ? 'bg-primary-50 text-primary-600' : 'text-slate-600'}`}>{item.label}</NavLink>))}<NavLink to="/app/profile" onClick={() => setIsMobileNavOpen(false)} className="block px-4 py-3 rounded-lg font-medium text-slate-600">Profile</NavLink></div>
-              <div className="p-4 border-t border-slate-100"><button onClick={handleLogout} className="flex w-full items-center gap-3 px-4 py-3 text-slate-600 hover:text-red-600"><LogOut size={20} />Sign Out</button></div>
-           </div>
-        </div>
-      )}
-      <div className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden">
-        {showExpiryWarning && (<div className="bg-red-600 text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4 animate-in slide-in-from-top-full duration-500"><AlertTriangle size={18} /><span>SaaS Expiry in {daysToExpiry} days! Renew now.</span><button onClick={() => navigate('/app/profile')} className="bg-white text-red-600 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase transition-transform active:scale-95">Renew Now</button></div>)}
+      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+      
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {showExpiryWarning && (
+          <div className="bg-red-600 text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4 animate-in slide-in-from-top-full duration-500">
+            <AlertTriangle size={18} />
+            <span>SaaS Expiry in {daysToExpiry} days! Renew now.</span>
+            <button onClick={() => navigate('/app/profile')} className="bg-white text-red-600 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase transition-transform active:scale-95">Renew Now</button>
+          </div>
+        )}
+        
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 z-30 shrink-0">
-           <button onClick={() => setIsMobileNavOpen(true)} className="md:hidden p-2 text-slate-600"><Menu size={24} /></button>
-           <div className="flex items-center gap-4 ml-auto">
+           <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-slate-600 hover:bg-slate-50 rounded-xl transition-all">
+             <Menu size={24} />
+           </button>
+           
+           <div className="flex items-center gap-2 md:gap-4 ml-auto">
               <div className="relative">
                 <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 text-slate-500 hover:text-primary-600 relative transition-colors">
                    <Bell size={20} />
@@ -390,6 +375,7 @@ const AppLayout = () => {
               </button>
            </div>
         </header>
+        
         <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50/30">
           <div className="max-w-7xl mx-auto">
             <ErrorBoundary>

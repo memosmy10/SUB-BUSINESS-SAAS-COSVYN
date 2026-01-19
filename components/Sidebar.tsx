@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -18,7 +17,8 @@ import {
   ShoppingBag,
   StickyNote,
   ChefHat,
-  BellRing
+  BellRing,
+  FileText
 } from 'lucide-react';
 
 const Sidebar = () => {
@@ -36,7 +36,6 @@ const Sidebar = () => {
     const myMessages = adminMessages.filter((msg: any) => {
       const isGlobal = msg.targetType === 'ALL';
       const isSpecific = msg.targetType === 'SPECIFIC' && msg.recipientId === currentUser.uid;
-      // Note: Full "ACTIVE" filtering usually requires checking planStatus from firestore doc directly
       return isGlobal || isSpecific || msg.targetType === 'ACTIVE';
     });
 
@@ -55,6 +54,7 @@ const Sidebar = () => {
     { icon: Users, label: 'Customers', path: '/app/customers' },
     { icon: ShoppingBag, label: 'Single Orders', path: '/app/single-orders' },
     { icon: CreditCard, label: 'Payments', path: '/app/payments' },
+    { icon: FileText, label: 'Invoices', path: '/app/invoices' },
     { icon: Receipt, label: 'Expenses', path: '/app/expenses' },
     { icon: Package, label: 'Deliveries', path: '/app/deliveries' },
     { icon: ClipboardList, label: 'Inventory', path: '/app/inventory' },

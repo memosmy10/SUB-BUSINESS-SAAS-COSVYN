@@ -15,6 +15,7 @@ import Support from './pages/Support';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Payments from './pages/Payments';
+import Invoices from './pages/Invoices';
 import Expenses from './pages/Expenses';
 import Deliveries from './pages/Deliveries';
 import Inventory from './pages/Inventory';
@@ -286,6 +287,7 @@ const AppLayout = () => {
     { label: 'Customers', path: '/app/customers' }, 
     { label: 'Single Orders', path: '/app/single-orders' },
     { label: 'Payments', path: '/app/payments' },
+    { label: 'Invoices', path: '/app/invoices' },
     { label: 'Expenses', path: '/app/expenses' }, 
     { label: 'Deliveries', path: '/app/deliveries' }, 
     { label: 'Inventory', path: '/app/inventory' },
@@ -423,6 +425,7 @@ const App = () => {
               <Route path="customers" element={<Customers />} />
               <Route path="single-orders" element={<SingleOrders />} />
               <Route path="payments" element={<Payments />} />
+              <Route path="invoices" element={<Invoices />} />
               <Route path="expenses" element={<Expenses />} />
               <Route path="deliveries" element={<Deliveries />} />
               <Route path="inventory" element={<Inventory />} />

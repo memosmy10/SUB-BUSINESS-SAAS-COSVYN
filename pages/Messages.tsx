@@ -71,7 +71,7 @@ const Messages = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
            <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-              <BellRing className="text-primary-600" /> Notifications
+              <BellRing className="text-primary-600" /> Notifications from admin
            </h1>
            <p className="text-slate-500 font-medium mt-1">Direct updates and platform news from the ScaleKitchen team.</p>
         </div>

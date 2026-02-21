@@ -547,7 +547,7 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
                <div className="flex justify-end mb-2">
                  {p.isStarred && <span className="bg-amber-50 text-amber-600 text-[8px] font-black uppercase px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1"><Star size={8} fill="currentColor" /> Special Requirement</span>}
                </div>
-               <PlanTimeline plan={p} planConfig={planConfig} customerMobile={customer.mobile} customerName={customer.name} />
+               <PlanTimeline plan={p} planConfig={planConfig} customer={customer} planIndex={idx} allPlansConfig={plans} />
             </div>
           );
         }) : (
@@ -558,8 +558,75 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
   );
 };
 
-const PlanTimeline = ({ plan, planConfig, customerMobile, customerName }: { plan: SubscribedPlan, planConfig: any, customerMobile: string, customerName: string }) => {
+const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }: { plan: SubscribedPlan, planConfig: any, customer: GlobalCustomer, planIndex: number, allPlansConfig: any[] }) => {
+  const { currentUser } = useAuth();
+  const [selectedDateToCount, setSelectedDateToCount] = useState<string | null>(null);
   const weekdays = planConfig?.weekdays || [1,2,3,4,5,6];
+
+  const handleCountDate = async (dateStr: string) => {
+    if (!currentUser) return;
+    
+    const updatedPauses = [...(plan.pauses || [])];
+    const pauseIdx = updatedPauses.findIndex(p => dateStr >= p.start && dateStr <= p.end);
+    
+    if (pauseIdx === -1) return;
+    
+    const pause = updatedPauses[pauseIdx];
+    
+    // Remove the date from the pause
+    if (pause.start === dateStr && pause.end === dateStr) {
+      // Single day pause, remove it
+      updatedPauses.splice(pauseIdx, 1);
+    } else if (pause.start === dateStr) {
+      // Start of pause, move start to next day
+      const nextDay = new Date(dateStr);
+      nextDay.setDate(nextDay.getDate() + 1);
+      updatedPauses[pauseIdx] = { ...pause, start: nextDay.toISOString().split('T')[0] };
+    } else if (pause.end === dateStr) {
+      // End of pause, move end to previous day
+      const prevDay = new Date(dateStr);
+      prevDay.setDate(prevDay.getDate() - 1);
+      updatedPauses[pauseIdx] = { ...pause, end: prevDay.toISOString().split('T')[0] };
+    } else {
+      // Middle of pause, split it
+      const prevDay = new Date(dateStr);
+      prevDay.setDate(prevDay.getDate() - 1);
+      const nextDay = new Date(dateStr);
+      nextDay.setDate(nextDay.getDate() + 1);
+      
+      const p1 = { ...pause, end: prevDay.toISOString().split('T')[0] };
+      const p2 = { ...pause, start: nextDay.toISOString().split('T')[0] };
+      
+      updatedPauses.splice(pauseIdx, 1, p1, p2);
+    }
+    
+    // Recalculate end date for this plan
+    const newEndDate = calculateEndDate(plan.startDate, planConfig?.numberOfDeliveryDays || 26, weekdays, updatedPauses);
+    
+    // Update the specific plan in the customer's activePlans
+    const updatedActivePlans = [...(customer.activePlans || [])];
+    updatedActivePlans[planIndex] = { ...plan, pauses: updatedPauses, endDate: newEndDate };
+    
+    // Recalculate customer level stats
+    const maxEndDate = updatedActivePlans.reduce((max, p) => p.endDate > max ? p.endDate : max, updatedActivePlans[0].endDate);
+    const maxDaysLeft = updatedActivePlans.reduce((max, p) => {
+      const pc = allPlansConfig.find(pl => pl.id === p.planId);
+      const left = calculateRemainingDeliveries(p.endDate, pc?.weekdays || [1,2,3,4,5,6], p.pauses || []);
+      return left > max ? left : max;
+    }, 0);
+    
+    try {
+      await updateItem(currentUser.uid, 'customers', customer.id, {
+        activePlans: updatedActivePlans,
+        endDate: maxEndDate,
+        daysLeft: maxDaysLeft
+      });
+      setSelectedDateToCount(null);
+    } catch (err) {
+      console.error("Error counting date:", err);
+      alert("Failed to update. Please try again.");
+    }
+  };
   
   const generateDates = () => {
     const dates = [];
@@ -592,7 +659,7 @@ const PlanTimeline = ({ plan, planConfig, customerMobile, customerName }: { plan
     else if (pause) {
       if (pause.type === 'User') userPaused++;
       else branchPaused++;
-    } else if (dStr < today) {
+    } else if (dStr <= today) {
       delivered++;
     }
   });
@@ -601,8 +668,8 @@ const PlanTimeline = ({ plan, planConfig, customerMobile, customerName }: { plan
   const pending = Math.max(0, totalDays - delivered);
 
   const handleSharePlan = () => {
-    const msg = `*${plan.mealTime} Status - ScaleKitchen*\n\nHello ${customerName},\nYour ${plan.mealTime} subscription (${plan.planName}) status:\n✅ Delivered: ${delivered}/${totalDays}\n⏳ Pending: ${pending}\n⏸ Paused: ${userPaused + branchPaused} days\n📅 Expiry: ${plan.endDate}\n\nThank you!`;
-    window.open(`https://wa.me/${(customerMobile || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const msg = `*${plan.mealTime} Status - ScaleKitchen*\n\nHello ${customer.name},\nYour ${plan.mealTime} subscription (${plan.planName}) status:\n✅ Delivered: ${delivered}/${totalDays}\n⏳ Pending: ${pending}\n⏸ Paused: ${userPaused + branchPaused} days\n📅 Expiry: ${plan.endDate}\n\nThank you!`;
+    window.open(`https://wa.me/${(customer.mobile || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   return (
@@ -661,10 +728,13 @@ const PlanTimeline = ({ plan, planConfig, customerMobile, customerName }: { plan
 
               return (
                 <div key={i} className="group relative">
-                  <div className={`w-5 h-7 rounded-[4px] border ${color} shadow-sm transition-transform hover:scale-110`} />
+                  <div 
+                    onClick={() => { if (pause) setSelectedDateToCount(dStr); }}
+                    className={`w-5 h-7 rounded-[4px] border ${color} shadow-sm transition-transform hover:scale-110 cursor-pointer`} 
+                  />
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
                      <div className="bg-slate-900 text-white text-[8px] font-black py-1 px-2 rounded whitespace-nowrap shadow-xl">
-                        {dStr} • {label}
+                        {dStr} • {label} {pause ? '(Click to Count)' : ''}
                      </div>
                   </div>
                 </div>
@@ -672,6 +742,31 @@ const PlanTimeline = ({ plan, planConfig, customerMobile, customerName }: { plan
             })}
          </div>
       </div>
+
+      {selectedDateToCount && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-[2px]">
+          <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200">
+            <h3 className="text-lg font-black text-slate-900 mb-2">Count this date?</h3>
+            <p className="text-sm text-slate-500 mb-6">
+              You are marking <span className="font-bold text-slate-900">{selectedDateToCount}</span> as a delivery day. This will reduce the paused days and update the plan's end date.
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setSelectedDateToCount(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => handleCountDate(selectedDateToCount)}
+                className="flex-1 px-4 py-2.5 rounded-xl font-bold text-white bg-primary-600 hover:bg-primary-700 transition-colors shadow-lg shadow-primary-200"
+              >
+                Count Date
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

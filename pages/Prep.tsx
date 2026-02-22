@@ -23,7 +23,8 @@ const Prep = () => {
   const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
 
   const getPrepData = (targetDate: string) => {
-    const date = new Date(targetDate);
+    const [y, m, d] = targetDate.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
     const dayOfWeek = date.getDay();
     
     // Breakdowns
@@ -39,32 +40,32 @@ const Prep = () => {
 
     // 1. Process Subscription Plans
     customers.filter(c => {
-      const activeStatus = c.isActive;
       const branchMatch = selectedBranch === 'All' || c.branchId === selectedBranch;
-      return activeStatus && branchMatch;
+      return branchMatch;
     }).forEach(c => {
-      let customerHasMeal = false;
+      let customerHasMealOnThisDate = false;
 
       (c.activePlans || []).forEach(ap => {
         const planConfig = plansArr.find(p => p.id === ap.planId);
-        if (!planConfig) return;
+        // Fallback weekdays if planConfig not found (e.g. custom plans)
+        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
 
         const isPaused = ap.pauses?.some(p => targetDate >= p.start && targetDate <= p.end);
-        const isValidDay = planConfig.weekdays.includes(dayOfWeek);
+        const isValidDay = weekdays.includes(dayOfWeek);
         const isWithinRange = targetDate >= ap.startDate && targetDate <= ap.endDate;
 
         if (isWithinRange && isValidDay && !isPaused) {
           const time = ap.mealTime;
           const isStarred = ap.isStarred || (c.highlightMark && c.highlightMark !== 'None');
           
-          sessionTotals[time]++;
-          customerHasMeal = true;
+          sessionTotals[time] = (sessionTotals[time] || 0) + 1;
+          customerHasMealOnThisDate = true;
 
           if (isStarred) {
             totalStarredBoxes++;
             starredSummary[time][ap.planName] = (starredSummary[time][ap.planName] || 0) + 1;
             specialRequests.push({
-              id: `${c.id}-${time}`,
+              id: `${c.id}-${time}-${ap.planId}`,
               name: c.name,
               time: ap.mealTime,
               note: c.notes || 'Standard Preparation',
@@ -80,7 +81,9 @@ const Prep = () => {
         }
       });
 
-      if (customerHasMeal) activeCustomerIds.add(c.id);
+      if (customerHasMealOnThisDate) {
+        activeCustomerIds.add(c.id);
+      }
     });
 
     // 2. Process Single Orders

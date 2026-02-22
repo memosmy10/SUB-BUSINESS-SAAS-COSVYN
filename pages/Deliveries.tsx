@@ -48,16 +48,15 @@ const Deliveries = () => {
     const stats = { Breakfast: 0, Lunch: 0, Dinner: 0, GrandTotal: 0 };
     
     customers.filter(c => {
-      if (!c.isActive) return false;
       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
       return true;
     }).forEach(c => {
       (c.activePlans || []).forEach((ap: any) => {
         const planConfig = plans.find(p => p.id === ap.planId);
-        if (!planConfig) return;
+        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
         
         const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        const isValidDay = planConfig.weekdays.includes(dayOfWeek);
+        const isValidDay = weekdays.includes(dayOfWeek);
         const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
         
         if (isWithinRange && isValidDay && !isPaused) {
@@ -91,13 +90,13 @@ const Deliveries = () => {
         }
       };
       
-      customers.filter(c => c.deliveryBoyId === boy.id && c.isActive).forEach(c => {
+      customers.filter(c => c.deliveryBoyId === boy.id).forEach(c => {
         (c.activePlans || []).forEach((ap: any) => {
           const planConfig = plans.find(p => p.id === ap.planId);
-          if (!planConfig) return;
+          const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
           
           const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-          const isValidDay = planConfig.weekdays.includes(dayOfWeek);
+          const isValidDay = weekdays.includes(dayOfWeek);
           const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
           
           if (isWithinRange && isValidDay && !isPaused) {
@@ -122,15 +121,14 @@ const Deliveries = () => {
   // 1. Filter customers scheduled for TODAY and current Meal Session (FOR EXISTING MODULES)
   const deliveriesToday = useMemo(() => {
     return customers.filter(c => {
-      if (!c.isActive) return false;
       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
       
       const mealPlansToday = (c.activePlans || []).filter((ap: any) => {
         const planConfig = plans.find(p => p.id === ap.planId);
-        if (!planConfig) return false;
+        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
         
         const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        const isValidDay = planConfig.weekdays.includes(dayOfWeek);
+        const isValidDay = weekdays.includes(dayOfWeek);
         const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
         const matchesMeal = ap.mealTime === activeMealTab;
         
@@ -148,9 +146,9 @@ const Deliveries = () => {
     deliveriesToday.forEach(c => {
       const sessionPlans = (c.activePlans || []).filter((ap: any) => {
         const planConfig = plans.find(p => p.id === ap.planId);
-        if (!planConfig) return false;
+        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
         const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        return ap.mealTime === activeMealTab && planConfig.weekdays.includes(dayOfWeek) && todayStr >= ap.startDate && todayStr <= ap.endDate && !isPaused;
+        return ap.mealTime === activeMealTab && weekdays.includes(dayOfWeek) && todayStr >= ap.startDate && todayStr <= ap.endDate && !isPaused;
       });
       totalBoxes += sessionPlans.length;
       totalStarBoxes += sessionPlans.filter((p: any) => p.isStarred || (c.highlightMark && c.highlightMark !== 'None')).length;

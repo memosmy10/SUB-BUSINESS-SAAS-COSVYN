@@ -31,6 +31,9 @@ export interface SubscribedPlan {
   price: number;
   pauses: PauseEvent[];
   isStarred?: boolean; // NEW: Track special preparation requirements per plan
+  isCustom?: boolean;
+  totalDeliveries?: number;
+  weekdays?: number[];
 }
 
 export interface GlobalCustomer {

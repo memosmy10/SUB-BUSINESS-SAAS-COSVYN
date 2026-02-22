@@ -2,7 +2,7 @@
 // @ts-ignore
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { initializeFirestore, memoryLocalCache } from "firebase/firestore";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -19,11 +19,11 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// FIX: Initializing Firestore with experimentalForceLongPolling to prevent "Could not reach backend" errors
-// and adding multi-tab persistence for a smoother SaaS experience.
+// FIX: Using memoryLocalCache instead of persistentLocalCache to avoid internal assertion failures
+// related to IndexedDB state in sandboxed environments.
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true, // Bypass WebSocket issues
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  localCache: memoryLocalCache({}) 
 });
 
 export default app;

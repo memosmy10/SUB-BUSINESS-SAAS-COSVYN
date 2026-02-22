@@ -65,8 +65,8 @@ const Customers = () => {
       // Calculate max days left across all active plans
       const realDaysLeft = (c.activePlans || []).reduce((max: number, p: any) => {
         const pc = plans.find((pl: any) => pl.id === p.planId);
-        if (!pc) return max;
-        const left = calculateRemainingDeliveries(p.endDate, pc.weekdays || [], p.pauses || []);
+        const weekdays = pc?.weekdays || p.weekdays || [1,2,3,4,5,6];
+        const left = calculateRemainingDeliveries(p.endDate, weekdays, p.pauses || []);
         return Math.max(max, left);
       }, 0);
       return { ...c, realDaysLeft };
@@ -116,9 +116,9 @@ const Customers = () => {
     const updatedPlans = currentPlans.map((p, idx) => {
       if (selectedPlanIndices.includes(idx)) {
         const planConfig = plans.find(pc => pc.id === p.planId);
-        const weekdays = planConfig?.weekdays || [1,2,3,4,5,6];
+        const weekdays = planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6];
         const newPauses = [...(p.pauses || []), pauseEvent];
-        const newEndDate = calculateEndDate(p.startDate, planConfig?.numberOfDeliveryDays || 26, weekdays, newPauses);
+        const newEndDate = calculateEndDate(p.startDate, planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26, weekdays, newPauses);
         return { ...p, pauses: newPauses, endDate: newEndDate };
       }
       return p;
@@ -127,7 +127,7 @@ const Customers = () => {
     const maxEndDate = updatedPlans.reduce((max, p) => p.endDate > max ? p.endDate : max, updatedPlans[0].endDate);
     const maxDaysLeft = updatedPlans.reduce((max, p) => {
       const planConfig = plans.find(pc => pc.id === p.planId);
-      const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || [], p.pauses || []);
+      const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6], p.pauses || []);
       return left > max ? left : max;
     }, 0);
 
@@ -153,9 +153,9 @@ const Customers = () => {
         if (timings.includes(p.mealTime)) {
           hasChange = true;
           const planConfig = plans.find(pc => pc.id === p.planId);
-          const weekdays = planConfig?.weekdays || [1,2,3,4,5,6];
+          const weekdays = planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6];
           const newPauses = [...(p.pauses || []), pauseEvent];
-          const newEndDate = calculateEndDate(p.startDate, planConfig?.numberOfDeliveryDays || 26, weekdays, newPauses);
+          const newEndDate = calculateEndDate(p.startDate, planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26, weekdays, newPauses);
           return { ...p, pauses: newPauses, endDate: newEndDate };
         }
         return p;
@@ -165,7 +165,7 @@ const Customers = () => {
         const maxEndDate = updatedPlans.reduce((max, p) => p.endDate > max ? p.endDate : max, updatedPlans[0].endDate);
         const maxDaysLeft = updatedPlans.reduce((max, p) => {
           const planConfig = plans.find(pc => pc.id === p.planId);
-          const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || [], p.pauses || []);
+          const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6], p.pauses || []);
           return left > max ? left : max;
         }, 0);
 
@@ -347,8 +347,8 @@ const Customers = () => {
                           </td>
                           <td className="p-3">
                             <div className="flex flex-wrap gap-1">
-                                {mealTimes.map((m:string) => (
-                                  <span key={m} className={`text-[8px] font-black px-1 py-0.5 rounded-sm border shadow-xs ${
+                                {mealTimes.map((m:string, idx: number) => (
+                                  <span key={`${m}-${idx}`} className={`text-[8px] font-black px-1 py-0.5 rounded-sm border shadow-xs ${
                                     m === 'Breakfast' ? 'bg-orange-50 text-orange-600 border-orange-100' : 
                                     m === 'Lunch' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
                                     'bg-purple-50 text-purple-600 border-purple-100'
@@ -561,7 +561,7 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
 const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }: { plan: SubscribedPlan, planConfig: any, customer: GlobalCustomer, planIndex: number, allPlansConfig: any[] }) => {
   const { currentUser } = useAuth();
   const [selectedDateToCount, setSelectedDateToCount] = useState<string | null>(null);
-  const weekdays = planConfig?.weekdays || [1,2,3,4,5,6];
+  const weekdays = planConfig?.weekdays || plan.weekdays || [1,2,3,4,5,6];
 
   const handleCountDate = async (dateStr: string) => {
     if (!currentUser) return;
@@ -601,7 +601,8 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
     }
     
     // Recalculate end date for this plan
-    const newEndDate = calculateEndDate(plan.startDate, planConfig?.numberOfDeliveryDays || 26, weekdays, updatedPauses);
+    const tDays = planConfig?.numberOfDeliveryDays || plan.totalDeliveries || 26;
+    const newEndDate = calculateEndDate(plan.startDate, tDays, weekdays, updatedPauses);
     
     // Update the specific plan in the customer's activePlans
     const updatedActivePlans = [...(customer.activePlans || [])];
@@ -611,7 +612,8 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
     const maxEndDate = updatedActivePlans.reduce((max, p) => p.endDate > max ? p.endDate : max, updatedActivePlans[0].endDate);
     const maxDaysLeft = updatedActivePlans.reduce((max, p) => {
       const pc = allPlansConfig.find(pl => pl.id === p.planId);
-      const left = calculateRemainingDeliveries(p.endDate, pc?.weekdays || [1,2,3,4,5,6], p.pauses || []);
+      const wds = pc?.weekdays || p.weekdays || [1,2,3,4,5,6];
+      const left = calculateRemainingDeliveries(p.endDate, wds, p.pauses || []);
       return left > max ? left : max;
     }, 0);
     
@@ -664,7 +666,7 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
     }
   });
 
-  const totalDays = planConfig?.numberOfDeliveryDays || 26;
+  const totalDays = planConfig?.numberOfDeliveryDays || plan.totalDeliveries || 26;
   const pending = Math.max(0, totalDays - delivered);
 
   const handleSharePlan = () => {
@@ -771,6 +773,16 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
   );
 };
 
+const DAYS = [
+  { label: 'Sun', value: 0 },
+  { label: 'Mon', value: 1 },
+  { label: 'Tue', value: 2 },
+  { label: 'Wed', value: 3 },
+  { label: 'Thu', value: 4 },
+  { label: 'Fri', value: 5 },
+  { label: 'Sat', value: 6 },
+];
+
 const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState<any>({
       branchId: branches[0]?.id || '', name: '', mobile: '', address: '', area: '', 
@@ -785,6 +797,11 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
      planId: '', 
      startDate: new Date().toISOString().split('T')[0],
      isStarred: false 
+   });
+
+   const [isCustomPlanOpen, setIsCustomPlanOpen] = useState(false);
+   const [customPlanForm, setCustomPlanForm] = useState({
+     name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: new Date().toISOString().split('T')[0], isStarred: false
    });
 
    const currentBranchPlans = plans.filter((p:any) => p.branchId === formData.branchId);
@@ -813,6 +830,30 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
       setNewPlanForm(prev => ({ ...prev, isStarred: false }));
    };
 
+   const addCustomPlan = () => {
+      if (!customPlanForm.name || !customPlanForm.price || !customPlanForm.totalDeliveries) return alert("Fill all custom fields");
+      const endDate = calculateEndDate(customPlanForm.startDate, Number(customPlanForm.totalDeliveries), customPlanForm.weekdays, []);
+      const newPlans = [];
+      for(let i=0; i<customPlanForm.quantity; i++) {
+         newPlans.push({
+            planId: `custom-${Date.now()}-${i}`,
+            planName: customPlanForm.name,
+            mealTime: customPlanForm.mealTime as any,
+            startDate: customPlanForm.startDate,
+            endDate,
+            price: Number(customPlanForm.price),
+            pauses: [],
+            isStarred: customPlanForm.isStarred,
+            isCustom: true,
+            totalDeliveries: Number(customPlanForm.totalDeliveries),
+            weekdays: customPlanForm.weekdays
+         });
+      }
+      setActivePlans([...activePlans, ...newPlans]);
+      setIsCustomPlanOpen(false);
+      setCustomPlanForm({ name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: new Date().toISOString().split('T')[0], isStarred: false });
+   };
+
    const plansTotal = activePlans.reduce((sum, p) => sum + Number(p.price), 0);
    const pendingAmount = Math.max(0, plansTotal + Number(formData.deliveryCharges) - Number(formData.amountPaid));
 
@@ -822,7 +863,9 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
       const primary = activePlans[0];
       const maxEnd = activePlans.reduce((max, p) => p.endDate > max ? p.endDate : max, activePlans[0].endDate);
       const maxDaysLeft = activePlans.reduce((max, p) => {
-        const left = calculateRemainingDeliveries(p.endDate, plans.find(pl => pl.id === p.planId)?.weekdays || [1,2,3,4,5,6], p.pauses || []);
+        const pc = plans.find(pl => pl.id === p.planId);
+        const wds = pc?.weekdays || p.weekdays || [1,2,3,4,5,6];
+        const left = calculateRemainingDeliveries(p.endDate, wds, p.pauses || []);
         return left > max ? left : max;
       }, 0);
 
@@ -915,6 +958,67 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
                      </div>
                      <button type="button" onClick={addPlan} className="bg-slate-900 text-white py-2.5 rounded-xl font-bold text-[10px] uppercase h-10 hover:bg-black">Add Plan</button>
                   </div>
+
+                  <div className="pt-2 border-t border-slate-200">
+                    {!isCustomPlanOpen ? (
+                      <button 
+                        type="button" 
+                        onClick={() => setIsCustomPlanOpen(true)}
+                        className="text-[10px] font-black text-primary-600 uppercase flex items-center gap-2 hover:underline"
+                      >
+                        <Plus size={14} /> Add Custom Plan
+                      </button>
+                    ) : (
+                      <div className="bg-white p-4 rounded-xl border border-primary-100 space-y-4 animate-in slide-in-from-top-2">
+                        <div className="flex justify-between items-center">
+                          <h5 className="text-[10px] font-black text-slate-900 uppercase">Custom Plan Details</h5>
+                          <button type="button" onClick={() => setIsCustomPlanOpen(false)} className="text-slate-400 hover:text-red-500"><X size={14}/></button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><ModalLabel>Plan Name</ModalLabel><input className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.name} onChange={e => setCustomPlanForm({...customPlanForm, name: e.target.value})} /></div>
+                          <div><ModalLabel>Price (₹)</ModalLabel><input type="number" className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.price} onChange={e => setCustomPlanForm({...customPlanForm, price: e.target.value})} /></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><ModalLabel>Total Deliveries</ModalLabel><input type="number" className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.totalDeliveries} onChange={e => setCustomPlanForm({...customPlanForm, totalDeliveries: Number(e.target.value)})} /></div>
+                          <div><ModalLabel>Meal Time</ModalLabel><select className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.mealTime} onChange={e => setCustomPlanForm({...customPlanForm, mealTime: e.target.value})}><option value="Breakfast">Breakfast</option><option value="Lunch">Lunch</option><option value="Dinner">Dinner</option></select></div>
+                        </div>
+                        <div>
+                          <ModalLabel>Delivery Days</ModalLabel>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {DAYS.map(d => (
+                              <button 
+                                key={d.value}
+                                type="button"
+                                onClick={() => setCustomPlanForm(prev => ({
+                                  ...prev,
+                                  weekdays: prev.weekdays.includes(d.value) ? prev.weekdays.filter(v => v !== d.value) : [...prev.weekdays, d.value]
+                                }))}
+                                className={`px-2 py-1 rounded text-[10px] font-bold border transition-all ${customPlanForm.weekdays.includes(d.value) ? 'bg-primary-600 border-primary-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-400'}`}
+                              >
+                                {d.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-4 items-end">
+                          <div><ModalLabel>Quantity</ModalLabel><input type="number" min="1" className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.quantity} onChange={e => setCustomPlanForm({...customPlanForm, quantity: Number(e.target.value)})} /></div>
+                          <div><ModalLabel>Start Date</ModalLabel><input type="date" className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.startDate} onChange={e => setCustomPlanForm({...customPlanForm, startDate: e.target.value})} /></div>
+                          <div className="flex flex-col items-center">
+                            <ModalLabel>Star</ModalLabel>
+                            <button 
+                              type="button" 
+                              onClick={() => setCustomPlanForm({...customPlanForm, isStarred: !customPlanForm.isStarred})}
+                              className={`p-2 rounded-lg border transition-all ${customPlanForm.isStarred ? 'bg-amber-100 border-amber-300 text-amber-600' : 'bg-white border-slate-200 text-slate-300'}`}
+                            >
+                              <Star size={14} fill={customPlanForm.isStarred ? "currentColor" : "none"} />
+                            </button>
+                          </div>
+                        </div>
+                        <button type="button" onClick={addCustomPlan} className="w-full bg-primary-600 text-white py-2 rounded-lg font-bold text-[10px] uppercase hover:bg-primary-700">Add Custom Plan</button>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-2 mt-2">
                      {activePlans.map((p, i) => (
                         <div key={i} className={`flex justify-between items-center bg-white p-3 rounded-lg border text-sm shadow-sm ${p.isStarred ? 'border-amber-200' : ''}`}>
@@ -1037,7 +1141,7 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                            {plansToDisplay.map((p) => {
                               const isSelected = selectedPlanIndices.includes(p.originalIndex);
                               const planConfig = plans.find((pc:any) => pc.id === p.planId);
-                              const weekdays = planConfig?.weekdays || [1,2,3,4,5,6];
+                              const weekdays = planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6];
                               const today = new Date().toISOString().split('T')[0];
                               
                               let delCount = 0;
@@ -1071,7 +1175,7 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                                     <td className="p-3 truncate max-w-[140px] text-slate-900">{p.planName}</td>
                                     <td className="p-3">₹{p.price}</td>
                                     <td className="p-3 font-mono text-[10px]">{p.endDate}</td>
-                                    <td className="p-3 text-green-600">{delCount}/{planConfig?.numberOfDeliveryDays || 26}</td>
+                                    <td className="p-3 text-green-600">{delCount}/{planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26}</td>
                                     <td className="p-3 text-orange-600">{pCount}</td>
                                     <td className="p-3 text-primary-600">{left}</td>
                                  </tr>
@@ -1106,8 +1210,8 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                                 <p className="text-xl font-black">
                                   {calculateEndDate(
                                       activePlans[selectedPlanIndices[0]].startDate, 
-                                      plans.find((pc:any) => pc.id === activePlans[selectedPlanIndices[0]].planId)?.numberOfDeliveryDays || 26,
-                                      plans.find((pc:any) => pc.id === activePlans[selectedPlanIndices[0]].planId)?.weekdays || [1,2,3,4,5,6],
+                                      plans.find((pc:any) => pc.id === activePlans[selectedPlanIndices[0]].planId)?.numberOfDeliveryDays || activePlans[selectedPlanIndices[0]].totalDeliveries || 26,
+                                      plans.find((pc:any) => pc.id === activePlans[selectedPlanIndices[0]].planId)?.weekdays || activePlans[selectedPlanIndices[0]].weekdays || [1,2,3,4,5,6],
                                       [...(activePlans[selectedPlanIndices[0]].pauses || []), { start: formData.start, end: formData.end, type: 'User' }]
                                   )}
                                 </p>

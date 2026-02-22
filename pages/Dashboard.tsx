@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell, Legend, LineChart, Line
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
-import { calculateRemainingDeliveries } from '../services/store';
+import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#6366f1'];
 
@@ -62,7 +62,7 @@ const Dashboard = () => {
   const kpis = useMemo(() => {
     if (isLoading) return { subRevenue: 0, pending: 0, unqCust: 0, activeCust: 0, plansToday: 0, singleRev: 0, singleCount: 0 };
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayStr();
     const dayOfWeek = new Date().getDay();
 
     const filteredCust = customers.filter((c: any) => {
@@ -84,17 +84,7 @@ const Dashboard = () => {
     const unqCust = filteredCust.length;
     const activeCust = filteredCust.filter(c => {
       if (!c.isActive) return false;
-      
-      // Real-time calculation of remaining days based on current clock and active plans
-      const realDaysLeft = (c.activePlans || []).reduce((max: number, p: any) => {
-        const planConfig = plans.find((pl: any) => pl.id === p.planId);
-        if (!planConfig) return max;
-        // The core helper that correctly handles holidays and pauses against the current date
-        const left = calculateRemainingDeliveries(p.endDate, planConfig.weekdays || [], p.pauses || []);
-        return Math.max(max, left);
-      }, 0);
-
-      return realDaysLeft > 0;
+      return todayStr <= (c.endDate || '');
     }).length;
 
     let plansToday = 0;

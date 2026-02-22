@@ -5,7 +5,7 @@ import {
   Info, Star, Users, Package, CheckCircle2, Clock, ChevronDown, Store
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
-import { GlobalCustomer, GlobalPlan } from '../services/store';
+import { GlobalCustomer, GlobalPlan, getTodayStr } from '../services/store';
 
 const Prep = () => {
   const { data: customers = [], loading: l1 } = useStreamCollection<GlobalCustomer>('customers');
@@ -17,10 +17,10 @@ const Prep = () => {
 
   const [selectedBranch, setSelectedBranch] = useState('All');
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const tomorrowDate = new Date();
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrowStr = tomorrowDate.toISOString().split('T')[0];
+  const todayStr = getTodayStr();
+  const now = new Date();
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
 
   const getPrepData = (targetDate: string) => {
     const date = new Date(targetDate);

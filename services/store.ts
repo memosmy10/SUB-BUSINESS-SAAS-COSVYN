@@ -117,17 +117,17 @@ export interface InventoryItem {
 export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number, allowedWeekdays: number[], pauses: PauseEvent[] = []): string => {
   if (!startDateStr || totalDeliveryDays <= 0 || !allowedWeekdays || allowedWeekdays.length === 0) return startDateStr;
   
-  let currentDate = new Date(startDateStr);
+  const [y, m, d] = startDateStr.split('-').map(Number);
+  let currentDate = new Date(y, m - 1, d);
   let deliveriesCounted = 0;
   
   const isPaused = (dateStr: string) => {
-    // FIX: Replaced undefined 'dStr' with the correct parameter 'dateStr'
     return pauses.some(p => dateStr >= p.start && dateStr <= p.end);
   };
 
   let safetyLoop = 0; 
   while (deliveriesCounted < totalDeliveryDays && safetyLoop < 1000) {
-    const dStr = currentDate.toISOString().split('T')[0];
+    const dStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
     const dayOfWeek = currentDate.getDay();
     
     if (allowedWeekdays.includes(dayOfWeek) && !isPaused(dStr)) {
@@ -139,29 +139,31 @@ export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number
     }
     safetyLoop++;
   }
-  return currentDate.toISOString().split('T')[0];
+  return `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
 };
 
 export const calculateRemainingDeliveries = (endDateStr: string, allowedWeekdays: number[], pauses: PauseEvent[] = []): number => {
   if (!endDateStr || !allowedWeekdays || allowedWeekdays.length === 0) return 0;
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  const end = new Date(endDateStr);
-  end.setHours(0,0,0,0);
+  
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  const [ey, em, ed] = endDateStr.split('-').map(Number);
+  const end = new Date(ey, em - 1, ed);
   
   if (today > end) return 0;
   
   let count = 0;
   let current = new Date(today);
+  current.setDate(current.getDate() + 1); // Count remaining deliveries starting from tomorrow
   
   const isPaused = (dateStr: string) => {
-    // FIX: Replaced undefined 'dStr' with the correct parameter 'dateStr'
     return pauses.some(p => dateStr >= p.start && dateStr <= p.end);
   };
 
   let safetyLoop = 0;
   while (current <= end && safetyLoop < 366) {
-    const dStr = current.toISOString().split('T')[0];
+    const dStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
     if (allowedWeekdays.includes(current.getDay()) && !isPaused(dStr)) {
       count++;
     }
@@ -196,6 +198,11 @@ export const getDaysDifference = (date1: string, date2: string): number => {
   const d2 = new Date(date2);
   const diffTime = d2.getTime() - d1.getTime();
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+};
+
+export const getTodayStr = (): string => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 };
 
 export const INDIA_STATES = [

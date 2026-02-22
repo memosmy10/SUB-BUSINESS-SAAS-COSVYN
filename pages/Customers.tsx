@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem } from '../services/dbService';
 import { 
   calculateEndDate, calculateRemainingDeliveries,
-  GlobalCustomer, PauseEvent, SubscribedPlan
+  GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr
 } from '../services/store';
 import { doc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -226,9 +226,10 @@ const Customers = () => {
   }, [enrichedCustomers, filters]);
 
   const stats = useMemo(() => {
+    const today = getTodayStr();
     const unique = customers.length;
-    // Fix: Using real-time calculation for active count
-    const active = enrichedCustomers.filter(c => c.isActive && (c.realDaysLeft || 0) > 0).length;
+    // Fix: Using date comparison for active count to be consistent with table status
+    const active = enrichedCustomers.filter(c => c.isActive && today <= (c.endDate || '')).length;
     const totalRenewals = customers.reduce((acc, c) => acc + (c.renewalCount || 0), 0);
     const renewalRate = unique > 0 ? Math.round((totalRenewals / (unique + totalRenewals)) * 100) : 0;
     return { unique, active, renewalRate };
@@ -363,7 +364,7 @@ const Customers = () => {
                             </span>
                           </td>
                           <td className="p-3 text-center font-black">
-                            {c.realDaysLeft <= 0 ? (
+                            {getTodayStr() > (c.endDate || '') ? (
                                <span className="text-red-600 font-black uppercase text-[10px]">Expired</span>
                             ) : (
                                <span className="text-primary-600">{c.realDaysLeft}</span>
@@ -633,12 +634,14 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
   const generateDates = () => {
     const dates = [];
     if (!plan.startDate || !plan.endDate) return [];
-    let curr = new Date(plan.startDate);
-    const end = new Date(plan.endDate);
+    const [sy, sm, sd] = plan.startDate.split('-').map(Number);
+    let curr = new Date(sy, sm - 1, sd);
+    const [ey, em, ed] = plan.endDate.split('-').map(Number);
+    const end = new Date(ey, em - 1, ed);
     
     let safety = 0;
     while (curr <= end && safety < 1000) {
-      dates.push(curr.toISOString().split('T')[0]);
+      dates.push(`${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, '0')}-${String(curr.getDate()).padStart(2, '0')}`);
       curr.setDate(curr.getDate() + 1);
       safety++;
     }
@@ -646,7 +649,7 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
   };
 
   const dates = generateDates();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayStr();
   
   let delivered = 0;
   let userPaused = 0;
@@ -795,13 +798,13 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
    const [newPlanForm, setNewPlanForm] = useState({ 
      mealTime: 'Lunch', 
      planId: '', 
-     startDate: new Date().toISOString().split('T')[0],
+     startDate: getTodayStr(),
      isStarred: false 
    });
 
    const [isCustomPlanOpen, setIsCustomPlanOpen] = useState(false);
    const [customPlanForm, setCustomPlanForm] = useState({
-     name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: new Date().toISOString().split('T')[0], isStarred: false
+     name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false
    });
 
    const currentBranchPlans = plans.filter((p:any) => p.branchId === formData.branchId);
@@ -851,7 +854,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
       }
       setActivePlans([...activePlans, ...newPlans]);
       setIsCustomPlanOpen(false);
-      setCustomPlanForm({ name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: new Date().toISOString().split('T')[0], isStarred: false });
+      setCustomPlanForm({ name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false });
    };
 
    const plansTotal = activePlans.reduce((sum, p) => sum + Number(p.price), 0);
@@ -1142,7 +1145,7 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                               const isSelected = selectedPlanIndices.includes(p.originalIndex);
                               const planConfig = plans.find((pc:any) => pc.id === p.planId);
                               const weekdays = planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6];
-                              const today = new Date().toISOString().split('T')[0];
+                              const today = getTodayStr();
                               
                               let delCount = 0;
                               let pCount = 0;

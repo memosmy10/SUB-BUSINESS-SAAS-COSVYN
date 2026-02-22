@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useStreamCollection, updateItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
-import { calculateRemainingDeliveries } from '../services/store';
+import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
 
 const StatCard = ({ title, value, icon: Icon, colorClass, subtext }: any) => (
   <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-36">
@@ -40,7 +40,7 @@ const Deliveries = () => {
 
   const isLoading = l1 || l2 || l3 || l4;
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayStr();
   const dayOfWeek = new Date().getDay();
 
   // --- GLOBAL DAILY SUMMARY ---

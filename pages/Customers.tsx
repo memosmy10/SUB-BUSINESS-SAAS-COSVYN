@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   RefreshCw, Plus, Store, Search, Calendar, X, 
-  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin
+  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem } from '../services/dbService';
@@ -42,6 +42,7 @@ const Customers = () => {
   const isLoading = l1 || l2 || l3 || l4;
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isRenewal, setIsRenewal] = useState(false);
   const [isPauseModalOpen, setIsPauseModalOpen] = useState(false);
   const [isPauseBranchModalOpen, setIsPauseBranchModalOpen] = useState(false);
   
@@ -95,6 +96,7 @@ const Customers = () => {
     }
     setIsAddModalOpen(false);
     setActiveCustomer(null);
+    setIsRenewal(false);
   };
 
   const handleDeleteCustomer = async (id: string) => {
@@ -373,7 +375,14 @@ const Customers = () => {
                           <td className="p-3 text-slate-500 text-[10px] font-bold truncate max-w-[80px]">{branch?.name || 'Main'}</td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-0.5">
-                                <button onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsAddModalOpen(true); }} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"><Edit size={14}/></button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsRenewal(true); setIsAddModalOpen(true); }} 
+                                  className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"
+                                  title="Renewal"
+                                >
+                                  <RotateCcw size={14}/>
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsRenewal(false); setIsAddModalOpen(true); }} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"><Edit size={14}/></button>
                                 <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id); }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={14}/></button>
                             </div>
                           </td>
@@ -393,7 +402,7 @@ const Customers = () => {
          </div>
       </div>
 
-      {isAddModalOpen && <CustomerModal plans={plans} staff={staff} branches={branches} initialData={activeCustomer} onClose={() => { setIsAddModalOpen(false); setActiveCustomer(null); }} onSubmit={handleSaveCustomer} />}
+      {isAddModalOpen && <CustomerModal plans={plans} staff={staff} branches={branches} initialData={activeCustomer} isRenewal={isRenewal} onClose={() => { setIsAddModalOpen(false); setActiveCustomer(null); setIsRenewal(false); }} onSubmit={handleSaveCustomer} />}
       {isPauseModalOpen && <PauseCustomerModal customers={customers} branches={branches} plans={plans} onClose={() => setIsPauseModalOpen(false)} onSubmit={handlePausePlans} />}
       {isPauseBranchModalOpen && <PauseBranchModal branches={branches} customers={customers} onClose={() => setIsPauseBranchModalOpen(false)} onSubmit={handlePauseBranch} />}
     </div>
@@ -541,17 +550,48 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
       </div>
       
       <div className="space-y-8">
-        {activePlans.length > 0 ? activePlans.map((p, idx) => {
-          const planConfig = plans.find(pc => pc.id === p.planId);
-          return (
-            <div key={idx} className={`bg-white rounded-2xl border p-5 shadow-sm ${p.isStarred ? 'border-amber-200 ring-2 ring-amber-50' : 'border-slate-200'}`}>
-               <div className="flex justify-end mb-2">
-                 {p.isStarred && <span className="bg-amber-50 text-amber-600 text-[8px] font-black uppercase px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1"><Star size={8} fill="currentColor" /> Special Requirement</span>}
-               </div>
-               <PlanTimeline plan={p} planConfig={planConfig} customer={customer} planIndex={idx} allPlansConfig={plans} />
+        {/* Active Plans Section */}
+        {activePlans.length > 0 && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <div className="h-px flex-1 bg-slate-200"></div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Current Active Plans</span>
+              <div className="h-px flex-1 bg-slate-200"></div>
             </div>
-          );
-        }) : (
+            {activePlans.map((p, idx) => {
+              const planConfig = plans.find(pc => pc.id === p.planId);
+              return (
+                <div key={`active-${idx}`} className={`bg-white rounded-2xl border p-5 shadow-sm ${p.isStarred ? 'border-amber-200 ring-2 ring-amber-50' : 'border-slate-200'}`}>
+                   <div className="flex justify-end mb-2">
+                     {p.isStarred && <span className="bg-amber-50 text-amber-600 text-[8px] font-black uppercase px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1"><Star size={8} fill="currentColor" /> Special Requirement</span>}
+                   </div>
+                   <PlanTimeline plan={p} planConfig={planConfig} customer={customer} planIndex={idx} allPlansConfig={plans} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Past Plans Section */}
+        {customer.pastPlans && customer.pastPlans.length > 0 && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <div className="h-px flex-1 bg-red-100"></div>
+              <span className="text-[10px] font-black text-red-400 uppercase tracking-widest">Past Subscriptions (History)</span>
+              <div className="h-px flex-1 bg-red-100"></div>
+            </div>
+            {customer.pastPlans.map((p, idx) => {
+              const planConfig = plans.find(pc => pc.id === p.planId);
+              return (
+                <div key={`past-${idx}`} className="bg-slate-50/50 rounded-2xl border border-slate-200 p-5 opacity-80 grayscale-[0.5]">
+                   <PlanTimeline plan={p} planConfig={planConfig} customer={customer} planIndex={-1} allPlansConfig={plans} isPast={true} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {activePlans.length === 0 && (!customer.pastPlans || customer.pastPlans.length === 0) && (
           <div className="text-center py-10 text-slate-400 italic">No detailed plan information available for this record.</div>
         )}
       </div>
@@ -559,13 +599,13 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
   );
 };
 
-const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }: { plan: SubscribedPlan, planConfig: any, customer: GlobalCustomer, planIndex: number, allPlansConfig: any[] }) => {
+const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, isPast }: { plan: SubscribedPlan, planConfig: any, customer: GlobalCustomer, planIndex: number, allPlansConfig: any[], isPast?: boolean }) => {
   const { currentUser } = useAuth();
   const [selectedDateToCount, setSelectedDateToCount] = useState<string | null>(null);
   const weekdays = planConfig?.weekdays || plan.weekdays || [1,2,3,4,5,6];
 
   const handleCountDate = async (dateStr: string) => {
-    if (!currentUser) return;
+    if (!currentUser || isPast) return;
     
     const updatedPauses = [...(plan.pauses || [])];
     const pauseIdx = updatedPauses.findIndex(p => dateStr >= p.start && dateStr <= p.end);
@@ -734,8 +774,8 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig }:
               return (
                 <div key={i} className="group relative">
                   <div 
-                    onClick={() => { if (pause) setSelectedDateToCount(dStr); }}
-                    className={`w-5 h-7 rounded-[4px] border ${color} shadow-sm transition-transform hover:scale-110 cursor-pointer`} 
+                    onClick={() => { if (pause && !isPast) setSelectedDateToCount(dStr); }}
+                    className={`w-5 h-7 rounded-[4px] border ${color} shadow-sm transition-transform ${!isPast ? 'hover:scale-110 cursor-pointer' : 'cursor-default'}`} 
                   />
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
                      <div className="bg-slate-900 text-white text-[8px] font-black py-1 px-2 rounded whitespace-nowrap shadow-xl">
@@ -786,7 +826,7 @@ const DAYS = [
   { label: 'Sat', value: 6 },
 ];
 
-const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit }: any) => {
+const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState<any>({
       branchId: branches[0]?.id || '', name: '', mobile: '', address: '', area: '', 
       deliveryBoyId: '', amountPaid: 0, deliveryCharges: 0, activePlans: [], 
@@ -794,7 +834,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
       ...initialData
    });
 
-   const [activePlans, setActivePlans] = useState<any[]>(initialData?.activePlans || []);
+   const [activePlans, setActivePlans] = useState<any[]>(isRenewal ? [] : (initialData?.activePlans || []));
    const [newPlanForm, setNewPlanForm] = useState({ 
      mealTime: 'Lunch', 
      planId: '', 
@@ -872,11 +912,20 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
         return left > max ? left : max;
       }, 0);
 
+      const pastPlans = isRenewal 
+        ? [...(initialData?.pastPlans || []), ...(initialData?.activePlans || [])]
+        : (initialData?.pastPlans || []);
+
       onSubmit({ 
-         ...formData, activePlans, planId: primary.planId, mealTime: activePlans.map(p => p.mealTime), 
+         ...formData, 
+         activePlans, 
+         pastPlans,
+         planId: primary.planId, 
+         mealTime: activePlans.map(p => p.mealTime), 
          startDate: primary.startDate, endDate: maxEnd, daysLeft: maxDaysLeft, isActive: true, planPrice: plansTotal, 
          pendingAmount, paymentStatus: pendingAmount > 0 ? 'Pending' : 'Paid',
-         renewalCount: initialData ? initialData.renewalCount : 0, routeOrder: initialData ? initialData.routeOrder : 999 
+         renewalCount: initialData ? (isRenewal ? (initialData.renewalCount || 0) + 1 : (initialData.renewalCount || 0)) : 0, 
+         routeOrder: initialData ? initialData.routeOrder : 999 
       });
    };
 
@@ -884,7 +933,9 @@ const CustomerModal = ({ plans, staff, branches, initialData, onClose, onSubmit 
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
          <div className="bg-white w-full max-w-2xl rounded-2xl p-6 shadow-2xl overflow-y-auto max-h-[95vh] relative text-left no-scrollbar">
             <div className="flex justify-between items-center mb-6 sticky top-0 bg-white z-10 border-b pb-4">
-               <h3 className="text-xl font-black text-slate-900">{initialData ? 'Edit Customer' : 'Add New Customer'}</h3>
+               <h3 className="text-xl font-black text-slate-900">
+                 {isRenewal ? 'Renew Subscription' : (initialData ? 'Edit Customer' : 'Add New Customer')}
+               </h3>
                <button onClick={onClose} className="p-2 text-slate-400 hover:text-red-500 transition-colors"><X size={24}/></button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-6">

@@ -49,6 +49,7 @@ export interface GlobalCustomer {
   
   // NEW: Multi-plan support
   activePlans: SubscribedPlan[];
+  pastPlans?: SubscribedPlan[];
   
   // Flattened for quick table access (primary plan)
   planId: string; 

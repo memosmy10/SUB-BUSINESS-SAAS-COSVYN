@@ -568,7 +568,7 @@ const LandingPage = () => {
           
           <div className="mt-12 text-center text-xs font-medium text-slate-400">
             <p>
-              © 2025 ScaleKitchen. All rights reserved. SaaS for Subscription Meal{' '}
+              © 2026 ScaleKitchen. All rights reserved. SaaS for Subscription Meal{' '}
               <Link to="/admin/login" className="hover:text-slate-600 transition-colors cursor-pointer">
                 Businesses
               </Link>

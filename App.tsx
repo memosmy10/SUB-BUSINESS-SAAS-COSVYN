@@ -210,7 +210,24 @@ const ProtectedRoute = () => {
   useEffect(() => {
     if (currentUser && currentUser.email !== ADMIN_EMAIL) {
       const unsubscribe = onSnapshot(doc(db, 'businesses', currentUser.uid), (docSnap) => {
-        if (docSnap.exists()) { setHasActivePlan(docSnap.data().planStatus === 'Active'); } 
+        if (docSnap.exists()) { 
+          const data = docSnap.data();
+          const isStatusActive = data.planStatus === 'Active';
+          const expiryDate = data.planExpiryDate;
+          const today = new Date().toISOString().split('T')[0];
+          const daysLeft = expiryDate ? getDaysDifference(today, expiryDate) : 100;
+          
+          const isActuallyActive = isStatusActive && daysLeft >= 0;
+          setHasActivePlan(isActuallyActive);
+
+          // Auto-update status in DB if expired
+          if (isStatusActive && daysLeft < 0) {
+            updateDoc(doc(db, 'businesses', currentUser.uid), { 
+              planStatus: 'Expired',
+              updatedAt: new Date().toISOString()
+            }).catch(err => console.error("Auto-update plan status failed:", err));
+          }
+        } 
         else { setHasActivePlan(false); }
       }, (err) => {
         console.error("Protected Route Error:", err);

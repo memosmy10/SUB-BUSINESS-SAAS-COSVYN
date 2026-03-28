@@ -68,7 +68,7 @@ const LandingPage = () => {
                 to="/signup" 
                 className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-2.5 rounded-full font-bold text-sm transition-all transform hover:scale-105 shadow-lg hover:shadow-xl"
               >
-                Start Free Demo
+                Start Free Trial
               </Link>
             </nav>
 
@@ -89,7 +89,7 @@ const LandingPage = () => {
                 </button>
               ))}
               <Link to="/login" className="text-left font-bold text-slate-900 py-2 flex items-center gap-2"><LogIn size={18}/> Log In</Link>
-              <Link to="/signup" className="bg-gradient-to-r from-primary-600 to-violet-600 text-white py-3 rounded-xl font-bold text-center shadow-lg">Start Free Demo</Link>
+              <Link to="/signup" className="bg-gradient-to-r from-primary-600 to-violet-600 text-white py-3 rounded-xl font-bold text-center shadow-lg">Start Free Trial</Link>
             </div>
           </div>
         )}
@@ -124,15 +124,15 @@ const LandingPage = () => {
                   to="/signup" 
                   className="group relative inline-flex justify-center items-center gap-2 bg-gradient-to-r from-primary-600 to-violet-600 text-white text-lg px-8 py-4 rounded-full font-bold transition-all transform hover:scale-[1.02] shadow-xl hover:shadow-primary-500/40"
                 >
-                  <span>Start Free Demo</span>
+                  <span>Start Free Trial</span>
                   <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </Link>
-                <button 
-                  onClick={() => scrollToSection('features')}
+                <Link 
+                  to="/signup"
                   className="inline-flex justify-center items-center text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 text-lg px-8 py-4 font-bold rounded-full transition-all shadow-sm hover:shadow-md"
                 >
-                  View Live Demo Dashboard
-                </button>
+                  View Live Dashboard
+                </Link>
               </div>
             </div>
 
@@ -525,7 +525,7 @@ const LandingPage = () => {
                Ready to run your subscription meal business on autopilot?
              </h2>
              <p className="text-lg text-slate-300 mb-10 max-w-2xl mx-auto relative z-10">
-               Join the fastest growing meal prep brands using ScaleKitchen to save time and boost profits.
+               Start your 30 days free trial with access to all features and grow your business. Join the fastest growing meal prep brands using ScaleKitchen to save time and boost profits.
              </p>
              
              <div className="flex flex-col sm:flex-row gap-4 justify-center items-center relative z-10">
@@ -533,14 +533,8 @@ const LandingPage = () => {
                  to="/signup" 
                  className="bg-white text-slate-900 text-lg px-10 py-4 rounded-full font-bold transition-all transform hover:scale-105 shadow-xl hover:shadow-white/20"
                >
-                 Start Free Demo
+                 Start 30 Days Free Trial
                </Link>
-               <button 
-                 onClick={() => scrollToSection('analytics')} // Conceptually view demo
-                 className="text-white border border-white/20 hover:bg-white/10 text-lg px-8 py-4 rounded-full font-bold transition-colors"
-               >
-                 View Admin Analytics Demo
-               </button>
              </div>
           </div>
         </div>

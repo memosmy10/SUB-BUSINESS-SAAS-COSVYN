@@ -14,22 +14,84 @@ const OnboardingPayment = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [activating, setActivating] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(false);
+  const [hasSetDefault, setHasSetDefault] = useState(false);
   
   // Use Global Pricing
   const { plans, offer, loading: pricingLoading } = useGlobalPricing();
   
   // Selection State (Default to Yearly or first available)
-  const [selectedPlanId, setSelectedPlanId] = useState<string>('Yearly');
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
+
+  // Check if user is new
+  useEffect(() => {
+    const checkUserStatus = async () => {
+      if (!currentUser) return;
+      try {
+        const docSnap = await getDoc(doc(db, 'businesses', currentUser.uid));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          // If they have no planName, it's "None", or it's "Pending", they are "new" for trial purposes
+          const isNew = !data.planName || data.planName === 'None' || data.planStatus === 'Pending';
+          setIsNewUser(isNew);
+        }
+      } catch (e) {
+        console.error("Error checking user status:", e);
+      }
+    };
+    checkUserStatus();
+  }, [currentUser]);
 
   // Ensure selection defaults correctly once plans load
   useEffect(() => {
-    if (!pricingLoading && plans.length > 0 && !plans.find(p => p.id === selectedPlanId)) {
-      setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0].id);
+    if (!pricingLoading && plans.length > 0 && !hasSetDefault) {
+      if (isNewUser) {
+        setSelectedPlanId('FreeTrial');
+      } else {
+        setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0].id);
+      }
+      setHasSetDefault(true);
     }
-  }, [pricingLoading, plans, selectedPlanId]);
+  }, [pricingLoading, plans, isNewUser, hasSetDefault]);
   
   // Check offer validity
   const isOfferActive = offer.isActive && new Date() < new Date(offer.endsAt);
+
+  const activateFreeTrial = async () => {
+    if (!currentUser) return;
+    setActivating(true);
+
+    try {
+      const now = new Date();
+      now.setMonth(now.getMonth() + 1); // 1 Month Trial
+      const expiryDate = now.toISOString().split('T')[0];
+
+      const docRef = doc(db, 'businesses', currentUser.uid);
+      await updateDoc(docRef, {
+        planName: 'Free Trial',
+        planStatus: 'Active',
+        planExpiryDate: expiryDate,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Add to billing history as "Trial"
+      await addItem(currentUser.uid, 'billing_history', {
+        amount: 0,
+        date: new Date().toISOString(),
+        planName: 'Free Trial',
+        paymentId: 'TRIAL_ACTIVATION',
+        expiryDate: expiryDate,
+        type: 'Trial',
+        status: 'Active'
+      });
+
+      navigate('/app/dashboard');
+    } catch (error) {
+      console.error("Trial Activation Failed:", error);
+      alert("Failed to activate free trial. Please try again.");
+      setActivating(false);
+    }
+  };
 
   const activateSubscription = async (paymentId: string, plan: any, amountPaid: number) => {
     if (!currentUser) return;
@@ -139,7 +201,70 @@ const OnboardingPayment = () => {
         </div>
 
         {/* Plan Preview Section */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch mb-12 px-2 md:px-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch mb-12 px-2 md:px-0">
+          {/* FREE TRIAL PLAN (ONLY FOR NEW USERS) */}
+          {isNewUser && (
+            <div 
+              onClick={() => setSelectedPlanId('FreeTrial')}
+              className={`
+                relative rounded-3xl p-8 cursor-pointer transition-all duration-300 flex flex-col
+                ${selectedPlanId === 'FreeTrial' 
+                  ? 'bg-white border-2 border-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.15)] ring-4 ring-emerald-500/10 scale-105 z-10' 
+                  : 'bg-white border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:-translate-y-1 opacity-70 hover:opacity-100'
+                }
+              `}
+            >
+              {selectedPlanId === 'FreeTrial' && (
+                <div className="absolute -top-3 -right-3 bg-emerald-600 text-white rounded-full p-1.5 shadow-lg shadow-emerald-600/40 animate-in zoom-in duration-300">
+                  <Check size={20} strokeWidth={3} />
+                </div>
+              )}
+
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap size={18} className="text-emerald-500" />
+                  <h3 className={`text-xl font-bold ${selectedPlanId === 'FreeTrial' ? 'text-slate-900' : 'text-slate-700'}`}>Free Trial</h3>
+                </div>
+                <p className="text-slate-500 text-sm leading-relaxed min-h-[40px]">Test all premium features for 30 days. No credit card required.</p>
+              </div>
+              
+              <div className="flex items-baseline gap-2 mb-8">
+                <span className={`text-4xl font-extrabold tracking-tight ${selectedPlanId === 'FreeTrial' ? 'text-emerald-600' : 'text-slate-700'}`}>
+                  ₹0
+                </span>
+                <span className="text-slate-400 text-sm font-medium">/ 30 days</span>
+              </div>
+
+              <div className="mt-auto">
+                <ul className="space-y-4 mb-8">
+                  {['Full Access', 'All Features Included', 'No Commitment', '30 Day Duration'].map((feat, i) => (
+                    <li key={i} className="flex items-start gap-3 text-sm text-slate-600">
+                      <div className={`mt-0.5 rounded-full p-0.5 ${selectedPlanId === 'FreeTrial' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Check size={12} strokeWidth={3} />
+                      </div>
+                      <span>{feat}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedPlanId('FreeTrial');
+                    activateFreeTrial();
+                  }}
+                  className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-300 ${
+                    selectedPlanId === 'FreeTrial' 
+                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-700' 
+                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                  }`}
+                >
+                  Start Free Trial
+                </button>
+              </div>
+            </div>
+          )}
+
           {plans.map((plan) => {
             const effectivePrice = calculateEffectivePrice(plan.price, offer);
             const isSelected = selectedPlanId === plan.id;
@@ -218,12 +343,12 @@ const OnboardingPayment = () => {
 
         <div className="max-w-md mx-auto text-center space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200">
           <button 
-            onClick={initiatePayment}
+            onClick={selectedPlanId === 'FreeTrial' ? activateFreeTrial : initiatePayment}
             className="group w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-2xl transition-all flex items-center justify-center gap-3 text-lg relative overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-            <Shield size={22} className="text-emerald-400" /> 
-            <span>Pay Securely with Razorpay</span>
+            {selectedPlanId === 'FreeTrial' ? <Zap size={22} className="text-emerald-400" /> : <Shield size={22} className="text-emerald-400" />}
+            <span>{selectedPlanId === 'FreeTrial' ? 'Start Free Trial Now' : 'Pay Securely with Razorpay'}</span>
           </button>
           
           <div className="flex items-center justify-center gap-6 text-sm">

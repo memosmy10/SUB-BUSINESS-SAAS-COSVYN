@@ -261,6 +261,7 @@ const AppLayout = () => {
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
   const [planExpiryDate, setPlanExpiryDate] = useState<string | null>(null);
+  const [planName, setPlanName] = useState<string | null>(null);
   
   const { data: customers = [] } = useStreamCollection<any>('customers');
   const { data: plans = [] } = useStreamCollection<any>('plans');
@@ -288,6 +289,7 @@ const AppLayout = () => {
         if (docSnap.exists()) { 
           const d = docSnap.data(); 
           setPlanExpiryDate(d.planExpiryDate || null); 
+          setPlanName(d.planName || null);
         }
       });
       return () => unsubscribe();
@@ -296,6 +298,7 @@ const AppLayout = () => {
 
   const daysToExpiry = planExpiryDate ? getDaysDifference(new Date().toISOString().split('T')[0], planExpiryDate) : 100;
   const showExpiryWarning = daysToExpiry <= 10 && daysToExpiry >= 0;
+  const isFreeTrial = planName === 'Free Trial';
 
   const handleLogout = async () => { await logout(); navigate('/'); };
 
@@ -305,10 +308,12 @@ const AppLayout = () => {
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {showExpiryWarning && (
-          <div className="bg-red-600 text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4 animate-in slide-in-from-top-full duration-500">
-            <AlertTriangle size={18} />
-            <span>SaaS Expiry in {daysToExpiry} days! Renew now.</span>
-            <button onClick={() => navigate('/app/profile')} className="bg-white text-red-600 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase transition-transform active:scale-95">Renew Now</button>
+          <div className={`${isFreeTrial ? 'bg-emerald-600' : 'bg-red-600'} text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4 animate-in slide-in-from-top-full duration-500`}>
+            {isFreeTrial ? <Zap size={18} /> : <AlertTriangle size={18} />}
+            <span>{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days! Subscribe to continue.` : `SaaS Expiry in ${daysToExpiry} days! Renew now.`}</span>
+            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase transition-transform active:scale-95">
+              {isFreeTrial ? 'Subscribe Now' : 'Renew Now'}
+            </button>
           </div>
         )}
         

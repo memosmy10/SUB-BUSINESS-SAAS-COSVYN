@@ -37,7 +37,7 @@ export const handleRazorpayPayment = async ({
   }
 
   // REPLACE THIS WITH YOUR ACTUAL KEY ID
-  const RAZORPAY_KEY_ID = 'rzp_live_RmI0NXqEhYfbfl'; 
+  const RAZORPAY_KEY_ID = 'rzp_live_SXPy6QPmqMyjkM'; 
 
   const options = {
     key: RAZORPAY_KEY_ID, 

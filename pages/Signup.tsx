@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Zap, CheckCircle, ArrowRight, Loader2, MapPin, Building, User as UserIcon, Mail, Lock, Phone, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Zap, CheckCircle, ArrowRight, Loader2, Building, Mail, Lock, Phone, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
-import { INDIA_STATES } from '../services/store';
 
 const Signup = () => {
   const { signupWithEmail } = useAuth();
@@ -22,11 +21,8 @@ const Signup = () => {
 
   const [formData, setFormData] = useState({
     businessName: '',
-    ownerName: '',
-    mobile: '',
-    state: '',
-    city: '',
     email: '',
+    mobile: '',
     password: '',
     confirmPassword: ''
   });
@@ -57,16 +53,16 @@ const Signup = () => {
 
       // 2. Create Inactive Profile in Firestore
       await setDoc(doc(db, 'businesses', user.uid), {
-        ownerName: formData.ownerName,
+        ownerName: '', // To be filled later in profile
         email: formData.email.trim(),
         mobile: formData.mobile,
         businessName: formData.businessName,
-        state: formData.state,
-        city: formData.city,
+        state: '',
+        city: '',
         country: 'India',
         description: '',
         category: 'Tiffin Service',
-        isProfileComplete: true,
+        isProfileComplete: false, // Mark as incomplete since we removed fields
         planName: 'None',
         planExpiryDate: new Date().toISOString().split('T')[0],
         planStatus: 'Inactive',
@@ -135,7 +131,7 @@ const Signup = () => {
         <div className="w-full max-w-md space-y-8 mt-8 lg:mt-0">
           <div className="text-center lg:text-left">
             <h2 className="text-3xl font-bold text-slate-900">Create your account</h2>
-            <p className="text-slate-500 mt-2">Start managing your business effectively.</p>
+            <p className="text-primary-600 font-bold mt-2 text-lg">Start your free trial and manage your business effectively.</p>
           </div>
 
           {hasPendingSubscription && (
@@ -162,15 +158,14 @@ const Signup = () => {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-4">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Business Details</h3>
               <div className="grid grid-cols-1 gap-4">
                 <div className="relative">
                   <Building className="absolute left-3 top-3.5 text-slate-400" size={18} />
                   <input required name="businessName" type="text" placeholder="Business Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
                 <div className="relative">
-                  <UserIcon className="absolute left-3 top-3.5 text-slate-400" size={18} />
-                  <input required name="ownerName" type="text" placeholder="Owner Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
+                  <Mail className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="email" type="email" placeholder="Email Address" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
                 <div className="relative">
                   <Phone className="absolute left-3 top-3.5 text-slate-400" size={18} />
@@ -178,33 +173,13 @@ const Signup = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="relative">
-                    <select required name="state" className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none appearance-none text-slate-900" onChange={handleChange} defaultValue="">
-                      <option value="" disabled>Select State</option>
-                      {INDIA_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <MapPin className="absolute right-3 top-3.5 text-slate-400 pointer-events-none" size={18} />
+                    <Lock className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                    <input required name="password" type="password" placeholder="Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                   </div>
                   <div className="relative">
-                    <input required name="city" type="text" placeholder="City" className="w-full p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
+                    <Lock className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                    <input required name="confirmPassword" type="password" placeholder="Confirm" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-2 border-t border-slate-100">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Login Credentials</h3>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3.5 text-slate-400" size={18} />
-                <input required name="email" type="email" placeholder="Email Address" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3.5 text-slate-400" size={18} />
-                  <input required name="password" type="password" placeholder="Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
-                </div>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3.5 text-slate-400" size={18} />
-                  <input required name="confirmPassword" type="password" placeholder="Confirm Password" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
                 </div>
               </div>
             </div>

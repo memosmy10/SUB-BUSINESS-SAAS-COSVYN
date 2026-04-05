@@ -77,9 +77,10 @@ const Login = () => {
         errorCode === 'auth/invalid-credential' || 
         errorCode === 'auth/user-not-found' || 
         errorCode === 'auth/wrong-password' ||
-        errorMessage.includes('invalid-credential')
+        errorMessage.includes('invalid-credential') ||
+        errorMessage.includes('user-not-found')
       ) {
-         setError("Incorrect email or password. Please check your credentials and try again.");
+         setError("You don't have an account. Please create an account on the signup page.");
       } else if (errorCode === 'auth/too-many-requests') {
          setError("Account temporarily locked due to many failed attempts. Try again later.");
       } else if (errorCode === 'auth/network-request-failed') {

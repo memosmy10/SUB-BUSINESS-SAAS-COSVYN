@@ -5,6 +5,10 @@ export interface GlobalBranch {
   name: string;
   city: string;
   state: string;
+  hubAddress?: string;
+  hubLocationLink?: string;
+  hubLat?: number;
+  hubLng?: number;
 }
 
 export interface GlobalPlan {

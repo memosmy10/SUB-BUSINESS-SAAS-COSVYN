@@ -205,6 +205,7 @@ const SubscriptionManager = () => {
 
 const ProtectedRoute = () => {
   const { currentUser, loading } = useAuth();
+  const [businessData, setBusinessData] = useState<any>(null);
   const [hasActivePlan, setHasActivePlan] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -212,6 +213,7 @@ const ProtectedRoute = () => {
       const unsubscribe = onSnapshot(doc(db, 'businesses', currentUser.uid), (docSnap) => {
         if (docSnap.exists()) { 
           const data = docSnap.data();
+          setBusinessData(data);
           const isStatusActive = data.planStatus === 'Active';
           const expiryDate = data.planExpiryDate;
           const today = new Date().toISOString().split('T')[0];
@@ -228,9 +230,13 @@ const ProtectedRoute = () => {
             }).catch(err => console.error("Auto-update plan status failed:", err));
           }
         } 
-        else { setHasActivePlan(false); }
+        else { 
+          setBusinessData(null);
+          setHasActivePlan(false); 
+        }
       }, (err) => {
         console.error("Protected Route Error:", err);
+        setBusinessData(null);
         setHasActivePlan(false);
       });
       return () => unsubscribe();
@@ -245,7 +251,7 @@ const ProtectedRoute = () => {
   if (!currentUser) return <Navigate to="/login" replace />;
   if (hasActivePlan === false) return <Navigate to="/onboarding" replace />;
   
-  return <AppLayout />;
+  return <AppLayout businessData={businessData} />;
 };
 
 const AdminRoute = () => {
@@ -255,13 +261,14 @@ const AdminRoute = () => {
   return <Navigate to="/admin/login" replace />;
 };
 
-const AppLayout = () => {
+const AppLayout = ({ businessData }: { businessData?: any }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
-  const [planExpiryDate, setPlanExpiryDate] = useState<string | null>(null);
-  const [planName, setPlanName] = useState<string | null>(null);
+  
+  const planExpiryDate = businessData?.planExpiryDate || null;
+  const planName = businessData?.planName || null;
   
   const { data: customers = [] } = useStreamCollection<any>('customers');
   const { data: plans = [] } = useStreamCollection<any>('plans');
@@ -283,19 +290,6 @@ const AppLayout = () => {
       .sort((a: any, b: any) => a.realDaysLeft - b.realDaysLeft);
   }, [customers, plans]);
 
-  useEffect(() => {
-    if (currentUser) {
-      const unsubscribe = onSnapshot(doc(db, 'businesses', currentUser.uid), (docSnap) => {
-        if (docSnap.exists()) { 
-          const d = docSnap.data(); 
-          setPlanExpiryDate(d.planExpiryDate || null); 
-          setPlanName(d.planName || null);
-        }
-      });
-      return () => unsubscribe();
-    }
-  }, [currentUser]);
-
   const daysToExpiry = planExpiryDate ? getDaysDifference(new Date().toISOString().split('T')[0], planExpiryDate) : 100;
   const showExpiryWarning = daysToExpiry <= 10 && daysToExpiry >= 0;
   const isFreeTrial = planName === 'Free Trial';
@@ -303,84 +297,105 @@ const AppLayout = () => {
   const handleLogout = async () => { await logout(); navigate('/'); };
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-slate-50/60 relative overflow-hidden font-sans">
+      {/* Ambient Glassmorphic Glow Elements */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <div className="absolute -top-28 -right-28 w-96 h-96 bg-primary-200/25 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 -left-28 w-96 h-96 bg-violet-200/20 rounded-full blur-3xl" />
+        <div className="absolute -bottom-28 right-1/4 w-[450px] h-[450px] bg-sky-200/20 rounded-full blur-3xl" />
+      </div>
+
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         {showExpiryWarning && (
-          <div className={`${isFreeTrial ? 'bg-emerald-600' : 'bg-red-600'} text-white text-sm font-bold py-3 px-4 z-40 flex items-center justify-center gap-4 animate-in slide-in-from-top-full duration-500`}>
-            {isFreeTrial ? <Zap size={18} /> : <AlertTriangle size={18} />}
-            <span>{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days! Subscribe to continue.` : `SaaS Expiry in ${daysToExpiry} days! Renew now.`}</span>
-            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-4 py-1.5 rounded-full text-xs font-extrabold uppercase transition-transform active:scale-95">
-              {isFreeTrial ? 'Subscribe Now' : 'Renew Now'}
+          <div className={`${isFreeTrial ? 'bg-emerald-600/95' : 'bg-red-600/95'} backdrop-blur-md text-white text-sm font-semibold py-2.5 px-4 z-40 flex items-center justify-center gap-3 shadow-sm animate-in slide-in-from-top-full duration-500`}>
+            {isFreeTrial ? <Zap size={16} /> : <AlertTriangle size={16} />}
+            <span>{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days. Subscribe to keep full access.` : `Your subscription expires in ${daysToExpiry} days. Renew now to avoid interruption.`}</span>
+            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-3.5 py-1 rounded-full text-xs font-bold transition-transform active:scale-95 shadow-xs">
+              {isFreeTrial ? 'Subscribe Now' : 'Renew Plan'}
             </button>
           </div>
         )}
         
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 z-30 shrink-0">
-           <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-slate-600 hover:bg-slate-50 rounded-xl transition-all">
-             <Menu size={24} />
+        <header className="h-16 bg-white/75 backdrop-blur-xl border-b border-white/80 shadow-xs flex items-center justify-between px-4 md:px-8 z-30 shrink-0">
+           <button 
+             onClick={() => setIsSidebarOpen(true)} 
+             className="p-2 text-slate-600 hover:text-slate-900 hover:bg-white/90 rounded-xl border border-transparent hover:border-slate-200/60 transition-all shadow-xs"
+             aria-label="Open navigation menu"
+           >
+             <Menu size={20} />
            </button>
            
-           <div className="flex items-center gap-2 md:gap-4 ml-auto">
+           <div className="flex items-center gap-3 md:gap-4 ml-auto">
               <div className="relative">
-                <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 text-slate-500 hover:text-primary-600 relative transition-colors">
-                   <Bell size={20} />
-                   {expiringCustomers.length > 0 && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white" />}
+                <button 
+                  onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} 
+                  className="p-2.5 text-slate-600 hover:text-primary-600 hover:bg-white/80 rounded-xl border border-transparent hover:border-slate-200/60 relative transition-all"
+                  aria-label="View notifications"
+                >
+                   <Bell size={18} />
+                   {expiringCustomers.length > 0 && (
+                     <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white ring-1 ring-red-400" />
+                   )}
                 </button>
                 {isNotificationsOpen && (
                    <>
                     <div className="fixed inset-0 z-30" onClick={() => setIsNotificationsOpen(false)} />
-                    <div className="absolute right-0 top-full mt-3 w-80 sm:w-96 bg-white border border-slate-100 rounded-[2rem] shadow-2xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                      <div className="p-6 border-b border-slate-50 flex justify-between items-center bg-white">
-                        <h4 className="font-black text-slate-900 text-lg uppercase tracking-tight">Customer Expiries</h4>
-                        <span className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full font-black">{expiringCustomers.length}</span>
+                    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white/95 backdrop-blur-2xl border border-slate-200/80 rounded-2xl shadow-glass-lg z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-sm font-display">Expiring Subscriptions</h4>
+                          <p className="text-xs text-slate-500">Upcoming renewals needed</p>
+                        </div>
+                        <span className="text-xs bg-red-50 text-red-600 border border-red-200/60 px-2.5 py-0.5 rounded-full font-semibold">{expiringCustomers.length} due</span>
                       </div>
-                      <div className="max-h-[550px] overflow-y-auto no-scrollbar">
+                      <div className="max-h-[480px] overflow-y-auto no-scrollbar divide-y divide-slate-100">
                         {expiringCustomers.length === 0 ? (
-                          <div className="p-16 text-center text-slate-300 flex flex-col items-center">
-                            <CheckCircle size={40} className="mb-3 opacity-20" />
-                            <p className="text-xs font-black uppercase tracking-widest">No pending expiries</p>
+                          <div className="p-12 text-center text-slate-400 flex flex-col items-center">
+                            <CheckCircle size={36} className="mb-2 text-emerald-500/60" />
+                            <p className="text-xs font-semibold text-slate-600">All subscriptions are up to date</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5">No renewals due in the next 10 days</p>
                           </div>
                         ) : expiringCustomers.map((cust: any) => {
-                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'N/A';
-                          const whatsappMsg = `Hello ${cust.name}, your subscription plan (${planName}) expires on ${cust.endDate}. Please renew!`;
+                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Plan';
+                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${planName}) is scheduled to conclude on ${cust.endDate}. We'd love to continue serving you. Please let us know if you'd like to renew!`;
                           const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
                           
                           return (
-                            <div key={cust.id} className="p-5 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
-                              <div className="flex justify-between items-start">
-                                <div className="space-y-0.5">
-                                  <h5 className="font-black text-slate-900 text-base">{cust.name}</h5>
-                                  <p className="text-slate-400 font-mono text-sm tracking-tight">{cust.mobile}</p>
+                            <div key={cust.id} className="p-4 hover:bg-slate-50/70 transition-colors">
+                              <div className="flex justify-between items-start gap-2">
+                                <div className="min-w-0">
+                                  <h5 className="font-semibold text-slate-900 text-sm truncate">{cust.name}</h5>
+                                  <p className="text-slate-400 font-mono text-xs mt-0.5">{cust.mobile}</p>
                                 </div>
-                                <div className="flex flex-col items-end gap-3">
-                                  <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-md ${
+                                <div className="flex flex-col items-end gap-2 shrink-0">
+                                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
                                     cust.realDaysLeft <= 0 
-                                      ? 'bg-slate-100 text-slate-500 border border-slate-200' 
-                                      : 'bg-rose-50 text-rose-600 border border-rose-100'
+                                      ? 'bg-slate-100 text-slate-600 border border-slate-200' 
+                                      : 'bg-rose-50 text-rose-600 border border-rose-200/70'
                                   }`}>
-                                    {cust.realDaysLeft <= 0 ? 'EXPIRED' : `${cust.realDaysLeft} DAYS LEFT`}
+                                    {cust.realDaysLeft <= 0 ? 'Expired' : `${cust.realDaysLeft} days left`}
                                   </span>
-                                  <div className="flex gap-2">
-                                    <a href={whatsappLink} target="_blank" rel="noreferrer" className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100/50 hover:bg-emerald-100 transition-colors">
-                                      <MessageSquare size={18} />
+                                  <div className="flex gap-1.5">
+                                    <a href={whatsappLink} target="_blank" rel="noreferrer" title="Chat on WhatsApp" className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center border border-emerald-200/60 hover:bg-emerald-100 transition-colors">
+                                      <MessageSquare size={14} />
                                     </a>
-                                    <a href={`tel:${cust.mobile}`} className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center border border-blue-100/50 hover:bg-blue-100 transition-colors">
-                                      <Phone size={18} />
+                                    <a href={`tel:${cust.mobile}`} title="Call customer" className="w-8 h-8 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center border border-blue-200/60 hover:bg-blue-100 transition-colors">
+                                      <Phone size={14} />
                                     </a>
                                   </div>
                                 </div>
                               </div>
-                              <div className="mt-5 flex items-center justify-between">
-                                <span className="text-[10px] font-black text-slate-500 bg-slate-50 border border-slate-100 px-3 py-1 rounded-lg uppercase">
+                              <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-100/60">
+                                <span className="text-xs font-medium text-slate-600 bg-slate-100/70 px-2.5 py-0.5 rounded-md">
                                   {planName}
                                 </span>
                                 <button 
                                   onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} 
-                                  className="text-blue-600 font-black text-[11px] uppercase tracking-widest flex items-center gap-1.5 hover:text-blue-800 transition-colors"
+                                  className="text-primary-600 hover:text-primary-700 font-semibold text-xs flex items-center gap-1 transition-colors"
                                 >
-                                  RENEW <ArrowRight size={14} strokeWidth={4} />
+                                  Renew Plan <ArrowRight size={13} />
                                 </button>
                               </div>
                             </div>
@@ -388,17 +403,22 @@ const AppLayout = () => {
                         })}
                       </div>
                     </div>
-                  </>
+                   </>
                 )}
               </div>
-              <button onClick={() => navigate('/app/profile')} className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-100 hover:border-slate-300 transition-all hover:bg-slate-50">
-                <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold text-xs">{currentUser?.displayName?.charAt(0) || 'U'}</div>
-                <span className="hidden sm:block text-xs font-bold text-slate-700">{currentUser?.displayName || 'Owner'}</span>
+              <button 
+                onClick={() => navigate('/app/profile')} 
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur-md border border-slate-200/80 hover:border-primary-400/60 shadow-xs transition-all hover:bg-white"
+              >
+                <div className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center font-bold text-xs shadow-xs">
+                  {currentUser?.displayName?.charAt(0) || 'U'}
+                </div>
+                <span className="hidden sm:block text-xs font-semibold text-slate-700">{currentUser?.displayName || 'My Kitchen'}</span>
               </button>
            </div>
         </header>
         
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50/30">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             <ErrorBoundary>
               <Outlet />

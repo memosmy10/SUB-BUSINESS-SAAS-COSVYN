@@ -8,7 +8,14 @@ import { useStreamCollection, addItem, deleteItem, updateItem } from '../service
 import { INDIA_STATES } from '../services/store';
 
 // --- Types ---
-interface Branch { id: string; name: string; city: string; state: string; }
+interface Branch { 
+  id: string; 
+  name: string; 
+  city: string; 
+  state: string; 
+  hubAddress?: string;
+  hubLocationLink?: string;
+}
 interface Plan { id: string; branchId: string; name: string; description: string; price: number; category: string; numberOfDeliveryDays: number; weekdays: number[]; deliveryTypeLabel: string; }
 interface DeliveryBoy { id: string; branchId: string; name: string; mobile: string; dateOfJoining: string; salary: number; }
 
@@ -91,7 +98,9 @@ const Settings = () => {
     const [formData, setFormData] = useState({ 
       name: initialData?.name || '', 
       city: initialData?.city || '',
-      state: initialData?.state || '' 
+      state: initialData?.state || '',
+      hubAddress: initialData?.hubAddress || '',
+      hubLocationLink: initialData?.hubLocationLink || ''
     });
     
     const handleSubmit = (e: React.FormEvent) => {
@@ -100,58 +109,94 @@ const Settings = () => {
       handleSaveBranch({ 
         name: formData.name, 
         city: formData.city, 
-        state: formData.state 
+        state: formData.state,
+        hubAddress: formData.hubAddress,
+        hubLocationLink: formData.hubLocationLink
       });
     };
     
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-          <div className="flex justify-between mb-4 items-center">
-            <h3 className="font-bold text-lg text-slate-900">{initialData ? 'Edit Branch' : 'Add Branch'}</h3>
-            <button onClick={onClose}><X size={20} className="text-slate-500 hover:text-slate-700"/></button>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-in fade-in">
+        <div className="glass-card bg-white/95 rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-7 border border-white/80">
+          <div className="flex justify-between mb-5 items-center">
+            <div>
+              <h3 className="font-bold font-display text-lg text-slate-900">{initialData ? 'Edit Kitchen Branch' : 'Add Kitchen Branch'}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Physical dispatch hub and service geography</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
           </div>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Branch Name</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Branch Name</label>
               <input 
                 required autoFocus
-                placeholder="e.g. Main Kitchen" 
-                className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" 
+                placeholder="e.g. Bandra Cloud Kitchen" 
+                className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
                 value={formData.name}
                 onChange={e => setFormData({...formData, name: e.target.value})} 
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">City</label>
-              <input 
-                required 
-                placeholder="e.g. Mumbai" 
-                className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" 
-                value={formData.city}
-                onChange={e => setFormData({...formData, city: e.target.value})} 
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">City</label>
+                <input 
+                  required 
+                  placeholder="e.g. Mumbai" 
+                  className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
+                  value={formData.city}
+                  onChange={e => setFormData({...formData, city: e.target.value})} 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">State</label>
+                <select 
+                  required
+                  className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium"
+                  value={formData.state}
+                  onChange={e => setFormData({...formData, state: e.target.value})}
+                >
+                  <option value="">Select State</option>
+                  {INDIA_STATES.map((state) => (
+                    <option key={state} value={state}>{state}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-primary-700 mb-1">
+                  Kitchen Hub Address (For Route Optimization)
+                </label>
+                <input 
+                  placeholder="e.g. Shop 4, Food Court, Andheri West" 
+                  className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
+                  value={formData.hubAddress}
+                  onChange={e => setFormData({...formData, hubAddress: e.target.value})} 
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Used as starting & return point for delivery boy shortest paths.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-primary-700 mb-1">
+                  Google Maps URL or Lat, Lng
+                </label>
+                <input 
+                  placeholder="e.g. https://maps.app.goo.gl/... or 19.1136, 72.8697" 
+                  className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
+                  value={formData.hubLocationLink}
+                  onChange={e => setFormData({...formData, hubLocationLink: e.target.value})} 
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Paste Google Maps share link or GPS coordinates.</p>
+              </div>
             </div>
             
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">State</label>
-              <select 
-                required
-                className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 focus:ring-2 focus:ring-primary-500 outline-none"
-                value={formData.state}
-                onChange={e => setFormData({...formData, state: e.target.value})}
-              >
-                <option value="">Select State</option>
-                {INDIA_STATES.map((state) => (
-                  <option key={state} value={state}>{state}</option>
-                ))}
-              </select>
+            <div className="pt-2">
+              <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95">
+                {initialData ? 'Update Branch' : 'Create Branch'}
+              </button>
             </div>
-            
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold transition-colors">
-              {initialData ? 'Save Changes' : 'Create Branch'}
-            </button>
           </form>
         </div>
       </div>
@@ -184,63 +229,66 @@ const Settings = () => {
     };
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 overflow-y-auto max-h-[90vh]">
-          <div className="flex justify-between mb-4 items-center">
-            <h3 className="font-bold text-lg text-slate-900">{initialData ? 'Edit Plan' : 'Add Plan'}</h3>
-            <button onClick={onClose}><X size={20} className="text-slate-500 hover:text-slate-700"/></button>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-in fade-in">
+        <div className="glass-card bg-white/95 rounded-2xl shadow-2xl w-full max-w-lg p-6 sm:p-7 overflow-y-auto max-h-[90vh] border border-white/80">
+          <div className="flex justify-between mb-5 items-center">
+            <div>
+              <h3 className="font-bold font-display text-lg text-slate-900">{initialData ? 'Edit Subscription Plan' : 'Create Subscription Plan'}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Meal subscription offering and billing frequency</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
           </div>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Branch</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Kitchen Branch</label>
               <select 
-                className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 focus:ring-2 focus:ring-primary-500 outline-none" 
+                className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
                 value={formData.branchId}
                 onChange={e => setFormData({...formData, branchId: e.target.value})}
               >
                 {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Plan Name</label>
-                <input required placeholder="Plan Name" value={formData.name} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, name: e.target.value})} />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Plan Name</label>
+                <input required placeholder="e.g. Standard Tiffin Lunch" value={formData.name} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, name: e.target.value})} />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Price (₹)</label>
-                <input required type="number" placeholder="Price" value={formData.price} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, price: Number(e.target.value)})} />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Price (₹)</label>
+                <input required type="number" placeholder="e.g. 2500" value={formData.price} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, price: Number(e.target.value)})} />
               </div>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Description</label>
-              <textarea placeholder="Description" value={formData.description} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, description: e.target.value})} />
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Description (Optional)</label>
+              <textarea placeholder="e.g. 4 chapatis, 1 sabzi, dal, rice & salad" value={formData.description} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium resize-none h-18" onChange={e => setFormData({...formData, description: e.target.value})} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
                <div>
-                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Billing Cycle</label>
-                 <select className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 focus:ring-2 focus:ring-primary-500 outline-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
-                   <option value="Monthly">Monthly</option><option value="Weekly">Weekly</option>
+                 <label className="block text-xs font-semibold text-slate-700 mb-1">Billing Cycle</label>
+                 <select className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                   <option value="Monthly">Monthly</option>
+                   <option value="Weekly">Weekly</option>
                  </select>
                </div>
                <div>
-                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Total Delivery Days</label>
-                 <input type="number" placeholder="e.g. 26" value={formData.numberOfDeliveryDays} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, numberOfDeliveryDays: Number(e.target.value)})} />
+                 <label className="block text-xs font-semibold text-slate-700 mb-1">Total Delivery Days</label>
+                 <input type="number" placeholder="e.g. 26" value={formData.numberOfDeliveryDays} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, numberOfDeliveryDays: Number(e.target.value)})} />
                </div>
             </div>
             <div>
-              <label className="text-xs font-bold block mb-2 text-slate-700 uppercase">Weekly Schedule</label>
-              <div className="flex gap-2 flex-wrap">
+              <label className="text-xs font-semibold block mb-2 text-slate-700">Delivery Weekdays</label>
+              <div className="flex gap-1.5 flex-wrap">
                 {WEEKDAYS_MAP.map(d => (
-                  <button type="button" key={d.id} onClick={() => toggleDay(d.id)} className={`px-3 py-1.5 text-xs rounded border transition-colors font-medium ${formData.weekdays?.includes(d.id) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>{d.label}</button>
+                  <button type="button" key={d.id} onClick={() => toggleDay(d.id)} className={`px-3 py-1.5 text-xs rounded-xl border transition-all font-medium ${formData.weekdays?.includes(d.id) ? 'bg-primary-600 text-white border-primary-600 shadow-xs' : 'bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100'}`}>{d.label}</button>
                 ))}
               </div>
-              <p className="text-xs text-slate-400 mt-2">
-                This schedule determines how many calendar days the plan lasts based on the total delivery days above.
-              </p>
             </div>
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold transition-colors">
-              {initialData ? 'Save Plan Changes' : 'Create Plan'}
-            </button>
+            <div className="pt-2">
+              <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95">
+                {initialData ? 'Update Plan' : 'Save Plan'}
+              </button>
+            </div>
           </form>
         </div>
       </div>
@@ -259,17 +307,20 @@ const Settings = () => {
     };
     
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in zoom-in-95">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-          <div className="flex justify-between mb-4 items-center">
-            <h3 className="font-bold text-lg text-slate-900">{initialData ? 'Edit Staff' : 'Add Staff'}</h3>
-            <button onClick={onClose}><X size={20} className="text-slate-500 hover:text-slate-700"/></button>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-in fade-in">
+        <div className="glass-card bg-white/95 rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-7 border border-white/80">
+          <div className="flex justify-between mb-5 items-center">
+            <div>
+              <h3 className="font-bold font-display text-lg text-slate-900">{initialData ? 'Edit Delivery Partner' : 'Add Delivery Partner'}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Staff profile and contact for WhatsApp routing</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
           </div>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Branch</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Branch</label>
               <select 
-                className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 focus:ring-2 focus:ring-primary-500 outline-none" 
+                className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
                 value={formData.branchId}
                 onChange={e => setFormData({...formData, branchId: e.target.value})}
               >
@@ -277,119 +328,214 @@ const Settings = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label>
-              <input required placeholder="Name" value={formData.name} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, name: e.target.value})} />
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+              <input required placeholder="e.g. Ramesh Kumar" value={formData.name} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, name: e.target.value})} />
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Mobile Number</label>
-              <input required placeholder="Mobile" value={formData.mobile} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, mobile: e.target.value})} />
+              <label className="block text-xs font-semibold text-slate-700 mb-1">WhatsApp / Mobile Number</label>
+              <input required placeholder="e.g. 9876543210" value={formData.mobile} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium font-mono" onChange={e => setFormData({...formData, mobile: e.target.value})} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Joining Date</label>
-                <input required type="date" value={formData.dateOfJoining} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, dateOfJoining: e.target.value})} />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Joining Date</label>
+                <input required type="date" value={formData.dateOfJoining} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, dateOfJoining: e.target.value})} />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Salary (₹)</label>
-                <input required type="number" placeholder="Salary" value={formData.salary} className="w-full p-2 border border-slate-300 rounded bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 outline-none" onChange={e => setFormData({...formData, salary: Number(e.target.value)})} />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Salary (₹)</label>
+                <input required type="number" placeholder="Salary" value={formData.salary} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, salary: Number(e.target.value)})} />
               </div>
             </div>
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold transition-colors">
-              {initialData ? 'Save Staff' : 'Add Staff'}
-            </button>
+            <div className="pt-2">
+              <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95">
+                {initialData ? 'Update Partner' : 'Add Partner'}
+              </button>
+            </div>
           </form>
         </div>
       </div>
     );
   };
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
+  if (isLoading) {
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="animate-spin text-primary-600" size={36} />
+        <p className="text-xs font-medium text-slate-400">Loading configurations...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-8 pb-20">
-      <div><h1 className="text-2xl font-bold text-slate-900">Configurations</h1><p className="text-slate-500">Live Database Management.</p></div>
+    <div className="space-y-8 pb-20 pt-1 animate-in fade-in duration-300">
+      <div>
+        <h1 className="text-2xl sm:text-3xl font-bold font-display text-slate-900 tracking-tight">Business Configuration</h1>
+        <p className="text-xs sm:text-sm text-slate-500 font-normal mt-1">Configure kitchen hubs, meal plan structures, and delivery partners.</p>
+      </div>
 
       {/* BRANCHES */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-          <div className="flex items-center gap-3"><Store className="text-blue-600"/><h2 className="font-bold text-slate-900">Branches</h2></div>
-          <button onClick={() => handleOpenModal('branch')} className="flex gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium transition-colors"><Plus size={18}/> Add</button>
+      <div className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <Store size={18} />
+            </div>
+            <div>
+              <h2 className="font-bold font-display text-base text-slate-900">Kitchen Branches & Hubs</h2>
+              <p className="text-[11px] text-slate-400">Dispatch centers and starting points for delivery route calculation</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => handleOpenModal('branch')} 
+            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95"
+          >
+            <Plus size={15}/> Add Branch
+          </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500"><tr><th className="px-6 py-4">Name</th><th className="px-6 py-4">City</th><th className="px-6 py-4 text-right">Action</th></tr></thead>
-            <tbody className="text-slate-700">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+              <tr>
+                <th className="px-6 py-3">Branch Details</th>
+                <th className="px-6 py-3">City & State</th>
+                <th className="px-6 py-3">Hub Map / GPS Status</th>
+                <th className="px-6 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
               {branches.map(b => (
-                <tr key={b.id} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4 font-bold">{b.name}</td>
-                  <td className="px-6 py-4">{b.city}, {b.state}</td>
-                  <td className="px-6 py-4 text-right">
+                <tr key={b.id} className="hover:bg-slate-50/70 transition-colors">
+                  <td className="px-6 py-3.5">
+                    <div className="font-semibold text-slate-900">{b.name}</div>
+                    <div className="text-[11px] text-slate-400 truncate max-w-xs">{b.hubAddress || 'No address set'}</div>
+                  </td>
+                  <td className="px-6 py-3.5 font-medium">{b.city}, {b.state}</td>
+                  <td className="px-6 py-3.5">
+                    {b.hubLocationLink ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        GPS Linked
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                        No Maps Pin
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => handleOpenModal('branch', b)} className="text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-colors"><Edit2 size={18}/></button>
-                      <button onClick={() => handleDelete('branches', b.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors"><Trash2 size={18}/></button>
+                      <button onClick={() => handleOpenModal('branch', b)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors" title="Edit"><Edit2 size={14}/></button>
+                      <button onClick={() => handleDelete('branches', b.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors" title="Delete"><Trash2 size={14}/></button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {branches.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-slate-400">No branches yet.</td></tr>}
+              {branches.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-slate-400">No branches configured yet.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
       {/* PLANS */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-          <div className="flex items-center gap-3"><Calendar className="text-violet-600"/><h2 className="font-bold text-slate-900">Plans</h2></div>
-          <button onClick={() => handleOpenModal('plan')} disabled={branches.length === 0} className="flex gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50 transition-colors"><Plus size={18}/> Add</button>
+      <div className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
+              <Calendar size={18} />
+            </div>
+            <div>
+              <h2 className="font-bold font-display text-base text-slate-900">Subscription Plans</h2>
+              <p className="text-[11px] text-slate-400">Menu tier offerings, recurring pricing, and weekly schedules</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => handleOpenModal('plan')} 
+            disabled={branches.length === 0} 
+            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 transition-all shadow-sm active:scale-95"
+          >
+            <Plus size={15}/> Add Plan
+          </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500"><tr><th className="px-6 py-4">Name</th><th className="px-6 py-4">Branch</th><th className="px-6 py-4">Price</th><th className="px-6 py-4 text-right">Action</th></tr></thead>
-            <tbody className="text-slate-700">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+              <tr>
+                <th className="px-6 py-3">Plan Name & Schedule</th>
+                <th className="px-6 py-3">Branch</th>
+                <th className="px-6 py-3">Price</th>
+                <th className="px-6 py-3">Days</th>
+                <th className="px-6 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
               {plans.map(p => (
-                <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4"><div>{p.name}</div><div className="text-xs text-slate-400">{p.deliveryTypeLabel}</div></td>
-                  <td className="px-6 py-4">{branches.find(b => b.id === p.branchId)?.name}</td>
-                  <td className="px-6 py-4">₹{p.price}</td>
-                  <td className="px-6 py-4 text-right">
+                <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
+                  <td className="px-6 py-3.5">
+                    <div className="font-semibold text-slate-900">{p.name}</div>
+                    <div className="text-[11px] text-slate-400 font-medium">{p.deliveryTypeLabel} • {p.category}</div>
+                  </td>
+                  <td className="px-6 py-3.5 font-medium">{branches.find(b => b.id === p.branchId)?.name || 'General'}</td>
+                  <td className="px-6 py-3.5 font-bold text-slate-900">₹{p.price.toLocaleString()}</td>
+                  <td className="px-6 py-3.5 text-slate-500">{p.numberOfDeliveryDays} Days</td>
+                  <td className="px-6 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => handleOpenModal('plan', p)} className="text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-colors"><Edit2 size={18}/></button>
-                      <button onClick={() => handleDelete('plans', p.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors"><Trash2 size={18}/></button>
+                      <button onClick={() => handleOpenModal('plan', p)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors" title="Edit"><Edit2 size={14}/></button>
+                      <button onClick={() => handleDelete('plans', p.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors" title="Delete"><Trash2 size={14}/></button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {plans.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-slate-400">No plans yet.</td></tr>}
+              {plans.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-400">No meal plans configured yet.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
       {/* STAFF */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-          <div className="flex items-center gap-3"><Truck className="text-orange-600"/><h2 className="font-bold text-slate-900">Staff</h2></div>
-          <button onClick={() => handleOpenModal('delivery')} disabled={branches.length === 0} className="flex gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50 transition-colors"><Plus size={18}/> Add</button>
+      <div className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">
+              <Truck size={18} />
+            </div>
+            <div>
+              <h2 className="font-bold font-display text-base text-slate-900">Delivery Staff</h2>
+              <p className="text-[11px] text-slate-400">Riders and partners receiving WhatsApp route dispatches</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => handleOpenModal('delivery')} 
+            disabled={branches.length === 0} 
+            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 transition-all shadow-sm active:scale-95"
+          >
+            <Plus size={15}/> Add Partner
+          </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500"><tr><th className="px-6 py-4">Name</th><th className="px-6 py-4">Branch</th><th className="px-6 py-4">Salary</th><th className="px-6 py-4 text-right">Action</th></tr></thead>
-            <tbody className="text-slate-700">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+              <tr>
+                <th className="px-6 py-3">Partner Name</th>
+                <th className="px-6 py-3">Branch</th>
+                <th className="px-6 py-3">Contact</th>
+                <th className="px-6 py-3">Salary</th>
+                <th className="px-6 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
               {deliveryBoys.map(d => (
-                <tr key={d.id} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4"><div>{d.name}</div><div className="text-xs text-slate-400">{d.mobile}</div></td>
-                  <td className="px-6 py-4">{branches.find(b => b.id === d.branchId)?.name}</td>
-                  <td className="px-6 py-4">₹{d.salary}</td>
-                  <td className="px-6 py-4 text-right">
+                <tr key={d.id} className="hover:bg-slate-50/70 transition-colors">
+                  <td className="px-6 py-3.5 font-semibold text-slate-900">{d.name}</td>
+                  <td className="px-6 py-3.5 font-medium">{branches.find(b => b.id === d.branchId)?.name || 'General'}</td>
+                  <td className="px-6 py-3.5 font-mono text-slate-600">{d.mobile}</td>
+                  <td className="px-6 py-3.5 font-semibold text-slate-800">₹{d.salary?.toLocaleString() || 0}</td>
+                  <td className="px-6 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => handleOpenModal('delivery', d)} className="text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-colors"><Edit2 size={18}/></button>
-                      <button onClick={() => handleDelete('staff', d.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors"><Trash2 size={18}/></button>
+                      <button onClick={() => handleOpenModal('delivery', d)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors" title="Edit"><Edit2 size={14}/></button>
+                      <button onClick={() => handleDelete('staff', d.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors" title="Delete"><Trash2 size={14}/></button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {deliveryBoys.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-slate-400">No staff yet.</td></tr>}
+              {deliveryBoys.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-400">No delivery partners assigned yet.</td></tr>}
             </tbody>
           </table>
         </div>

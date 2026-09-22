@@ -3,25 +3,30 @@ import {
   Truck, Package, MapPin, ChevronDown, ChevronUp, 
   Loader2, ArrowUp, ArrowDown, Phone,
   Sunrise, Sun, Moon, Star, CheckCircle2, UserX, 
-  ArrowRight, MessageSquare, ClipboardList, ExternalLink, Users, LayoutGrid, ListChecks
+  ArrowRight, MessageSquare, ClipboardList, ExternalLink, Users, LayoutGrid, ListChecks,
+  Compass, Navigation, Sparkles, Zap
 } from 'lucide-react';
 import { useStreamCollection, updateItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
+import { writeBatch, doc } from 'firebase/firestore';
+import { db } from '../services/firebase';
+import { RouteOptimizerModal } from '../components/RouteOptimizerModal';
+import { optimizeRouteOrder, formatWhatsAppOptimizedRoute } from '../services/routeOptimizer';
 
 const StatCard = ({ title, value, icon: Icon, colorClass, subtext }: any) => (
-  <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-36">
+  <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between hover:shadow-glass-hover transition-all min-h-[110px]">
     <div className="flex justify-between items-start">
       <div className="space-y-1">
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
-        <h3 className="text-3xl font-black text-slate-900 tracking-tight">{value}</h3>
+        <p className="text-xs font-semibold text-slate-500">{title}</p>
+        <h3 className="text-2xl sm:text-3xl font-bold font-display tracking-tight text-slate-900 mt-0.5">{value}</h3>
       </div>
-      <div className={`p-2.5 rounded-xl ${colorClass} bg-opacity-10`}>
+      <div className={`p-2.5 rounded-xl ${colorClass} bg-opacity-10 backdrop-blur-xs`}>
         <Icon size={20} className={colorClass.replace('bg-', 'text-')} />
       </div>
     </div>
     <div className="mt-2">
-      <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight truncate">{subtext}</p>
+      <p className="text-xs text-slate-400 font-medium truncate">{subtext}</p>
     </div>
   </div>
 );
@@ -37,6 +42,7 @@ const Deliveries = () => {
   const [selectedBranch, setSelectedBranch] = useState('All');
   const [expandedBoyId, setExpandedBoyId] = useState<string | null>(null);
   const [expandedMatrixBoyId, setExpandedMatrixBoyId] = useState<string | null>(null);
+  const [optimizerModalData, setOptimizerModalData] = useState<{ boy: any; customers: any[]; branch: any } | null>(null);
 
   const isLoading = l1 || l2 || l3 || l4;
 
@@ -164,101 +170,147 @@ const Deliveries = () => {
     await updateItem(currentUser.uid, 'customers', customerId, { routeOrder: Math.max(0, newOrder) });
   };
 
+  const handleOpenOptimizer = (boy: any, boyCustomers: any[]) => {
+    // Find boy's branch or fallback to selected branch or first branch
+    const branch = branches.find((b: any) => b.id === boy.branchId) || 
+                   branches.find((b: any) => b.id === selectedBranch) || 
+                   branches[0] || { name: 'Main Kitchen Hub' };
+    
+    setOptimizerModalData({
+      boy,
+      customers: boyCustomers,
+      branch
+    });
+  };
+
+  const handleApplyOptimizedOrder = async (orderedCustomerIds: string[]) => {
+    if (!currentUser || orderedCustomerIds.length === 0) return;
+    const batch = writeBatch(db);
+    orderedCustomerIds.forEach((id, index) => {
+      const custRef = doc(db, 'businesses', currentUser.uid, 'customers', id);
+      batch.update(custRef, { routeOrder: index + 1 });
+    });
+    await batch.commit();
+  };
+
+  const handleUpdateHubLocation = async (branchId: string, hubAddress: string, hubLocationLink: string) => {
+    if (!currentUser || !branchId) return;
+    await updateItem(currentUser.uid, 'branches', branchId, {
+      hubAddress,
+      hubLocationLink
+    });
+  };
+
   const handleShareRoute = (boy: any, boyCustomers: any[]) => {
-    const body = boyCustomers
-      .sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999))
-      .map((c, i) => {
-        const sessionPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
-        const planSummary = sessionPlans.map(p => `• ${p.planName}${p.isStarred ? ' ⭐' : ''}`).join('\n');
-        let str = `${i + 1}. *${c.name}* (Total: ${sessionPlans.length} boxes)\n${planSummary}\n📍 ${c.address}${c.area ? `, ${c.area}` : ''}\n📞 ${c.mobile}`;
-        if (c.locationLink) str += `\n🗺️ Map: ${c.locationLink}`;
-        if (c.notes) str += `\n📝 Note: ${c.notes}`;
-        return str;
-      }).join('\n\n');
-    const whatsappMsg = `🚚 *${activeMealTab} Route - ${boy.name}*\n📅 Date: ${todayStr}\n\n${body}`;
+    const branch = branches.find((b: any) => b.id === boy.branchId) || 
+                   branches.find((b: any) => b.id === selectedBranch) || 
+                   branches[0] || { name: 'Main Kitchen Hub' };
+    
+    const hub = {
+      name: branch.name || 'Kitchen Hub',
+      address: branch.hubAddress || `${branch.name || 'Kitchen Hub'}, ${branch.city || ''}`,
+      locationLink: branch.hubLocationLink || ''
+    };
+
+    // Calculate shortest route metrics on the fly for WhatsApp
+    const routeResult = optimizeRouteOrder(hub, boyCustomers);
+    const whatsappMsg = formatWhatsAppOptimizedRoute(
+      activeMealTab,
+      todayStr,
+      boy,
+      routeResult
+    );
+
     window.open(`https://wa.me/${(boy.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
   };
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" size={40} /></div>;
+  if (isLoading) {
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="animate-spin text-primary-600" size={36} />
+        <p className="text-xs font-medium text-slate-400">Loading delivery schedules...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-10 pb-20 pt-2 animate-in fade-in duration-500">
+    <div className="space-y-8 pb-20 pt-1 animate-in fade-in duration-300">
       
       {/* 1. Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3 uppercase">Deliveries</h1>
-          <p className="text-slate-500 font-medium mt-1">Global logistics summary and route optimization.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold font-display text-slate-900 tracking-tight">Delivery Logistics & Routing</h1>
+          <p className="text-xs sm:text-sm text-slate-500 font-normal mt-1">Real-time dispatches, shortest round-trip route solver, and workload management.</p>
         </div>
-        <div className="w-full md:w-64 relative">
+        <div className="w-full md:w-60 relative">
           <select 
-            className="w-full p-3 bg-white border border-slate-200 rounded-2xl text-sm font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase cursor-pointer"
+            className="w-full py-2.5 pl-4 pr-10 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-glass outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all"
             value={selectedBranch}
             onChange={(e) => setSelectedBranch(e.target.value)}
           >
-            <option value="All">All Branches</option>
+            <option value="All">All Kitchen Branches</option>
             {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
-          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+          <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={15} />
         </div>
       </div>
 
       {/* 2. GLOBAL KITCHEN LOAD (TODAY) */}
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex items-center gap-2 px-1">
-          <LayoutGrid size={18} className="text-primary-600" />
-          <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Global Kitchen Load (Today)</h2>
+          <LayoutGrid size={16} className="text-primary-600" />
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Today's Kitchen Production Load</h2>
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <StatCard title="Total Boxes Today" value={globalDailySummary.GrandTotal} icon={Package} colorClass="bg-slate-900" subtext="All meal sessions" />
-          <StatCard title="Breakfast Total" value={globalDailySummary.Breakfast} icon={Sunrise} colorClass="bg-orange-500" subtext="Morning session" />
-          <StatCard title="Lunch Total" value={globalDailySummary.Lunch} icon={Sun} colorClass="bg-blue-600" subtext="Afternoon session" />
-          <StatCard title="Dinner Total" value={globalDailySummary.Dinner} icon={Moon} colorClass="bg-purple-600" subtext="Night session" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <StatCard title="Total Meal Boxes" value={globalDailySummary.GrandTotal} icon={Package} colorClass="bg-slate-900" subtext="Combined daily total" />
+          <StatCard title="Breakfast Boxes" value={globalDailySummary.Breakfast} icon={Sunrise} colorClass="bg-orange-500" subtext="Morning slot" />
+          <StatCard title="Lunch Boxes" value={globalDailySummary.Lunch} icon={Sun} colorClass="bg-blue-600" subtext="Afternoon slot" />
+          <StatCard title="Dinner Boxes" value={globalDailySummary.Dinner} icon={Moon} colorClass="bg-purple-600" subtext="Evening slot" />
         </div>
       </div>
 
       {/* 3. DELIVERY BOY WORKLOAD MATRIX */}
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex items-center gap-2 px-1">
-          <ListChecks size={18} className="text-primary-600" />
-          <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Delivery Boy Workload Matrix</h2>
+          <ListChecks size={16} className="text-primary-600" />
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Partner Workload Distribution</h2>
         </div>
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+        <div className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden">
           <div className="overflow-x-auto no-scrollbar">
             <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead className="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">
+              <thead className="bg-slate-50/70 backdrop-blur-sm text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200/70">
                 <tr>
-                  <th className="p-5 pl-8">Delivery Boy Name</th>
-                  <th className="p-5 text-center text-orange-600 bg-orange-50/30">Breakfast</th>
-                  <th className="p-5 text-center text-blue-600 bg-blue-50/30">Lunch</th>
-                  <th className="p-5 text-center text-purple-600 bg-purple-50/30">Dinner</th>
-                  <th className="p-5 text-right pr-8">Daily Total</th>
+                  <th className="py-3.5 px-6">Delivery Partner</th>
+                  <th className="py-3.5 px-4 text-center text-orange-700 bg-orange-50/30">Breakfast</th>
+                  <th className="py-3.5 px-4 text-center text-blue-700 bg-blue-50/30">Lunch</th>
+                  <th className="py-3.5 px-4 text-center text-purple-700 bg-purple-50/30">Dinner</th>
+                  <th className="py-3.5 px-6 text-right">Daily Total</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 text-xs">
                 {deliveryBoyMatrix.map(boy => (
                   <React.Fragment key={boy.id}>
                     <tr 
-                      className={`hover:bg-slate-50/50 transition-colors group cursor-pointer ${expandedMatrixBoyId === boy.id ? 'bg-slate-50' : ''}`}
+                      className={`hover:bg-slate-50/70 transition-colors group cursor-pointer ${expandedMatrixBoyId === boy.id ? 'bg-slate-50/90' : ''}`}
                       onClick={() => setExpandedMatrixBoyId(expandedMatrixBoyId === boy.id ? null : boy.id)}
                     >
-                      <td className="p-5 pl-8">
+                      <td className="py-3.5 px-6">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${expandedMatrixBoyId === boy.id ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-primary-600 group-hover:text-white'}`}>
-                            <Truck size={14} />
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${expandedMatrixBoyId === boy.id ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-primary-600 group-hover:text-white'}`}>
+                            <Truck size={15} />
                           </div>
                           <div className="flex flex-col">
-                            <span className="font-black text-slate-900 text-xs uppercase tracking-tight">{boy.name}</span>
-                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Click to expand details</span>
+                            <span className="font-semibold text-slate-900 text-sm">{boy.name}</span>
+                            <span className="text-[10px] text-slate-400">Click to view meal plan breakdown</span>
                           </div>
                         </div>
                       </td>
-                      <td className="p-5 text-center font-black text-slate-700 bg-orange-50/10">{boy.Breakfast}</td>
-                      <td className="p-5 text-center font-black text-slate-700 bg-blue-50/10">{boy.Lunch}</td>
-                      <td className="p-5 text-center font-black text-slate-700 bg-purple-50/10">{boy.Dinner}</td>
-                      <td className="p-5 text-right pr-8">
+                      <td className="py-3.5 px-4 text-center font-bold text-slate-700 bg-orange-50/10">{boy.Breakfast}</td>
+                      <td className="py-3.5 px-4 text-center font-bold text-slate-700 bg-blue-50/10">{boy.Lunch}</td>
+                      <td className="py-3.5 px-4 text-center font-bold text-slate-700 bg-purple-50/10">{boy.Dinner}</td>
+                      <td className="py-3.5 px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <span className="inline-block bg-slate-900 text-white px-3 py-1 rounded-full text-xs font-black min-w-[40px] text-center shadow-lg">
+                          <span className="inline-block bg-slate-900 text-white px-2.5 py-0.5 rounded-full text-xs font-bold min-w-[32px] text-center shadow-xs">
                             {boy.Total}
                           </span>
                           {expandedMatrixBoyId === boy.id ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
@@ -266,55 +318,55 @@ const Deliveries = () => {
                       </td>
                     </tr>
                     {expandedMatrixBoyId === boy.id && (
-                      <tr className="bg-slate-50/30">
-                        <td colSpan={5} className="p-6 pl-12">
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-top-1 duration-300">
+                      <tr className="bg-slate-50/40">
+                        <td colSpan={5} className="p-5 pl-12">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 animate-in slide-in-from-top-1 duration-200">
                             {/* Breakfast Details */}
-                            <div className="space-y-3">
-                              <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest flex items-center gap-1.5 border-b border-orange-100 pb-2">
-                                <Sunrise size={12} /> Breakfast Breakdown
+                            <div className="space-y-2.5">
+                              <h4 className="text-xs font-semibold text-orange-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-orange-100 pb-1.5">
+                                <Sunrise size={13} /> Breakfast ({boy.Breakfast})
                               </h4>
-                              <div className="space-y-2">
+                              <div className="space-y-1.5">
                                 {Object.values(boy.breakdown.Breakfast).length > 0 ? Object.values(boy.breakdown.Breakfast).map((p: any, i) => (
-                                  <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded-lg border border-slate-100 shadow-xs">
-                                    <span className="font-bold text-slate-600 flex items-center gap-1 uppercase tracking-tight">
-                                      {p.name} {p.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}
+                                  <div key={i} className="flex justify-between items-center text-xs bg-white/90 p-2 rounded-xl border border-slate-100 shadow-xs">
+                                    <span className="font-medium text-slate-700 flex items-center gap-1">
+                                      {p.name} {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
                                     </span>
-                                    <span className="font-black text-slate-900 bg-slate-100 px-1.5 rounded">{p.count}</span>
+                                    <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">{p.count}</span>
                                   </div>
-                                )) : <p className="text-[10px] italic text-slate-400">No Breakfast deliveries</p>}
+                                )) : <p className="text-xs italic text-slate-400">No breakfast drops assigned</p>}
                               </div>
                             </div>
                             {/* Lunch Details */}
-                            <div className="space-y-3">
-                              <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-1.5 border-b border-blue-100 pb-2">
-                                <Sun size={12} /> Lunch Breakdown
+                            <div className="space-y-2.5">
+                              <h4 className="text-xs font-semibold text-blue-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-blue-100 pb-1.5">
+                                <Sun size={13} /> Lunch ({boy.Lunch})
                               </h4>
-                              <div className="space-y-2">
+                              <div className="space-y-1.5">
                                 {Object.values(boy.breakdown.Lunch).length > 0 ? Object.values(boy.breakdown.Lunch).map((p: any, i) => (
-                                  <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded-lg border border-slate-100 shadow-xs">
-                                    <span className="font-bold text-slate-600 flex items-center gap-1 uppercase tracking-tight">
-                                      {p.name} {p.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}
+                                  <div key={i} className="flex justify-between items-center text-xs bg-white/90 p-2 rounded-xl border border-slate-100 shadow-xs">
+                                    <span className="font-medium text-slate-700 flex items-center gap-1">
+                                      {p.name} {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
                                     </span>
-                                    <span className="font-black text-slate-900 bg-slate-100 px-1.5 rounded">{p.count}</span>
+                                    <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">{p.count}</span>
                                   </div>
-                                )) : <p className="text-[10px] italic text-slate-400">No Lunch deliveries</p>}
+                                )) : <p className="text-xs italic text-slate-400">No lunch drops assigned</p>}
                               </div>
                             </div>
                             {/* Dinner Details */}
-                            <div className="space-y-3">
-                              <h4 className="text-[10px] font-black text-purple-600 uppercase tracking-widest flex items-center gap-1.5 border-b border-purple-100 pb-2">
-                                <Moon size={12} /> Dinner Breakdown
+                            <div className="space-y-2.5">
+                              <h4 className="text-xs font-semibold text-purple-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-purple-100 pb-1.5">
+                                <Moon size={13} /> Dinner ({boy.Dinner})
                               </h4>
-                              <div className="space-y-2">
+                              <div className="space-y-1.5">
                                 {Object.values(boy.breakdown.Dinner).length > 0 ? Object.values(boy.breakdown.Dinner).map((p: any, i) => (
-                                  <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded-lg border border-slate-100 shadow-xs">
-                                    <span className="font-bold text-slate-600 flex items-center gap-1 uppercase tracking-tight">
-                                      {p.name} {p.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}
+                                  <div key={i} className="flex justify-between items-center text-xs bg-white/90 p-2 rounded-xl border border-slate-100 shadow-xs">
+                                    <span className="font-medium text-slate-700 flex items-center gap-1">
+                                      {p.name} {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
                                     </span>
-                                    <span className="font-black text-slate-900 bg-slate-100 px-1.5 rounded">{p.count}</span>
+                                    <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">{p.count}</span>
                                   </div>
-                                )) : <p className="text-[10px] italic text-slate-400">No Dinner deliveries</p>}
+                                )) : <p className="text-xs italic text-slate-400">No dinner drops assigned</p>}
                               </div>
                             </div>
                           </div>
@@ -324,7 +376,7 @@ const Deliveries = () => {
                   </React.Fragment>
                 ))}
                 {deliveryBoyMatrix.length === 0 && (
-                  <tr><td colSpan={5} className="p-10 text-center text-slate-300 font-bold uppercase tracking-widest text-xs">No staff found for current branch.</td></tr>
+                  <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-medium text-xs">No delivery personnel found for selected branch.</td></tr>
                 )}
               </tbody>
             </table>
@@ -332,28 +384,26 @@ const Deliveries = () => {
         </div>
       </div>
 
-      <hr className="border-slate-100" />
-
       {/* 4. Active Route Details */}
-      <div className="space-y-8">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
-            <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Active Route Details</h2>
-            <p className="text-slate-400 text-xs font-bold uppercase mt-1">Currently viewing detailed {activeMealTab} data</p>
+            <h2 className="text-xl sm:text-2xl font-bold font-display text-slate-900 tracking-tight">Active Route Management</h2>
+            <p className="text-slate-500 text-xs mt-0.5">Dispatches and route sequences for <strong className="text-slate-800 font-semibold">{activeMealTab}</strong></p>
           </div>
-          <div className="bg-slate-100/50 p-1.5 rounded-2xl flex gap-2 w-full md:w-fit shadow-inner">
+          <div className="glass-panel p-1 rounded-xl flex gap-1.5 w-full md:w-fit shadow-xs">
             {[
-              { id: 'Breakfast', icon: Sunrise, color: 'text-orange-600', bg: 'bg-orange-100' },
-              { id: 'Lunch', icon: Sun, color: 'text-blue-600', bg: 'bg-blue-100' },
-              { id: 'Dinner', icon: Moon, color: 'text-purple-600', bg: 'bg-purple-100' }
+              { id: 'Breakfast', icon: Sunrise, color: 'text-orange-600', activeBg: 'bg-white shadow-xs text-orange-700' },
+              { id: 'Lunch', icon: Sun, color: 'text-blue-600', activeBg: 'bg-white shadow-xs text-blue-700' },
+              { id: 'Dinner', icon: Moon, color: 'text-purple-600', activeBg: 'bg-white shadow-xs text-purple-700' }
             ].map(tab => (
               <button
                 key={tab.id}
                 onClick={() => { setActiveMealTab(tab.id as any); setExpandedBoyId(null); }}
-                className={`flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
                   activeMealTab === tab.id 
-                    ? 'bg-white text-slate-900 shadow-md ring-1 ring-slate-200' 
-                    : 'text-slate-500 hover:bg-white/50'
+                    ? tab.activeBg + ' ring-1 ring-slate-200/80' 
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                 }`}
               >
                 <tab.icon size={14} className={tab.color} />
@@ -364,22 +414,35 @@ const Deliveries = () => {
         </div>
 
         {/* Existing Session Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <StatCard title={`${activeMealTab} Customers`} value={sessionMetrics.customers} icon={Users} colorClass="bg-blue-600" subtext="Unique session routes" />
-          <StatCard title={`${activeMealTab} Boxes`} value={sessionMetrics.plans} icon={Package} colorClass="bg-primary-600" subtext="Production count" />
-          <StatCard title={`${activeMealTab} Starred`} value={sessionMetrics.starPlans} icon={Star} colorClass="bg-amber-600" subtext="Attention required" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+          <StatCard title={`${activeMealTab} Customers`} value={sessionMetrics.customers} icon={Users} colorClass="bg-blue-600" subtext="Unique session stops" />
+          <StatCard title={`${activeMealTab} Tiffin Boxes`} value={sessionMetrics.plans} icon={Package} colorClass="bg-primary-600" subtext="Dispatched boxes" />
+          <StatCard title={`${activeMealTab} Special Requirements`} value={sessionMetrics.starPlans} icon={Star} colorClass="bg-amber-600" subtext="Custom instructions" />
         </div>
 
         {/* Staff Route List */}
         <div className="space-y-4">
           {deliveriesToday.filter(c => !c.deliveryBoyId).length > 0 && (
-            <div className="bg-rose-50 border-2 border-dashed border-rose-200 rounded-[2.5rem] p-8 mb-8">
-              <div className="flex items-center gap-4 mb-6"><div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center"><UserX size={24} /></div><h3 className="text-xl font-black text-rose-900">Unassigned Customers</h3></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="bg-rose-50/70 backdrop-blur-sm border border-rose-200/80 rounded-2xl p-5 mb-4 shadow-glass">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center">
+                  <UserX size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-rose-900">Unassigned Customers ({deliveriesToday.filter(c => !c.deliveryBoyId).length})</h3>
+                  <p className="text-[11px] text-rose-600">Assign a delivery partner to include these customers in optimized routes.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
                  {deliveriesToday.filter(c => !c.deliveryBoyId).map(c => (
-                   <div key={c.id} className="bg-white p-4 rounded-2xl border border-rose-100 shadow-sm flex justify-between items-center group">
-                      <div><p className="font-black text-slate-900 text-sm uppercase">{c.name}</p><p className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">{c.area}</p></div>
-                      <div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><ArrowRight size={14} /></div>
+                   <div key={c.id} className="bg-white/90 p-3 rounded-xl border border-rose-100 shadow-xs flex justify-between items-center group">
+                      <div>
+                        <p className="font-semibold text-slate-800 text-xs">{c.name}</p>
+                        <p className="text-[10px] text-slate-400 font-medium">{c.area || 'No area set'}</p>
+                      </div>
+                      <div className="p-1.5 bg-rose-50 text-rose-600 rounded-lg group-hover:bg-rose-100 transition-colors">
+                        <ArrowRight size={13} />
+                      </div>
                    </div>
                  ))}
               </div>
@@ -399,37 +462,84 @@ const Deliveries = () => {
             });
 
             return (
-              <div key={boy.id} className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden transition-all">
-                <div onClick={() => setExpandedBoyId(isExpanded ? null : boy.id)} className={`p-6 flex flex-col xl:flex-row justify-between items-center cursor-pointer gap-6 ${isExpanded ? 'bg-slate-50/80' : 'hover:bg-slate-50/50'}`}>
-                  <div className="flex items-center gap-4 w-full xl:w-auto">
-                    <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400"><Truck size={28} /></div>
-                    <div><h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">{boy.name}</h3><p className="flex items-center gap-1.5 text-xs font-bold text-slate-400 mt-0.5"><Phone size={14}/> {boy.mobile}</p></div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full xl:w-auto flex-1 md:flex-none">
-                    <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
-                      <p className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Customers</p><p className="font-black text-slate-900">{boyCustomers.length}</p>
+              <div key={boy.id} className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden transition-all">
+                <div onClick={() => setExpandedBoyId(isExpanded ? null : boy.id)} className={`p-4 sm:p-5 flex flex-col xl:flex-row justify-between items-start xl:items-center cursor-pointer gap-4 ${isExpanded ? 'bg-slate-50/80 border-b border-slate-200/60' : 'hover:bg-slate-50/50'}`}>
+                  <div className="flex items-center gap-3.5 w-full xl:w-auto">
+                    <div className="w-12 h-12 bg-primary-50 text-primary-600 rounded-xl flex items-center justify-center shrink-0 border border-primary-100 shadow-xs">
+                      <Truck size={22} />
                     </div>
-                    <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
-                      <p className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Total Boxes</p><p className="font-black text-primary-600">{boyTotalBoxes}</p>
-                    </div>
-                    <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
-                      <p className="text-[8px] font-black text-slate-400 uppercase mb-0.5">Normal</p><p className="font-black text-slate-600">{boyTotalBoxes - boyStarBoxes}</p>
-                    </div>
-                    <div className="bg-white border border-slate-100 p-2.5 rounded-xl text-center shadow-xs">
-                      <p className="text-[8px] font-black text-amber-600 uppercase mb-0.5">Starred</p><p className="font-black text-amber-700">{boyStarBoxes}</p>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-bold font-display text-slate-900 tracking-tight">{boy.name}</h3>
+                      <p className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5"><Phone size={13}/> {boy.mobile || 'No contact'}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 w-full xl:w-auto">
-                    <button onClick={(e) => { e.stopPropagation(); handleShareRoute(boy, boyCustomers); }} className="flex-1 xl:flex-none bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"><MessageSquare size={16} fill="currentColor" /> Share Route</button>
-                    <div className={`p-2 rounded-xl border ${isExpanded ? 'bg-slate-900 border-slate-900 text-white' : 'border-slate-200 text-slate-400'}`}>{isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full xl:w-auto flex-1 md:flex-none">
+                    <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
+                      <p className="text-[10px] font-medium text-slate-400">Stops</p>
+                      <p className="font-bold text-slate-800 text-sm">{boyCustomers.length}</p>
+                    </div>
+                    <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
+                      <p className="text-[10px] font-medium text-slate-400">Boxes</p>
+                      <p className="font-bold text-primary-600 text-sm">{boyTotalBoxes}</p>
+                    </div>
+                    <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
+                      <p className="text-[10px] font-medium text-slate-400">Regular</p>
+                      <p className="font-bold text-slate-600 text-sm">{boyTotalBoxes - boyStarBoxes}</p>
+                    </div>
+                    <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
+                      <p className="text-[10px] font-medium text-amber-600">Starred</p>
+                      <p className="font-bold text-amber-700 text-sm">{boyStarBoxes}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 w-full xl:w-auto justify-end">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleOpenOptimizer(boy, boyCustomers); }} 
+                      className="flex-1 xl:flex-none bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                    >
+                      <Compass size={14} /> Shortest Route
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleShareRoute(boy, boyCustomers); }} 
+                      className="flex-1 xl:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                    >
+                      <MessageSquare size={14} fill="currentColor" /> Share WhatsApp
+                    </button>
+                    <div className={`p-1.5 rounded-xl border transition-colors ${isExpanded ? 'bg-slate-900 border-slate-900 text-white' : 'border-slate-200 text-slate-400 bg-white'}`}>
+                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </div>
                   </div>
                 </div>
                 {isExpanded && (
-                  <div className="border-t border-slate-100 animate-in slide-in-from-top-2 duration-300">
+                  <div className="animate-in slide-in-from-top-1 duration-200">
+                    <div className="p-3 bg-slate-50/70 border-b border-slate-200/70 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5">
+                      <div className="flex items-center gap-2 text-xs">
+                        <div className="w-5 h-5 rounded-md bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                          <Compass size={12} />
+                        </div>
+                        <span className="font-semibold text-slate-700">Hub ➔ Delivery Sequence ➔ Hub:</span>
+                        <span className="text-slate-500 hidden md:inline">Calculates shortest round-trip sequence to save travel time.</span>
+                      </div>
+                      <button 
+                        onClick={() => handleOpenOptimizer(boy, boyCustomers)}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-black text-white text-[11px] font-semibold rounded-lg flex items-center gap-1.5 shadow-xs shrink-0 active:scale-95 transition-all"
+                      >
+                        <Zap size={12} className="text-amber-400" /> Optimize Sequence
+                      </button>
+                    </div>
                     <div className="overflow-x-auto no-scrollbar">
-                      <table className="w-full text-left border-collapse min-w-[1100px]">
-                        <thead className="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">
-                          <tr><th className="p-4 w-12 text-center">Seq</th><th className="p-4 w-20 text-center">Move</th><th className="p-4">Customer</th><th className="p-4">Number</th><th className="p-4 min-w-[200px]">Plans (Quantity)</th><th className="p-4 text-center">Star</th><th className="p-4">Area / Address</th><th className="p-4 text-center">Days Left</th><th className="p-4 text-center">Location</th></tr>
+                      <table className="w-full text-left border-collapse min-w-[1000px] text-xs">
+                        <thead className="bg-slate-50/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200/60">
+                          <tr>
+                            <th className="py-3 px-4 w-12 text-center">Stop</th>
+                            <th className="py-3 px-3 w-16 text-center">Reorder</th>
+                            <th className="py-3 px-4">Customer</th>
+                            <th className="py-3 px-4">Contact</th>
+                            <th className="py-3 px-4 min-w-[200px]">Meal Plans</th>
+                            <th className="py-3 px-3 text-center">Priority</th>
+                            <th className="py-3 px-4">Delivery Area / Address</th>
+                            <th className="py-3 px-3 text-center">Remaining</th>
+                            <th className="py-3 px-3 text-center">Maps</th>
+                          </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {boyCustomers.sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999)).map((c, idx) => {
@@ -442,16 +552,61 @@ const Deliveries = () => {
                               }, {});
                               const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
                               return (
-                                <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${overallStarred ? 'bg-amber-50/20' : ''}`}>
-                                  <td className="p-4 text-center font-black text-slate-300">{idx + 1}</td>
-                                  <td className="p-4"><div className="flex items-center justify-center gap-1"><button onClick={() => handleMoveOrder(c.id, 'up')} className="p-1 hover:bg-slate-200 rounded text-slate-400"><ArrowUp size={14}/></button><button onClick={() => handleMoveOrder(c.id, 'down')} className="p-1 hover:bg-slate-200 rounded text-slate-400"><ArrowDown size={14}/></button></div></td>
-                                  <td className="p-4"><div className="flex items-center gap-2"><span className="font-black text-slate-900 text-sm truncate max-w-[140px] uppercase">{c.name}</span>{overallStarred && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}</div></td>
-                                  <td className="p-4 font-mono text-[10px] text-slate-500">{c.mobile}</td>
-                                  <td className="p-4"><div className="space-y-1.5">{Object.values(groupedPlans).map((gp: any, i) => (<div key={i} className="flex items-center justify-between gap-4 bg-white border border-slate-100 p-1.5 rounded-lg shadow-xs"><div className="flex items-center gap-2"><span className="text-[10px] font-bold text-slate-700 truncate max-w-[120px] uppercase">{gp.name}</span>{gp.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}</div><span className="bg-slate-900 text-white text-[10px] font-black w-5 h-5 rounded flex items-center justify-center shrink-0">{gp.count}</span></div>))}</div></td>
-                                  <td className="p-4 text-center">{overallStarred ? <Star size={16} className="text-amber-500 mx-auto" fill="currentColor" /> : <span className="text-slate-200">—</span>}</td>
-                                  <td className="p-4"><div><p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter truncate">{c.area}</p><p className="text-xs font-bold text-slate-600 truncate">{c.address}</p></div></td>
-                                  <td className="p-4 text-center"><div className="space-y-1">{Object.values(groupedPlans).map((gp: any, i) => (<div key={i} className="text-[10px] font-black text-slate-900 bg-slate-50 border border-slate-100 rounded py-0.5 px-1">{calculateRemainingDeliveries(gp.endDate, gp.pConfig?.weekdays || [], gp.pauses || [])}</div>))}</div></td>
-                                  <td className="p-4 text-center">{c.locationLink ? (<a href={c.locationLink.startsWith('http') ? c.locationLink : `https://${c.locationLink}`} target="_blank" rel="noreferrer" className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors inline-flex"><ExternalLink size={16} /></a>) : (<span className="text-slate-200">—</span>)}</td>
+                                <tr key={c.id} className={`hover:bg-slate-50/70 transition-colors ${overallStarred ? 'bg-amber-50/30' : ''}`}>
+                                  <td className="py-3 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center justify-center gap-0.5">
+                                      <button onClick={() => handleMoveOrder(c.id, 'up')} className="p-1 hover:bg-slate-200/70 rounded text-slate-500" title="Move Up"><ArrowUp size={13}/></button>
+                                      <button onClick={() => handleMoveOrder(c.id, 'down')} className="p-1 hover:bg-slate-200/70 rounded text-slate-500" title="Move Down"><ArrowDown size={13}/></button>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold text-slate-800 truncate max-w-[140px]">{c.name}</span>
+                                      {overallStarred && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4 font-mono text-[11px] text-slate-500">{c.mobile}</td>
+                                  <td className="py-3 px-4">
+                                    <div className="space-y-1">
+                                      {Object.values(groupedPlans).map((gp: any, i) => (
+                                        <div key={i} className="flex items-center justify-between gap-3 bg-white/90 border border-slate-100 py-1 px-2 rounded-lg shadow-xs">
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="text-[11px] font-medium text-slate-700 truncate max-w-[120px]">{gp.name}</span>
+                                            {gp.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}
+                                          </div>
+                                          <span className="bg-slate-900 text-white text-[10px] font-bold w-4 h-4 rounded flex items-center justify-center shrink-0">{gp.count}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    {overallStarred ? <Star size={15} className="text-amber-500 mx-auto" fill="currentColor" /> : <span className="text-slate-300">—</span>}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div>
+                                      <p className="text-[11px] font-semibold text-slate-700 truncate">{c.area || 'Area not specified'}</p>
+                                      <p className="text-[10px] text-slate-400 truncate max-w-[200px]">{c.address}</p>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <div className="space-y-1">
+                                      {Object.values(groupedPlans).map((gp: any, i) => (
+                                        <div key={i} className="text-[10px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded py-0.5 px-1.5">
+                                          {calculateRemainingDeliveries(gp.endDate, gp.pConfig?.weekdays || [], gp.pauses || [])} left
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    {c.locationLink ? (
+                                      <a href={c.locationLink.startsWith('http') ? c.locationLink : `https://${c.locationLink}`} target="_blank" rel="noreferrer" className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors inline-flex" title="Open Map Location">
+                                        <ExternalLink size={14} />
+                                      </a>
+                                    ) : (
+                                      <span className="text-slate-300">—</span>
+                                    )}
+                                  </td>
                                 </tr>
                               );
                             })}
@@ -466,9 +621,29 @@ const Deliveries = () => {
         </div>
 
         {deliveriesToday.length === 0 && (
-          <div className="py-20 flex flex-col items-center justify-center text-center bg-white rounded-[3rem] border border-slate-100 shadow-sm"><div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-6 border-4 border-dashed border-slate-100"><Truck size={48} /></div><h3 className="text-2xl font-black text-slate-900 uppercase">No deliveries scheduled</h3><p className="text-slate-500 mt-2 max-w-sm mx-auto font-medium">There are no active plans for the {activeMealTab} session today.</p></div>
+          <div className="py-16 flex flex-col items-center justify-center text-center glass-card rounded-2xl border border-white/80 shadow-glass">
+            <div className="w-16 h-16 bg-slate-100/70 rounded-2xl flex items-center justify-center text-slate-400 mb-4">
+              <Truck size={30} />
+            </div>
+            <h3 className="text-lg font-bold font-display text-slate-800">No Deliveries Scheduled</h3>
+            <p className="text-slate-400 text-xs mt-1 max-w-xs">There are no active subscription plans scheduled for the {activeMealTab} session today.</p>
+          </div>
         )}
       </div>
+
+      {/* Route Optimizer Modal */}
+      {optimizerModalData && (
+        <RouteOptimizerModal 
+          isOpen={Boolean(optimizerModalData)}
+          onClose={() => setOptimizerModalData(null)}
+          deliveryBoy={optimizerModalData.boy}
+          customersToday={optimizerModalData.customers}
+          mealTime={activeMealTab}
+          branch={optimizerModalData.branch}
+          onApplyNewOrder={handleApplyOptimizedOrder}
+          onUpdateHubLocation={handleUpdateHubLocation}
+        />
+      )}
 
     </div>
   );

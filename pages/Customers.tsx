@@ -13,10 +13,13 @@ import {
 import { doc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
-const StatCard = ({ title, value, textColor = "text-slate-900" }: any) => (
-  <div className="bg-white p-4 sm:p-6 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center h-28 sm:h-32 hover:shadow-md transition-shadow">
-    <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 truncate">{title}</p>
-    <h3 className={`text-2xl sm:text-4xl font-bold tracking-tight ${textColor} truncate`}>
+const StatCard = ({ title, value, textColor = "text-slate-900", icon: Icon }: any) => (
+  <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between min-h-[110px] hover:shadow-glass-hover transition-all">
+    <div className="flex items-center justify-between">
+      <p className="text-xs font-semibold text-slate-500">{title}</p>
+      {Icon && <Icon size={16} className="text-slate-400" />}
+    </div>
+    <h3 className={`text-2xl sm:text-3xl font-bold font-display tracking-tight ${textColor} truncate mt-1`}>
       {value}
     </h3>
   </div>
@@ -25,10 +28,12 @@ const StatCard = ({ title, value, textColor = "text-slate-900" }: any) => (
 const BigActionBtn = ({ icon: Icon, label, colorClass, onClick }: any) => (
   <button 
     onClick={onClick}
-    className={`${colorClass} text-white rounded-xl sm:rounded-2xl flex flex-col items-center justify-center gap-2 sm:gap-3 p-4 transition-all active:scale-95 shadow-lg h-28 sm:h-32 w-full`}
+    className={`${colorClass} text-white rounded-2xl flex flex-col items-center justify-center gap-2 p-3.5 transition-all duration-200 active:scale-95 shadow-glass hover:shadow-glass-hover min-h-[110px] w-full border border-white/20 backdrop-blur-md`}
   >
-    <Icon size={24} className="sm:w-8 sm:h-8" />
-    <span className="font-bold text-[10px] sm:text-xs uppercase tracking-wide">{label}</span>
+    <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shadow-inner">
+      <Icon size={18} />
+    </div>
+    <span className="font-semibold text-xs tracking-tight">{label}</span>
   </button>
 );
 
@@ -237,84 +242,98 @@ const Customers = () => {
     return { unique, active, renewalRate };
   }, [customers, enrichedCustomers]);
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
+  if (isLoading) {
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="animate-spin text-primary-600" size={36} />
+        <p className="text-xs font-medium text-slate-400">Loading customer roster...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4 sm:space-y-8 pb-20 pt-2 animate-in fade-in duration-500">
+    <div className="space-y-6 pb-20 pt-1 animate-in fade-in duration-300">
       
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-6">
-        <StatCard title="TOTAL UNIQUE" value={stats.unique} />
-        <StatCard title="TOTAL ACTIVE" value={stats.active} textColor="text-blue-600" />
-        <StatCard title="RENEWAL RATE" value={`${stats.renewalRate}%`} textColor="text-green-600" />
-        <BigActionBtn icon={Plus} label="Add Customer" colorClass="bg-blue-600 hover:bg-blue-700" onClick={() => { setActiveCustomer(null); setIsAddModalOpen(true); }} />
-        <BigActionBtn icon={Pause} label="Pause User" colorClass="bg-orange-500 hover:bg-orange-600" onClick={() => setIsPauseModalOpen(true)} />
-        <BigActionBtn icon={Store} label="Pause Branch" colorClass="bg-slate-800 hover:bg-black" onClick={() => setIsPauseBranchModalOpen(true)} />
+      {/* Top Overview Cards & Primary Actions */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-4">
+        <StatCard title="Total Customers" value={stats.unique} icon={Users2} />
+        <StatCard title="Active Plans" value={stats.active} textColor="text-primary-600" icon={CheckCircle} />
+        <StatCard title="Renewal Rate" value={`${stats.renewalRate}%`} textColor="text-emerald-600" icon={RotateCcw} />
+        <BigActionBtn icon={Plus} label="New Customer" colorClass="bg-gradient-to-tr from-primary-600 to-indigo-600" onClick={() => { setActiveCustomer(null); setIsAddModalOpen(true); }} />
+        <BigActionBtn icon={Pause} label="Pause Customer" colorClass="bg-gradient-to-tr from-amber-500 to-orange-600" onClick={() => setIsPauseModalOpen(true)} />
+        <BigActionBtn icon={Store} label="Pause Kitchen" colorClass="bg-gradient-to-tr from-slate-800 to-slate-950" onClick={() => setIsPauseBranchModalOpen(true)} />
       </div>
 
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center">
-         <div className="flex-1 min-w-[200px] relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+      {/* Search & Filter Bar */}
+      <div className="glass-panel p-4 rounded-2xl border border-white/80 shadow-glass flex flex-wrap gap-3 items-center">
+         <div className="flex-1 min-w-[220px] relative">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input 
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border-none rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-primary-500"
-              placeholder="Search by name, area or mobile..."
+              className="w-full pl-10 pr-4 py-2 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-medium text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 shadow-xs transition-all"
+              placeholder="Search by customer name, locality, or phone number..."
               value={filters.name}
               onChange={(e) => setFilters({...filters, name: e.target.value})}
             />
          </div>
          <div className="relative">
             <select 
-              className="bg-slate-50 text-[10px] font-black uppercase tracking-wider py-2 px-8 rounded-lg appearance-none outline-none border-none focus:ring-2 focus:ring-primary-500"
+              className="bg-white/85 border border-slate-200/80 text-xs font-semibold text-slate-700 py-2 pl-8 pr-8 rounded-xl appearance-none outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 shadow-xs cursor-pointer transition-all"
               value={filters.starred}
               onChange={(e) => setFilters({...filters, starred: e.target.value})}
             >
-              <option value="All">Regular + Starred</option>
-              <option value="Yes">Starred (Spl Req) Only</option>
-              <option value="No">Regular Only</option>
+              <option value="All">All Subscriptions</option>
+              <option value="Yes">Special Request Only</option>
+              <option value="No">Standard Only</option>
             </select>
             <Star className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-500" size={14} />
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
          </div>
-         <button 
-          onClick={() => setFilters({ name: '', mobile: '', area: '', branchId: 'All', paymentStatus: 'All', timings: [], starred: 'All' })}
-          className="text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors"
-         >
-          Clear Filters
-         </button>
+         {(filters.name || filters.starred !== 'All' || filters.branchId !== 'All' || filters.paymentStatus !== 'All' || filters.timings.length > 0) && (
+           <button 
+            onClick={() => setFilters({ name: '', mobile: '', area: '', branchId: 'All', paymentStatus: 'All', timings: [], starred: 'All' })}
+            className="text-xs font-semibold text-slate-500 hover:text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50/60 transition-colors flex items-center gap-1.5"
+           >
+            <X size={14} />
+            Clear filters
+           </button>
+         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+      {/* Customer Directory Table */}
+      <div className="glass-card rounded-2xl border border-white/80 overflow-hidden shadow-glass">
          <div className="overflow-x-auto lg:overflow-x-hidden">
             <table className="w-full text-left border-collapse min-w-[1000px] lg:min-w-0 table-auto">
-               <thead className="bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200">
+               <thead className="bg-slate-50/70 backdrop-blur-sm text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200/70">
                   <tr>
-                     <th className="p-3 w-8 text-center"></th>
-                     <th className="p-3 w-10 text-center">S.No</th>
-                     <th className="p-3">Name</th>
-                     <th className="p-3 text-center">Starred</th>
-                     <th className="p-3">
+                     <th className="p-3.5 w-8 text-center"></th>
+                     <th className="p-3.5 w-12 text-center">#</th>
+                     <th className="p-3.5">Customer</th>
+                     <th className="p-3.5 text-center">Special</th>
+                     <th className="p-3.5">
                         <TimingFilter 
                           selected={filters.timings} 
                           onChange={(vals) => setFilters({...filters, timings: vals})} 
                         />
                      </th>
-                     <th className="p-3">Area</th>
-                     <th className="p-3 text-center">
+                     <th className="p-3.5">Locality</th>
+                     <th className="p-3.5 text-center">
                         <StatusFilter 
                           value={filters.paymentStatus} 
                           onChange={(val) => setFilters({...filters, paymentStatus: val})} 
                         />
                      </th>
-                     <th className="p-3 text-center">Days Left</th>
-                     <th className="p-3">
+                     <th className="p-3.5 text-center">Days Remaining</th>
+                     <th className="p-3.5">
                         <BranchFilter 
                           branches={branches}
                           value={filters.branchId}
                           onChange={(val) => setFilters({...filters, branchId: val})}
                         />
                      </th>
-                     <th className="p-3 text-right">Actions</th>
+                     <th className="p-3.5 text-right">Actions</th>
                   </tr>
                </thead>
-               <tbody className="text-slate-900 text-xs font-medium">
+               <tbody className="text-slate-800 text-xs font-normal divide-y divide-slate-100">
                   {filteredCustomers.map((c, idx) => {
                     const branch = branches.find((b:any) => b.id === c.branchId);
                     const mealTimes = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
@@ -323,67 +342,79 @@ const Customers = () => {
 
                     return (
                       <React.Fragment key={c.id}>
-                        <tr onClick={() => toggleRow(c.id)} className={`border-b last:border-0 hover:bg-slate-50/50 transition-colors group cursor-pointer ${isExpanded ? 'bg-slate-50/80' : ''}`}>
-                          <td className="p-3 text-center text-slate-300">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                          <td className="p-3 text-center text-slate-400 font-bold">{idx + 1}</td>
-                          <td className="p-3">
+                        <tr onClick={() => toggleRow(c.id)} className={`hover:bg-slate-50/70 transition-colors group cursor-pointer ${isExpanded ? 'bg-slate-50/90' : ''}`}>
+                          <td className="p-3.5 text-center text-slate-400">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                          <td className="p-3.5 text-center text-slate-400 font-medium">{idx + 1}</td>
+                          <td className="p-3.5">
                             <div className="flex items-center gap-2">
-                              <span className="font-black truncate max-w-[120px]">{c.name.toLowerCase()}</span>
+                              <span className="font-semibold text-slate-900 truncate max-w-[140px] text-sm">{c.name}</span>
                               {c.highlightMark && c.highlightMark !== 'None' && (
-                                <span className={`text-[7px] font-black px-1 rounded-sm uppercase ${
-                                  c.highlightMark === 'Urgent' ? 'bg-red-50 text-white' : 
-                                  c.highlightMark === 'Dietary' ? 'bg-green-50 text-white' : 
-                                  'bg-primary-600 text-white'
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${
+                                  c.highlightMark === 'Urgent' ? 'bg-red-50 text-red-700 border border-red-200/60' : 
+                                  c.highlightMark === 'Dietary' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 
+                                  'bg-primary-50 text-primary-700 border border-primary-200/60'
                                 }`}>{c.highlightMark}</span>
                               )}
                             </div>
-                            <div className="text-[9px] text-slate-400 font-mono">{c.mobile}</div>
+                            <div className="text-xs text-slate-400 font-mono mt-0.5">{c.mobile}</div>
                           </td>
-                          <td className="p-3 text-center">
+                          <td className="p-3.5 text-center">
                             {hasStarredPlan ? (
-                              <div className="flex justify-center">
-                                <Star size={16} fill="#f59e0b" className="text-amber-500 animate-pulse" />
+                              <div className="flex justify-center" title="Has active special request">
+                                <Star size={15} fill="#f59e0b" className="text-amber-500 animate-pulse" />
                               </div>
                             ) : (
-                              <span className="text-slate-200">—</span>
+                              <span className="text-slate-300">—</span>
                             )}
                           </td>
-                          <td className="p-3">
+                          <td className="p-3.5">
                             <div className="flex flex-wrap gap-1">
                                 {mealTimes.map((m:string, idx: number) => (
-                                  <span key={`${m}-${idx}`} className={`text-[8px] font-black px-1 py-0.5 rounded-sm border shadow-xs ${
-                                    m === 'Breakfast' ? 'bg-orange-50 text-orange-600 border-orange-100' : 
-                                    m === 'Lunch' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
-                                    'bg-purple-50 text-purple-600 border-purple-100'
-                                  }`}>{m.charAt(0)}</span>
+                                  <span key={`${m}-${idx}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border shadow-xs ${
+                                    m === 'Breakfast' ? 'bg-amber-50 text-amber-700 border-amber-200/60' : 
+                                    m === 'Lunch' ? 'bg-blue-50 text-blue-700 border-blue-200/60' : 
+                                    'bg-violet-50 text-violet-700 border-violet-200/60'
+                                  }`}>{m}</span>
                                 ))}
                             </div>
                           </td>
-                          <td className="p-3 text-slate-500 text-[10px] font-bold uppercase truncate max-w-[100px]">{c.area}</td>
-                          <td className="p-3 text-center">
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${c.pendingAmount <= 0 ? 'bg-green-50 text-green-600 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
-                                ₹{c.pendingAmount || 0}
+                          <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[120px]">{c.area || '—'}</td>
+                          <td className="p-3.5 text-center">
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.pendingAmount <= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}`}>
+                                {c.pendingAmount <= 0 ? 'Clear' : `₹${c.pendingAmount}`}
                             </span>
                           </td>
-                          <td className="p-3 text-center font-black">
+                          <td className="p-3.5 text-center">
                             {getTodayStr() > (c.endDate || '') ? (
-                               <span className="text-red-600 font-black uppercase text-[10px]">Expired</span>
+                               <span className="text-rose-600 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-md text-xs font-semibold">Expired</span>
                             ) : (
-                               <span className="text-primary-600">{c.realDaysLeft}</span>
+                               <span className="text-primary-700 font-bold text-xs bg-primary-50 px-2 py-0.5 rounded-md border border-primary-200/50">{c.realDaysLeft} days</span>
                             )}
                           </td>
-                          <td className="p-3 text-slate-500 text-[10px] font-bold truncate max-w-[80px]">{branch?.name || 'Main'}</td>
-                          <td className="p-3 text-right">
-                            <div className="flex items-center justify-end gap-0.5">
+                          <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[90px]">{branch?.name || 'Main Kitchen'}</td>
+                          <td className="p-3.5 text-right">
+                            <div className="flex items-center justify-end gap-1">
                                 <button 
                                   onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsRenewal(true); setIsAddModalOpen(true); }} 
-                                  className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"
-                                  title="Renewal"
+                                  className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                  title="Renew Subscription"
                                 >
-                                  <RotateCcw size={14}/>
+                                  <RotateCcw size={15}/>
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsRenewal(false); setIsAddModalOpen(true); }} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"><Edit size={14}/></button>
-                                <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id); }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={14}/></button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsRenewal(false); setIsAddModalOpen(true); }} 
+                                  className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                                  title="Edit Customer"
+                                >
+                                  <Edit size={15}/>
+                                </button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id); }} 
+                                  className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                                  title="Delete Customer"
+                                >
+                                  <Trash2 size={15}/>
+                                </button>
                             </div>
                           </td>
                         </tr>

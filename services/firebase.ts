@@ -19,10 +19,8 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// FIX: Using memoryLocalCache instead of persistentLocalCache to avoid internal assertion failures
-// related to IndexedDB state in sandboxed environments.
+// Use memoryLocalCache to ensure clean in-memory state in iframe environments
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true, // Bypass WebSocket issues
   localCache: memoryLocalCache({}) 
 });
 

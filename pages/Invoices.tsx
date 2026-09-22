@@ -8,14 +8,17 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { handleRazorpayPayment } from '../services/razorpayService';
 
-type ThemeColor = 'black' | 'orange' | 'blue' | 'green' | 'red';
+type ThemeColor = 'black' | 'blue' | 'purple' | 'teal' | 'green' | 'amber' | 'orange' | 'red';
 
 const THEMES: Record<ThemeColor, string> = {
   black: 'bg-slate-900',
-  orange: 'bg-orange-600',
   blue: 'bg-blue-600',
-  green: 'bg-green-600',
-  red: 'bg-red-600'
+  purple: 'bg-violet-700',
+  teal: 'bg-teal-700',
+  green: 'bg-emerald-600',
+  amber: 'bg-amber-600',
+  orange: 'bg-orange-600',
+  red: 'bg-rose-600'
 };
 
 type InvoiceSource = 'manual' | 'customer';
@@ -373,50 +376,50 @@ const Invoices = () => {
       {showCelebration && <Confetti />}
 
       {/* HEADER ACTIONS */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-6 no-print">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">COSVYN Invoice Maker</h1>
-          <p className="text-slate-500 font-medium mt-1">Create and customize professional tax invoices.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold font-display text-slate-900 tracking-tight">Invoice Studio & Billing</h1>
+          <p className="text-xs sm:text-sm text-slate-500 font-normal mt-0.5">Generate compliant GST invoices for subscription and corporate clients.</p>
         </div>
         
-        <div className="flex flex-col sm:flex-row items-center gap-3 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-center gap-2.5 glass-card p-2 rounded-2xl border border-white/80 shadow-glass w-full md:w-auto">
           
           {/* CREDIT WIDGET */}
-          <div className="flex items-center gap-4 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
+          <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50/80 rounded-xl border border-slate-200/60">
              <div className="text-right">
                 {purchasedLeft > 0 ? (
                   <div className="flex flex-col">
-                    <span className="text-[8px] font-black text-primary-600 uppercase tracking-widest">{businessData.lastRechargePlan || 'Credits'} Pack</span>
-                    <span className="text-[11px] font-black text-slate-900">{purchasedLeft} Invoices Left</span>
+                    <span className="text-[9px] font-semibold text-primary-600">{businessData.lastRechargePlan || 'Credits'} Pack</span>
+                    <span className="text-xs font-bold text-slate-900">{purchasedLeft} Invoices Left</span>
                   </div>
                 ) : (
                   <div className="flex flex-col">
-                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{currentMonthName} Free</span>
-                    <span className="text-[11px] font-black text-slate-900">{freeLeft}/3 Left</span>
+                    <span className="text-[9px] font-semibold text-slate-400">{currentMonthName} Free</span>
+                    <span className="text-xs font-bold text-slate-900">{freeLeft}/3 Left</span>
                   </div>
                 )}
              </div>
              <button 
               onClick={() => setIsRechargeModalOpen(true)}
-              className="bg-primary-600 hover:bg-primary-700 text-white px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 flex items-center gap-1.5 shadow-md shadow-primary-500/20"
+              className="bg-primary-600 hover:bg-primary-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-semibold transition-all active:scale-95 flex items-center gap-1 shadow-xs"
              >
-                <Sparkles size={10} fill="currentColor" /> Recharge
+                <Sparkles size={11} fill="currentColor" /> Recharge
              </button>
           </div>
 
-          <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block" />
+          <div className="h-6 w-px bg-slate-200/80 mx-1 hidden sm:block" />
 
-          <div className="flex bg-slate-100 p-1 rounded-xl">
-             <button onClick={() => setInvoiceSource('manual')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${invoiceSource === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}><Settings2 size={12}/> Manual</button>
-             <button onClick={() => setInvoiceSource('customer')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${invoiceSource === 'customer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}><UserCircle size={12}/> Customer</button>
+          <div className="flex bg-slate-100/80 p-0.5 rounded-xl border border-slate-200/40">
+             <button onClick={() => setInvoiceSource('manual')} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${invoiceSource === 'manual' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}><Settings2 size={12}/> Manual</button>
+             <button onClick={() => setInvoiceSource('customer')} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${invoiceSource === 'customer' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}><UserCircle size={12}/> Customer</button>
           </div>
           {invoiceSource === 'customer' && (
              <div className="flex gap-2 animate-in slide-in-from-right-2">
-                <select className="pl-3 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase outline-none appearance-none cursor-pointer" value={selectedBranchId} onChange={(e) => setSelectedBranchId(e.target.value)}>
+                <select className="pl-2.5 pr-6 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium outline-none appearance-none cursor-pointer" value={selectedBranchId} onChange={(e) => setSelectedBranchId(e.target.value)}>
                     <option value="All">All Branches</option>
                     {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
-                <select className="pl-3 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase outline-none appearance-none min-w-[120px] cursor-pointer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)}>
+                <select className="pl-2.5 pr-6 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium outline-none appearance-none min-w-[120px] cursor-pointer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)}>
                     <option value="">Select Customer</option>
                     {filteredCustomers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -428,7 +431,7 @@ const Invoices = () => {
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
         
         {/* LEFT: INVOICE CANVAS */}
-        <div ref={invoiceRef} className="xl:col-span-8 bg-white rounded-[2rem] border border-slate-200 shadow-2xl overflow-hidden print-area">
+        <div ref={invoiceRef} className="xl:col-span-8 bg-white rounded-2xl border border-slate-200/90 shadow-glass overflow-hidden print-area">
           <div className="p-8 md:p-12 space-y-6 min-w-[750px]">
             
             {/* Header Row */}
@@ -559,18 +562,72 @@ const Invoices = () => {
 
         {/* RIGHT: CONTROL PANEL */}
         <div className="xl:col-span-4 space-y-6 no-print">
-          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-8 sticky top-6">
-            <div><h3 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2 text-left">Export Invoice</h3><div className="h-1 w-12 bg-primary-600 rounded-full" /></div>
-            <div className="space-y-4"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block text-left">Choose Theme</label><div className="flex gap-4">{(Object.keys(THEMES) as ThemeColor[]).map((t) => (<button key={t} onClick={() => setSelectedTheme(t)} className={`w-10 h-10 rounded-full border-4 transition-all flex items-center justify-center ${THEMES[t]} ${selectedTheme === t ? 'border-slate-200 scale-125 shadow-lg shadow-black/10' : 'border-transparent hover:scale-110'}`}>{selectedTheme === t && <Check size={16} className="text-white" strokeWidth={4} />}</button>))}</div></div>
-            <div className="space-y-4"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block text-left">Layout Design</label><div className="grid grid-cols-2 gap-3"><button className="p-4 rounded-2xl border-2 border-primary-600 bg-primary-50 ring-4 ring-primary-500/10 text-center space-y-2 transition-all"><Smartphone size={24} className="text-primary-600 mx-auto" /><p className="text-[10px] font-black uppercase text-primary-700">Standard</p></button><div className="p-4 rounded-2xl border-2 border-slate-50 text-center space-y-2 opacity-50 cursor-not-allowed bg-slate-50/30 group relative"><Layout size={24} className="text-slate-300 mx-auto" /><p className="text-[10px] font-black uppercase text-slate-400">Professional</p><div className="absolute inset-0 flex items-center justify-center bg-white/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl"><span className="text-[8px] font-black uppercase tracking-tighter bg-slate-900 text-white px-2 py-1 rounded-full">Coming Soon</span></div></div></div></div>
-            <div className="pt-4 space-y-4">
-               <button onClick={() => setIsShareModalOpen(true)} className="w-full bg-primary-600 hover:bg-primary-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-primary-500/20 transition-all transform active:scale-95 text-xs uppercase tracking-widest flex items-center justify-center gap-2"><Share2 size={18} /> Save and Share</button>
-               <div className="grid grid-cols-2 gap-3"><button onClick={handleDownloadPDF} className="bg-white border-2 border-slate-900 hover:bg-slate-900 hover:text-white text-slate-900 font-black py-3 rounded-xl transition-all transform active:scale-95 text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-sm"><Download size={16} /> PDF</button><button onClick={handlePrint} className="bg-white border-2 border-slate-900 hover:bg-slate-900 hover:text-white text-slate-900 font-black py-3 rounded-xl transition-all transform active:scale-95 text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-sm"><Printer size={16} /> Print</button></div>
+          <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass space-y-6 sticky top-6">
+            <div>
+              <h3 className="text-base font-bold font-display text-slate-900 tracking-tight text-left">Document & Export Controls</h3>
+              <p className="text-xs text-slate-400 mt-0.5 text-left">Customize styling, branding, and dispatch options</p>
+            </div>
+            
+            <div className="space-y-2.5">
+              <label className="text-xs font-semibold text-slate-700 block text-left">Theme Accent</label>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {(Object.keys(THEMES) as ThemeColor[]).map((t) => (
+                  <button 
+                    key={t} 
+                    title={t.charAt(0).toUpperCase() + t.slice(1)}
+                    onClick={() => setSelectedTheme(t)} 
+                    className={`w-7 h-7 rounded-full border-2 transition-all flex items-center justify-center ${THEMES[t]} ${selectedTheme === t ? 'border-primary-500 ring-2 ring-primary-500/30 scale-110 shadow-sm' : 'border-white/80 hover:scale-105 shadow-xs'}`}
+                  >
+                    {selectedTheme === t && <Check size={13} className="text-white" strokeWidth={3.5} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-xs font-semibold text-slate-700 block text-left">Layout Preset</label>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button className="p-3 rounded-xl border border-primary-500/40 bg-primary-50/50 text-center space-y-1 transition-all">
+                  <Smartphone size={20} className="text-primary-600 mx-auto" />
+                  <p className="text-xs font-semibold text-primary-700">Standard</p>
+                </button>
+                <div className="p-3 rounded-xl border border-slate-200/60 text-center space-y-1 opacity-50 cursor-not-allowed bg-slate-50/40 group relative">
+                  <Layout size={20} className="text-slate-400 mx-auto" />
+                  <p className="text-xs font-medium text-slate-500">Corporate</p>
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
+                    <span className="text-[9px] font-semibold bg-slate-900 text-white px-2 py-0.5 rounded-full">Soon</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 space-y-3">
+               <button 
+                onClick={() => setIsShareModalOpen(true)} 
+                className="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm transition-all transform active:scale-95 text-xs flex items-center justify-center gap-2"
+               >
+                 <Share2 size={16} /> Save & Share with Client
+               </button>
                
-               <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex items-start gap-3 mt-4">
-                  <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-[10px] font-bold text-amber-800 leading-tight">
-                    Every share, download PDF, or print will deduct 1 invoice credit from the total remaining.
+               <div className="grid grid-cols-2 gap-2.5">
+                 <button 
+                  onClick={handleDownloadPDF} 
+                  className="glass-card border border-slate-200/80 hover:bg-slate-50/80 text-slate-800 font-semibold py-2.5 rounded-xl transition-all active:scale-95 text-xs flex items-center justify-center gap-1.5 shadow-xs"
+                 >
+                   <Download size={14} /> PDF
+                 </button>
+                 <button 
+                  onClick={handlePrint} 
+                  className="glass-card border border-slate-200/80 hover:bg-slate-50/80 text-slate-800 font-semibold py-2.5 rounded-xl transition-all active:scale-95 text-xs flex items-center justify-center gap-1.5 shadow-xs"
+                 >
+                   <Printer size={14} /> Print
+                 </button>
+               </div>
+               
+               <div className="bg-amber-50/80 p-3 rounded-xl border border-amber-200/60 flex items-start gap-2.5 mt-2">
+                  <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] font-medium text-amber-900 leading-snug">
+                    Each share, download PDF, or print deducts 1 invoice credit from your balance.
                   </p>
                </div>
             </div>
@@ -580,16 +637,16 @@ const Invoices = () => {
 
       {/* RECHARGE MODAL */}
       {isRechargeModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in no-print">
-           <div className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-in fade-in no-print">
+           <div className="glass-card bg-white/95 w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col border border-white/80">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/80">
                  <div>
-                    <h3 className="text-2xl font-black text-slate-900 flex items-center gap-2 uppercase tracking-tight">
-                       <CreditCard className="text-primary-600" /> Pay-Per-Invoice Recharge
+                    <h3 className="text-xl font-bold font-display text-slate-900 flex items-center gap-2">
+                       <CreditCard className="text-primary-600" size={20} /> Pay-Per-Invoice Recharge
                     </h3>
-                    <p className="text-slate-500 text-sm font-medium mt-1">Add credits to continue creating professional invoices.</p>
+                    <p className="text-slate-500 text-xs font-normal mt-0.5">Add credits to continue creating professional invoices.</p>
                  </div>
-                 <button onClick={() => setIsRechargeModalOpen(false)} className="p-2 text-slate-400 hover:text-red-500 transition-colors"><X size={24}/></button>
+                 <button onClick={() => setIsRechargeModalOpen(false)} className="p-2 text-slate-400 hover:text-slate-700 rounded-xl transition-colors"><X size={20}/></button>
               </div>
               
               <div className="flex-1 overflow-y-auto p-8 no-scrollbar">

@@ -84,45 +84,49 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
       {/* Sidebar Container */}
       <aside className={`
-        fixed left-0 top-0 bottom-0 w-72 bg-white border-r border-slate-200 z-[70] 
+        fixed left-0 top-0 bottom-0 w-72 bg-white/90 backdrop-blur-2xl border-r border-slate-200/80 z-[70] 
         flex flex-col transform transition-transform duration-300 ease-in-out shadow-2xl
         ${isOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-primary-600 to-violet-600 rounded-lg flex items-center justify-center text-white font-bold shadow-md">
+        <div className="p-5 border-b border-slate-100/80 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-gradient-to-tr from-primary-600 via-primary-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-primary-500/25">
               <Zap size={18} fill="currentColor" />
             </div>
-            <span className="text-xl font-bold text-slate-900 tracking-tight">ScaleKitchen</span>
+            <div>
+              <span className="text-base font-bold text-slate-900 tracking-tight font-display">ScaleKitchen</span>
+              <span className="block text-[11px] font-medium text-slate-400">Meal Ops Suite</span>
+            </div>
           </div>
           <button 
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all"
+            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100/70 rounded-xl transition-all"
+            aria-label="Close sidebar"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto no-scrollbar">
+        <nav className="flex-1 p-3.5 space-y-1 overflow-y-auto no-scrollbar">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path || (item.path === '/app/dashboard' && location.pathname === '/app');
             return (
               <NavLink
                 key={item.path}
                 to={item.path}
-                onClick={onClose} // Auto-close on click
-                className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all text-sm font-bold tracking-tight ${
+                onClick={onClose}
+                className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all text-sm font-medium ${
                   isActive 
-                    ? 'bg-primary-50 text-primary-700 shadow-sm border border-primary-100/50' 
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-primary-50/90 text-primary-700 font-semibold shadow-xs border border-primary-200/60 backdrop-blur-sm' 
+                    : 'text-slate-600 hover:bg-slate-100/70 hover:text-slate-900'
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <item.icon size={20} className={isActive ? 'text-primary-600' : 'text-slate-400'} />
-                  {item.label}
+                  <item.icon size={18} className={isActive ? 'text-primary-600' : 'text-slate-400 group-hover:text-slate-600'} />
+                  <span>{item.label}</span>
                 </div>
                 {item.badge ? (
-                  <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                  <span className="bg-red-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full min-w-[20px] text-center shadow-xs">
                     {item.badge}
                   </span>
                 ) : null}
@@ -131,13 +135,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-100">
+        <div className="p-3.5 border-t border-slate-100/80">
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors text-sm font-bold"
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-600 hover:text-red-600 hover:bg-red-50/80 rounded-xl transition-colors text-sm font-medium"
           >
-            <LogOut size={20} />
-            Sign Out
+            <LogOut size={18} />
+            <span>Sign Out</span>
           </button>
         </div>
       </aside>

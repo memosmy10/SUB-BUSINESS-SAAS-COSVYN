@@ -136,25 +136,32 @@ const Expenses = () => {
      setIsModalOpen(true);
   };
 
-  if (l1 || l2) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" /></div>;
+  if (l1 || l2) {
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="animate-spin text-primary-600" size={36} />
+        <p className="text-xs font-medium text-slate-400">Loading business expenses...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-500">
+    <div className="space-y-8 pb-20 pt-1 animate-in fade-in duration-300">
       
       {/* Header Section */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-             Expenses
+          <h1 className="text-2xl sm:text-3xl font-bold font-display text-slate-900 tracking-tight">
+            Operating Expenses & Outflow
           </h1>
-          <p className="text-slate-500 font-medium mt-1">Operational costs and outgoing cash flow.</p>
+          <p className="text-xs sm:text-sm text-slate-500 font-normal mt-1">Track ingredient purchases, kitchen wages, utilities, and daily spend.</p>
         </div>
         
-        <div className="flex flex-wrap gap-3 w-full lg:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
             {/* Branch Filter */}
             <div className="relative flex-1 sm:flex-none">
               <select 
-                className="w-full sm:w-44 p-3 bg-white border border-slate-200 rounded-xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer" 
+                className="w-full sm:w-40 py-2.5 pl-3.5 pr-8 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-glass outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all" 
                 value={selectedBranch} 
                 onChange={e => setSelectedBranch(e.target.value)}
               >
@@ -167,7 +174,7 @@ const Expenses = () => {
             {/* Year Filter */}
             <div className="relative flex-1 sm:flex-none">
               <select 
-                className="w-full sm:w-32 p-3 bg-white border border-slate-200 rounded-xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer" 
+                className="w-full sm:w-32 py-2.5 pl-3.5 pr-8 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-glass outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all" 
                 value={selectedYear} 
                 onChange={e => setSelectedYear(e.target.value)}
               >
@@ -180,84 +187,87 @@ const Expenses = () => {
             {/* Export Button */}
             <button 
               onClick={handleExport}
-              className="bg-slate-900 hover:bg-black text-white p-3 rounded-xl transition-all shadow-md flex items-center gap-2 font-bold text-xs uppercase tracking-widest active:scale-95"
+              className="glass-card hover:bg-slate-50/80 border border-slate-200/80 text-slate-700 py-2.5 px-3.5 rounded-xl transition-all shadow-glass flex items-center gap-2 font-semibold text-xs active:scale-95"
               title="Export to CSV"
             >
-               <Download size={18}/> <span className="hidden sm:inline">Export CSV</span>
+               <Download size={15}/> <span className="hidden sm:inline">Export CSV</span>
             </button>
 
             {/* Add Button */}
-            <button onClick={openAddModal} className="bg-primary-600 hover:bg-primary-700 text-white px-6 py-3 rounded-xl transition-all shadow-lg shadow-primary-500/20 flex items-center gap-2 font-black text-xs uppercase tracking-widest active:scale-95">
-               <Plus size={18}/> <span className="hidden sm:inline">Add Expense</span>
-               <span className="sm:hidden">Add</span>
+            <button 
+              onClick={openAddModal} 
+              className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center gap-1.5 font-semibold text-xs active:scale-95"
+            >
+               <Plus size={16}/> <span>Add Expense</span>
             </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
          {/* Category Breakdown */}
-         <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm h-80 flex flex-col">
-            <h3 className="text-xl font-black text-slate-900 mb-6 flex items-center gap-2">
-               <Receipt size={20} className="text-violet-600"/> Category Breakdown
+         <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass h-80 flex flex-col">
+            <h3 className="text-base font-bold font-display text-slate-900 mb-4 flex items-center gap-2">
+               <Receipt size={18} className="text-violet-600"/> Category Breakdown
             </h3>
             <div className="flex-1">
                <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                     <Pie data={pieData} dataKey="value" innerRadius={60} outerRadius={80} paddingAngle={5}>
+                     <Pie data={pieData} dataKey="value" innerRadius={55} outerRadius={75} paddingAngle={4}>
                         {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="none" />)}
                      </Pie>
                      <Tooltip 
-                        contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                        contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 8px 16px -4px rgba(0,0,0,0.06)', fontSize: '12px' }}
                         formatter={(val: number) => `₹${val.toLocaleString()}`} 
                      />
-                     <Legend iconSize={8} iconType="circle" layout="vertical" verticalAlign="middle" align="right" />
+                     <Legend iconSize={8} iconType="circle" layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: '12px' }} />
                   </PieChart>
                </ResponsiveContainer>
             </div>
          </div>
 
          {/* Recent List */}
-         <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-80">
-            <h3 className="text-xl font-black text-slate-900 mb-6 flex items-center gap-2">
-               <ShoppingBag size={20} className="text-primary-600"/> Recent Expenses
+         <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-80">
+            <h3 className="text-base font-bold font-display text-slate-900 mb-4 flex items-center gap-2">
+               <ShoppingBag size={18} className="text-primary-600"/> Recent Expenses
             </h3>
-            <div className="flex-1 overflow-y-auto no-scrollbar pr-2">
+            <div className="flex-1 overflow-y-auto no-scrollbar pr-1">
                {filteredExpenses.map((e: any, i) => (
-                  <div key={i} className="flex justify-between py-4 border-b border-slate-50 last:border-0 hover:bg-slate-50/80 px-3 -mx-3 rounded-2xl transition-colors group cursor-default">
-                     <div className="flex-1">
-                        <div className="font-black text-slate-900 text-sm uppercase tracking-tight">{e.title || e.category}</div>
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 flex items-center gap-3">
+                  <div key={i} className="flex justify-between items-center py-2.5 border-b border-slate-100 last:border-0 hover:bg-slate-50/70 px-2.5 -mx-2.5 rounded-xl transition-colors group cursor-default">
+                     <div className="flex-1 min-w-0 pr-3">
+                        <div className="font-semibold text-slate-800 text-xs truncate">{e.title || e.category}</div>
+                        <div className="text-[11px] text-slate-400 font-medium mt-0.5 flex items-center gap-2">
                            <span>{e.date}</span>
                            {e.items && e.items.length > 0 && (
-                              <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[10px]">
                                  {e.items.length} items
                               </span>
                            )}
-                           <span className="text-slate-300 font-normal">
+                           <span className="text-slate-300">•</span>
+                           <span className="text-slate-500 text-[11px] truncate">
                              {branches.find(b => b.id === e.branchId)?.name}
                            </span>
                         </div>
                      </div>
-                     <div className="text-right flex items-center gap-4">
+                     <div className="text-right flex items-center gap-3">
                         <div>
-                           <div className="font-black text-slate-900 text-lg">₹{e.amount}</div>
-                           <span className={`text-[8px] uppercase font-black px-2 py-0.5 rounded border ${
-                             e.paymentStatus === 'Paid' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-red-50 text-red-600 border-red-100'
+                           <div className="font-bold text-slate-900 text-sm">₹{Number(e.amount).toLocaleString()}</div>
+                           <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border ${
+                             e.paymentStatus === 'Paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'
                            }`}>
                               {e.paymentStatus}
                            </span>
                         </div>
-                        <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button onClick={() => openEditModal(e)} className="text-blue-500 hover:bg-blue-50 p-2 rounded-lg"><Edit2 size={14} /></button>
-                           <button onClick={() => handleDeleteExpense(e.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg"><Trash2 size={14} /></button>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                           <button onClick={() => openEditModal(e)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg" title="Edit"><Edit2 size={13} /></button>
+                           <button onClick={() => handleDeleteExpense(e.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg" title="Delete"><Trash2 size={13} /></button>
                         </div>
                      </div>
                   </div>
                ))}
                {filteredExpenses.length === 0 && (
-                 <div className="flex flex-col items-center justify-center h-full text-slate-400 opacity-50 py-10">
-                   <Receipt size={40} className="mb-2"/>
-                   <p className="font-bold text-xs uppercase tracking-widest">No expenses recorded</p>
+                 <div className="flex flex-col items-center justify-center h-full text-slate-400 py-10">
+                   <Receipt size={32} className="mb-2 text-slate-300"/>
+                   <p className="font-medium text-xs">No expenses recorded for this filter</p>
                  </div>
                )}
             </div>
@@ -265,22 +275,22 @@ const Expenses = () => {
       </div>
 
       {/* Monthly Trend Chart */}
-      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm h-[400px]">
-          <h3 className="text-xl font-black text-slate-900 mb-8 flex items-center gap-2">
-             <Calendar size={20} className="text-emerald-600"/> Monthly Trend {selectedYear === 'All' ? '(All Years)' : `(${selectedYear})`}
+      <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass h-[380px]">
+          <h3 className="text-base font-bold font-display text-slate-900 mb-6 flex items-center gap-2">
+             <Calendar size={18} className="text-emerald-600"/> Monthly Spending Trend {selectedYear === 'All' ? '(All Years)' : `(${selectedYear})`}
           </h3>
-          <div className="h-full pb-12">
+          <div className="h-full pb-14">
              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlyTrendData}>
                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12, fontWeight: 900}} />
-                   <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12, fontWeight: 900}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(1) + 'k' : v}`} />
+                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} />
+                   <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
                    <Tooltip 
                        cursor={{fill: '#f8fafc'}}
-                       contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '12px' }}
-                       formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Total Expenses']}
+                       contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 8px 16px -4px rgba(0,0,0,0.06)', fontSize: '12px' }}
+                       formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Total Spent']}
                    />
-                   <Bar dataKey="amount" fill="#4f46e5" radius={[8, 8, 0, 0]} barSize={40} />
+                   <Bar dataKey="amount" fill="#6366f1" radius={[6, 6, 0, 0]} barSize={32} />
                 </BarChart>
              </ResponsiveContainer>
           </div>
@@ -357,70 +367,73 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
    };
 
    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-         <div className="bg-white w-full max-w-2xl rounded-[2rem] p-8 shadow-2xl max-h-[95vh] overflow-y-auto no-scrollbar relative">
-            <div className="flex justify-between items-center mb-8">
-               <h3 className="text-2xl font-black text-slate-900">{initialData ? 'Edit Expense' : 'Add New Expense'}</h3>
-               <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><X size={24}/></button>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-in fade-in">
+         <div className="glass-card bg-white/95 w-full max-w-2xl rounded-2xl p-6 sm:p-8 shadow-2xl max-h-[92vh] overflow-y-auto no-scrollbar relative border border-white/80">
+            <div className="flex justify-between items-center mb-6">
+               <div>
+                  <h3 className="text-xl font-bold font-display text-slate-900">{initialData ? 'Edit Expense Record' : 'Record New Expense'}</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Log operational kitchen outlays and vendor bills</p>
+               </div>
+               <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={20}/></button>
             </div>
             
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-5">
                
                {/* Top Section: Basic Info */}
-               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                   <div>
                      <ModalLabel>Branch</ModalLabel>
-                     <select className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-900 font-bold text-sm outline-none focus:ring-2 focus:ring-primary-500" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>
+                     <select className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>
                         {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                      </select>
                   </div>
                   <div>
                      <ModalLabel>Date</ModalLabel>
-                     <input required type="date" value={formData.date} className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-900 font-bold text-sm outline-none focus:ring-2 focus:ring-primary-500" onChange={e => setFormData({...formData, date: e.target.value})} />
+                     <input required type="date" value={formData.date} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" onChange={e => setFormData({...formData, date: e.target.value})} />
                   </div>
                   <div>
                      <ModalLabel>Category</ModalLabel>
-                     <select className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-900 font-bold text-sm outline-none focus:ring-2 focus:ring-primary-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                     <select className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
                         {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                      </select>
                   </div>
                </div>
 
                {/* Middle Section: Details */}
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                     <ModalLabel>Title</ModalLabel>
-                     <input required placeholder="e.g. Weekly Market Run" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-900 font-bold text-sm outline-none focus:ring-2 focus:ring-primary-500" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
+               <div className="grid grid-cols-1 gap-3.5">
+                  <div>
+                     <ModalLabel>Title / Purpose</ModalLabel>
+                     <input required placeholder="e.g. Weekly Market Run / Fresh Produce" className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
                   </div>
-                  <div className="md:col-span-2">
+                  <div>
                      <ModalLabel>Description (Optional)</ModalLabel>
-                     <input placeholder="Details about this purchase..." className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-900 font-bold text-sm outline-none focus:ring-2 focus:ring-primary-500" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+                     <input placeholder="Supplier name, bill reference, or notes..." className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
                   </div>
                </div>
 
                {/* Line Items Section */}
-               <div className="bg-slate-50 p-6 rounded-[1.5rem] border border-slate-200">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+               <div className="bg-slate-50/70 p-4 sm:p-5 rounded-xl border border-slate-200/70">
+                  <label className="block text-xs font-semibold text-slate-700 mb-3 flex items-center gap-2">
                      <ShoppingBag size={14} className="text-primary-600"/> Item Breakdown (Optional)
                   </label>
                   
                   {/* Item Input Row */}
-                  <div className="flex flex-wrap md:flex-nowrap gap-3 mb-4">
+                  <div className="flex flex-wrap sm:flex-nowrap gap-2 mb-3">
                      <input 
-                        placeholder="Item Name" 
-                        className="flex-[2] min-w-[120px] p-3 text-sm font-bold border border-slate-200 rounded-xl bg-white text-slate-900 outline-none focus:ring-2 focus:ring-primary-500"
+                        placeholder="Item name (e.g. Basmati Rice)" 
+                        className="flex-[2] min-w-[120px] p-2 text-xs font-medium border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:ring-2 focus:ring-primary-500/20"
                         value={newItem.name}
                         onChange={e => setNewItem({...newItem, name: e.target.value})}
                      />
                      <input 
                         type="number" 
                         placeholder="Qty" 
-                        className="w-20 p-3 text-sm font-bold border border-slate-200 rounded-xl bg-white text-slate-900 outline-none focus:ring-2 focus:ring-primary-500"
+                        className="w-16 p-2 text-xs font-medium border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:ring-2 focus:ring-primary-500/20"
                         value={newItem.quantity}
                         onChange={e => setNewItem({...newItem, quantity: e.target.value})}
                      />
                      <select 
-                        className="w-24 p-3 text-sm font-bold border border-slate-200 rounded-xl bg-white text-slate-900 outline-none focus:ring-2 focus:ring-primary-500"
+                        className="w-20 p-2 text-xs font-medium border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:ring-2 focus:ring-primary-500/20"
                         value={newItem.unit}
                         onChange={e => setNewItem({...newItem, unit: e.target.value})}
                      >
@@ -428,8 +441,8 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
                      </select>
                      <input 
                         type="number" 
-                        placeholder="Price" 
-                        className="w-28 p-3 text-sm font-bold border border-slate-200 rounded-xl bg-white text-slate-900 outline-none focus:ring-2 focus:ring-primary-500"
+                        placeholder="Amount (₹)" 
+                        className="w-24 p-2 text-xs font-medium border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:ring-2 focus:ring-primary-500/20"
                         value={newItem.price}
                         onChange={e => setNewItem({...newItem, price: e.target.value})}
                         onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddItem())}
@@ -437,33 +450,34 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
                      <button 
                         type="button" 
                         onClick={handleAddItem}
-                        className="bg-slate-900 text-white p-3 rounded-xl hover:bg-black transition-all shadow-md flex items-center justify-center active:scale-95"
+                        className="bg-slate-900 text-white p-2 rounded-lg hover:bg-black transition-all flex items-center justify-center active:scale-95"
+                        title="Add item"
                      >
-                        <Plus size={20} />
+                        <Plus size={16} />
                      </button>
                   </div>
 
                   {/* Items List */}
                   {items.length > 0 && (
-                     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                        <table className="w-full text-sm text-left">
-                           <thead className="bg-slate-100 text-slate-400 text-[10px] uppercase font-black tracking-widest">
+                     <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-xs">
+                        <table className="w-full text-xs text-left">
+                           <thead className="bg-slate-50 text-slate-500 text-[10px] font-semibold uppercase tracking-wider">
                               <tr>
-                                 <th className="p-3 pl-4">Item</th>
-                                 <th className="p-3">Qty</th>
-                                 <th className="p-3">Amount</th>
-                                 <th className="p-3 w-10"></th>
+                                 <th className="py-2 pl-3">Item</th>
+                                 <th className="py-2">Qty</th>
+                                 <th className="py-2">Amount</th>
+                                 <th className="py-2 w-8"></th>
                               </tr>
                            </thead>
-                           <tbody className="divide-y divide-slate-50">
+                           <tbody className="divide-y divide-slate-100">
                               {items.map((item, idx) => (
                                  <tr key={idx}>
-                                    <td className="p-3 pl-4 text-slate-800 font-bold uppercase text-[11px]">{item.name}</td>
-                                    <td className="p-3 text-slate-500 font-bold">{item.quantity} {item.unit}</td>
-                                    <td className="p-3 font-black text-slate-900">₹{item.amount}</td>
-                                    <td className="p-3 text-center">
-                                       <button type="button" onClick={() => handleRemoveItem(idx)} className="text-red-400 hover:text-red-600 transition-colors">
-                                          <X size={16} />
+                                    <td className="py-2 pl-3 text-slate-800 font-medium">{item.name}</td>
+                                    <td className="py-2 text-slate-500">{item.quantity} {item.unit}</td>
+                                    <td className="py-2 font-semibold text-slate-900">₹{item.amount}</td>
+                                    <td className="py-2 text-center">
+                                       <button type="button" onClick={() => handleRemoveItem(idx)} className="text-slate-400 hover:text-rose-600 transition-colors">
+                                          <X size={14} />
                                        </button>
                                     </td>
                                  </tr>
@@ -475,39 +489,40 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
                </div>
 
                {/* Bottom Section: Totals & Payment */}
-               <div className="flex flex-col md:flex-row gap-4 items-end bg-slate-900 p-6 rounded-[1.5rem] shadow-xl text-white">
-                  <div className="w-full md:w-1/3">
-                     <ModalLabel><span className="text-slate-400">Total Amount (₹)</span></ModalLabel>
+               <div className="flex flex-col sm:flex-row gap-3 items-end bg-slate-900 p-4 sm:p-5 rounded-xl text-white">
+                  <div className="w-full sm:w-1/3">
+                     <ModalLabel><span className="text-slate-300">Total Amount (₹)</span></ModalLabel>
                      <input 
                         required 
                         type="number" 
-                        className={`w-full p-3 bg-slate-800 border-none rounded-xl text-white font-black text-xl outline-none ${items.length > 0 ? 'opacity-50' : ''}`} 
+                        className={`w-full p-2.5 bg-slate-800/90 border border-slate-700 rounded-lg text-white font-bold text-lg outline-none ${items.length > 0 ? 'opacity-70' : ''}`} 
                         value={formData.amount} 
                         onChange={e => items.length === 0 && setFormData({...formData, amount: e.target.value})}
                         readOnly={items.length > 0}
                      />
                   </div>
-                  <div className="w-full md:w-1/3">
-                     <ModalLabel><span className="text-slate-400">Status</span></ModalLabel>
-                     <select className="w-full p-3 bg-slate-800 border-none rounded-xl text-white font-bold text-sm outline-none" value={formData.paymentStatus} onChange={e => setFormData({...formData, paymentStatus: e.target.value})}>
+                  <div className="w-full sm:w-1/3">
+                     <ModalLabel><span className="text-slate-300">Payment Status</span></ModalLabel>
+                     <select className="w-full p-2.5 bg-slate-800/90 border border-slate-700 rounded-lg text-white font-medium text-xs outline-none" value={formData.paymentStatus} onChange={e => setFormData({...formData, paymentStatus: e.target.value})}>
                         <option value="Paid">Paid</option>
                         <option value="Pending">Pending</option>
                      </select>
                   </div>
-                  <div className="w-full md:w-1/3">
-                     <ModalLabel><span className="text-slate-400">Method</span></ModalLabel>
-                     <select className="w-full p-3 bg-slate-800 border-none rounded-xl text-white font-bold text-sm outline-none" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})}>
+                  <div className="w-full sm:w-1/3">
+                     <ModalLabel><span className="text-slate-300">Payment Method</span></ModalLabel>
+                     <select className="w-full p-2.5 bg-slate-800/90 border border-slate-700 rounded-lg text-white font-medium text-xs outline-none" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})}>
                         <option value="UPI">UPI</option>
                         <option value="Cash">Cash</option>
                         <option value="Card">Card</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
                      </select>
                   </div>
                </div>
 
-               <div className="grid grid-cols-2 gap-4 pt-4 pb-2">
-                  <button type="button" onClick={onClose} className="py-4 border-2 border-slate-100 rounded-2xl font-black text-slate-500 hover:bg-slate-50 transition-colors uppercase text-xs tracking-widest">Cancel</button>
-                  <button type="submit" className="py-4 bg-primary-600 text-white rounded-2xl font-black shadow-xl shadow-primary-500/20 hover:bg-primary-700 transition-all active:scale-95 uppercase text-xs tracking-widest">
-                     {initialData ? 'Save Changes' : 'Record Expense'}
+               <div className="grid grid-cols-2 gap-3 pt-3">
+                  <button type="button" onClick={onClose} className="py-2.5 border border-slate-200 rounded-xl font-medium text-slate-600 hover:bg-slate-50 transition-colors text-xs">Cancel</button>
+                  <button type="submit" className="py-2.5 bg-primary-600 text-white rounded-xl font-semibold shadow-sm hover:bg-primary-700 transition-all active:scale-95 text-xs">
+                     {initialData ? 'Update Expense' : 'Save Expense'}
                   </button>
                </div>
             </form>
@@ -517,7 +532,7 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
 }
 
 const ModalLabel = ({ children }: React.PropsWithChildren<{}>) => (
-  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">{children}</label>
+  <label className="text-[11px] font-semibold text-slate-600 mb-1.5 block">{children}</label>
 );
 
 export default Expenses;

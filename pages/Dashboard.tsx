@@ -13,23 +13,23 @@ import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#6366f1'];
 
 const StatCard = ({ title, value, icon: Icon, colorClass, iconColor, subtext }: any) => (
-  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-32">
-    <div className="flex justify-between items-start">
-      <div className="space-y-0.5 overflow-hidden">
-        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest truncate">{title}</p>
-        <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">
-          {typeof value === 'number' && (title.toLowerCase().includes('revenue') || title.toLowerCase().includes('payment')) 
+  <div className="glass-card p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between hover:shadow-glass-hover transition-all duration-300 min-h-[130px]">
+    <div className="flex justify-between items-start gap-3">
+      <div className="space-y-1 overflow-hidden">
+        <p className="text-xs font-semibold text-slate-500 truncate">{title}</p>
+        <h3 className="text-2xl font-bold text-slate-900 font-display tracking-tight truncate">
+          {typeof value === 'number' && (title.toLowerCase().includes('revenue') || title.toLowerCase().includes('payment') || title.toLowerCase().includes('sales')) 
             ? `₹${Math.round(value).toLocaleString('en-IN')}` 
             : value}
         </h3>
       </div>
-      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${colorClass} bg-opacity-10`}>
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${colorClass} bg-opacity-15 shadow-xs`}>
         <Icon size={18} className={iconColor} />
       </div>
     </div>
     {subtext && (
-      <div className="mt-1">
-        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tight truncate">{subtext}</p>
+      <div className="pt-2 border-t border-slate-100/70">
+        <p className="text-xs text-slate-400 font-medium truncate">{subtext}</p>
       </div>
     )}
   </div>
@@ -158,139 +158,159 @@ const Dashboard = () => {
     });
   }, [customers, selectedBranch, selectedYear]);
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-primary-600" size={48} /></div>;
+  if (isLoading) {
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="animate-spin text-primary-600" size={36} />
+        <p className="text-xs font-medium text-slate-400">Loading dashboard insights...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6 pb-16 pt-2 animate-in fade-in duration-500">
+    <div className="space-y-6 pb-16 pt-1 animate-in fade-in duration-300">
       
-      {/* Header & Filters Unified Row (Horizontal Scroll on Mobile) */}
-      <div className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
-        <div className="flex items-center gap-3 shrink-0">
-          <h1 className="text-lg font-black text-slate-900 tracking-tight uppercase">Dashboard</h1>
-          <div className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg text-[10px] font-black text-slate-500 whitespace-nowrap">
-            <Calendar size={12} /> {formattedToday}
+      {/* Header & Filters Unified Row */}
+      <div className="glass-panel p-4 rounded-2xl border border-white/80 shadow-glass flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight font-display">Dashboard Overview</h1>
+            <p className="text-xs text-slate-500 hidden sm:block">Real-time performance and kitchen metrics</p>
+          </div>
+          <div className="flex items-center gap-1.5 bg-white/80 px-2.5 py-1 rounded-xl text-xs font-medium text-slate-600 border border-slate-200/60 shadow-xs">
+            <Calendar size={13} className="text-primary-600" />
+            <span>{formattedToday}</span>
           </div>
         </div>
         
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2">
           <div className="relative">
             <select 
-              className="pl-2 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-black shadow-none outline-none focus:ring-1 focus:ring-primary-500 appearance-none uppercase tracking-tighter cursor-pointer" 
+              className="pl-3 pr-8 py-2 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all" 
               value={selectedBranch} 
               onChange={(e) => setSelectedBranch(e.target.value)}
             >
               <option value="All">All Branches</option>
               {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
-            <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
           </div>
 
           <div className="relative">
             <select 
-              className="pl-2 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-black shadow-none outline-none focus:ring-1 focus:ring-primary-500 appearance-none uppercase tracking-tighter cursor-pointer" 
+              className="pl-3 pr-8 py-2 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all" 
               value={selectedYear} 
               onChange={(e) => setSelectedYear(e.target.value)}
             >
               <option value="All">All Years</option>
               {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
-            <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
           </div>
         </div>
       </div>
 
-      {/* KPI Section - Paired Rows for Mobile Efficiency */}
+      {/* KPI Section */}
       <div className="space-y-4">
         {/* Row 1: Revenue & Pending */}
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard title="Total Revenue" value={kpis.subRevenue} icon={DollarSign} colorClass="bg-emerald-600" iconColor="text-emerald-600" subtext="Collected Total" />
-          <StatCard title="Pending Payments" value={kpis.pending} icon={AlertCircle} colorClass="bg-rose-500" iconColor="text-rose-500" subtext="Collection Due" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard title="Subscription Revenue" value={kpis.subRevenue} icon={DollarSign} colorClass="bg-emerald-600" iconColor="text-emerald-600" subtext="Total collected payments" />
+          <StatCard title="Pending Payments" value={kpis.pending} icon={AlertCircle} colorClass="bg-rose-500" iconColor="text-rose-500" subtext="Collection balance due" />
+          <StatCard title="Active Subscriptions" value={kpis.activeCust} icon={Activity} colorClass="bg-indigo-600" iconColor="text-indigo-600" subtext="Currently receiving deliveries" />
+          <StatCard title="Total Customers" value={kpis.unqCust} icon={Users} colorClass="bg-blue-600" iconColor="text-blue-600" subtext="Registered customer base" />
         </div>
 
-        {/* Row 2: Unique & Active (FIXED LOGIC) */}
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard title="Unq Customers" value={kpis.unqCust} icon={Users} colorClass="bg-blue-600" iconColor="text-blue-600" subtext="Total Historical" />
-          <StatCard title="Active Users" value={kpis.activeCust} icon={Activity} colorClass="bg-indigo-600" iconColor="text-indigo-600" subtext="Running Plans" />
+        {/* Row 2: Single Orders */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <StatCard title="Single Order Sales" value={kpis.singleRev} icon={TrendingUp} colorClass="bg-cyan-600" iconColor="text-cyan-600" subtext="One-off meal purchases" />
+          <StatCard title="Single Order Deliveries" value={kpis.singleCount} icon={ShoppingBag} colorClass="bg-violet-600" iconColor="text-violet-600" subtext="Completed standalone orders" />
         </div>
 
-        {/* Row 3: Single Orders */}
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard title="Single Rev" value={kpis.singleRev} icon={TrendingUp} colorClass="bg-cyan-600" iconColor="text-cyan-600" subtext="Order Sales" />
-          <StatCard title="Single Orders" value={kpis.singleCount} icon={ShoppingBag} colorClass="bg-violet-600" iconColor="text-violet-600" subtext="Order Count" />
-        </div>
-
-        {/* Row 4: Plans Today (Full Width) */}
+        {/* Row 3: Kitchen Daily Preparation Featured Glass Card */}
         <div className="w-full">
-           <div className="bg-slate-900 p-5 rounded-3xl flex items-center justify-between shadow-xl relative overflow-hidden group">
-              <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                <Package size={80} className="text-white" />
-              </div>
+           <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 p-6 text-white shadow-glass-lg border border-slate-700/60 flex items-center justify-between group">
+              <div className="absolute -right-8 -top-8 w-44 h-44 bg-primary-500/20 rounded-full blur-2xl pointer-events-none" />
               <div className="relative z-10">
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Plans Scheduled Today</p>
-                 <h3 className="text-3xl font-black text-white">{kpis.plansToday} <span className="text-sm font-bold text-slate-500 ml-1 uppercase">Boxes</span></h3>
+                 <div className="flex items-center gap-2">
+                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                   <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Kitchen Schedule Today</p>
+                 </div>
+                 <div className="flex items-baseline gap-2 mt-2">
+                   <h3 className="text-3xl sm:text-4xl font-extrabold text-white font-display tracking-tight">{kpis.plansToday}</h3>
+                   <span className="text-sm font-medium text-slate-300">meal boxes queued for dispatch</span>
+                 </div>
               </div>
-              <div className="w-12 h-12 bg-primary-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary-500/20">
-                 <Package size={24} />
+              <div className="relative z-10 w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 flex items-center justify-center text-primary-300 shadow-inner group-hover:scale-105 transition-transform">
+                 <Package size={22} />
               </div>
            </div>
         </div>
       </div>
 
-      {/* Charts Section - Vertical Stack for Selected Years */}
-      <div className="space-y-6">
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Cash Flow Chart */}
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-primary-50 text-primary-600 rounded-xl"><BarChart3 size={18}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight truncate uppercase">Monthly Cash Flow {selectedYear === 'All' ? '(History)' : `(${selectedYear})`}</h3>
+              <div className="p-2 bg-primary-50 text-primary-600 rounded-xl border border-primary-100/60 shadow-xs"><BarChart3 size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Monthly Cash Flow</h3>
+                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'Complete history' : `Year ${selectedYear}`}</p>
+              </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                  <BarChart data={cashFlowData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-                    <Bar dataKey="amount" fill="#4f46e5" radius={[6, 6, 0, 0]} barSize={24} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '14px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} />
+                    <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={24} />
                  </BarChart>
               </ResponsiveContainer>
            </div>
         </div>
 
         {/* Plan Wise Revenue Pie */}
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-orange-50 text-orange-600 rounded-xl"><PieIcon size={18}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight truncate uppercase">Plan-wise Revenue {selectedYear === 'All' ? '(History)' : `(${selectedYear})`}</h3>
+              <div className="p-2 bg-orange-50 text-orange-600 rounded-xl border border-orange-100/60 shadow-xs"><PieIcon size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Plan Revenue Distribution</h3>
+                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'All-time volume' : `Year ${selectedYear}`}</p>
+              </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                  <PieChart>
-                    <Pie data={planRevenueData} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={5} dataKey="value">
+                    <Pie data={planRevenueData} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={4} dataKey="value">
                        {planRevenueData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
+                    <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} />
+                    <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 500 }} />
                  </PieChart>
               </ResponsiveContainer>
            </div>
         </div>
 
-        {/* Customer Growth Line Chart */}
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        {/* Customer Growth Line Chart (Full Width on 2-col grid) */}
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px] lg:col-span-2">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><TrendingUp size={18}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight truncate uppercase">Monthly Signups {selectedYear === 'All' ? '(History)' : `(${selectedYear})`}</h3>
+              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100/60 shadow-xs"><TrendingUp size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Customer Signup Trends</h3>
+                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'Historical registration trend' : `Signups for ${selectedYear}`}</p>
+              </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                  <LineChart data={customerGrowthData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} allowDecimals={false} />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-                    <Line type="monotone" dataKey="count" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981' }} activeDot={{ r: 6 }} name="New Signups" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} allowDecimals={false} />
+                    <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} />
+                    <Line type="monotone" dataKey="count" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} name="New Signups" />
                  </LineChart>
               </ResponsiveContainer>
            </div>

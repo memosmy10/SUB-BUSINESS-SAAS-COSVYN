@@ -209,17 +209,29 @@ const Expenses = () => {
             <h3 className="text-base font-bold font-display text-slate-900 mb-4 flex items-center gap-2">
                <Receipt size={18} className="text-violet-600"/> Category Breakdown
             </h3>
-            <div className="flex-1">
+            <div className="flex-1 relative">
                <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                     <Pie data={pieData} dataKey="value" innerRadius={55} outerRadius={75} paddingAngle={4}>
-                        {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="none" />)}
+                     <Pie data={pieData} dataKey="value" innerRadius={58} outerRadius={82} paddingAngle={4}>
+                        {pieData.map((_, i) => (
+                          <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="rgba(255,255,255,0.8)" strokeWidth={2} />
+                        ))}
                      </Pie>
                      <Tooltip 
-                        contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 8px 16px -4px rgba(0,0,0,0.06)', fontSize: '12px' }}
-                        formatter={(val: number) => `₹${val.toLocaleString()}`} 
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const item = payload[0];
+                            return (
+                              <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                                <p className="font-bold text-slate-800 font-display">{item.name}</p>
+                                <p className="text-violet-600 font-bold font-mono mt-0.5">₹{Number(item.value).toLocaleString()}</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
                      />
-                     <Legend iconSize={8} iconType="circle" layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: '12px' }} />
+                     <Legend iconSize={8} iconType="circle" layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
                   </PieChart>
                </ResponsiveContainer>
             </div>
@@ -282,15 +294,31 @@ const Expenses = () => {
           <div className="h-full pb-14">
              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlyTrendData}>
-                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} />
-                   <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 500}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                   <defs>
+                     <linearGradient id="expenseBarGrad" x1="0" y1="0" x2="0" y2="1">
+                       <stop offset="0%" stopColor="#6366f1" stopOpacity={0.95}/>
+                       <stop offset="100%" stopColor="#818cf8" stopOpacity={0.4}/>
+                     </linearGradient>
+                   </defs>
+                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.6)" />
+                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} />
+                   <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
                    <Tooltip 
-                       cursor={{fill: '#f8fafc'}}
-                       contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 8px 16px -4px rgba(0,0,0,0.06)', fontSize: '12px' }}
-                       formatter={(val: number) => [`₹${val.toLocaleString()}`, 'Total Spent']}
+                       cursor={{fill: 'rgba(241, 245, 249, 0.6)', radius: 8}}
+                       content={({ active, payload, label }) => {
+                         if (active && payload && payload.length) {
+                           return (
+                             <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                               <p className="font-bold text-slate-800 font-display mb-0.5">{label}</p>
+                               <p className="text-indigo-600 font-bold font-mono text-sm">₹{Number(payload[0].value).toLocaleString()}</p>
+                               <p className="text-[10px] text-slate-400 mt-0.5">Total Spent</p>
+                             </div>
+                           );
+                         }
+                         return null;
+                       }}
                    />
-                   <Bar dataKey="amount" fill="#6366f1" radius={[6, 6, 0, 0]} barSize={32} />
+                   <Bar dataKey="amount" fill="url(#expenseBarGrad)" radius={[8, 8, 2, 2]} barSize={28} />
                 </BarChart>
              </ResponsiveContainer>
           </div>

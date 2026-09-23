@@ -158,65 +158,66 @@ const Analytics = () => {
     };
   }, [filteredData.fCust]);
 
-  const KpiCard = ({ title, value, icon: Icon, colorClass }: any) => (
-    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-36">
-      <div className="flex justify-between items-start">
+  const KpiCard = ({ title, value, icon: Icon, colorClass, iconColor }: any) => (
+    <div className="glass-card p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between hover:shadow-glass-hover transition-all duration-300 min-h-[130px]">
+      <div className="flex justify-between items-start gap-3">
         <div className="space-y-1">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
-          <h3 className="text-3xl font-black text-slate-900 tracking-tight">₹{Math.round(value).toLocaleString()}</h3>
+          <p className="text-xs font-semibold text-slate-500">{title}</p>
+          <h3 className="text-2xl font-bold text-slate-900 font-display tracking-tight">₹{Math.round(value).toLocaleString()}</h3>
         </div>
-        <div className={`p-3 rounded-2xl ${colorClass} bg-opacity-10`}>
-          <Icon size={20} className={colorClass.replace('bg-', 'text-')} />
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorClass} bg-opacity-10 shadow-xs`}>
+          <Icon size={18} className={iconColor || colorClass.replace('bg-', 'text-')} />
         </div>
       </div>
+      <p className="text-[11px] text-slate-400 font-medium mt-2">Calculated for current view</p>
     </div>
   );
 
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-primary-600" size={48} /></div>;
 
   return (
-    <div className="space-y-8 pb-20 pt-2 animate-in fade-in duration-500">
+    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
       
       {/* Header & Advanced Filters */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-             Analytics
+          <h1 className="text-2xl font-extrabold text-slate-900 font-display tracking-tight flex items-center gap-2.5">
+             Analytics & Insights
           </h1>
-          <p className="text-slate-500 font-medium mt-1">Platform performance metrics and financial health.</p>
+          <p className="text-xs text-slate-500 font-medium mt-0.5">Platform performance metrics and financial breakdown</p>
         </div>
         
-        <div className="flex flex-wrap gap-3 w-full xl:w-auto">
+        <div className="flex flex-wrap gap-2.5 w-full sm:w-auto">
           {/* Branch Filter */}
-          <div className="relative flex-1 md:flex-none md:w-48">
+          <div className="relative flex-1 sm:flex-none sm:w-44">
             <select 
-              className="w-full p-3 bg-white border border-slate-200 rounded-2xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer" 
+              className="w-full pl-3 pr-8 py-2 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-xs outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer appearance-none" 
               value={selectedBranch} 
               onChange={(e) => setSelectedBranch(e.target.value)}
             >
               <option value="All">All Branches</option>
               {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
-            <Store className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+            <Store className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
           </div>
 
           {/* Year Filter */}
-          <div className="relative flex-1 md:flex-none md:w-40">
+          <div className="relative flex-1 sm:flex-none sm:w-36">
             <select 
-              className="w-full p-3 bg-white border border-slate-200 rounded-2xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer" 
+              className="w-full pl-3 pr-8 py-2 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-xs outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer appearance-none" 
               value={selectedYear} 
               onChange={(e) => { setSelectedYear(e.target.value); setSelectedMonth('All'); }}
             >
               <option value="All">All Years</option>
               {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
-            <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+            <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
           </div>
 
           {/* Month Filter */}
-          <div className="relative flex-1 md:flex-none md:w-40">
+          <div className="relative flex-1 sm:flex-none sm:w-36">
             <select 
-              className="w-full p-3 bg-white border border-slate-200 rounded-2xl text-xs font-black shadow-sm outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-10 uppercase tracking-widest cursor-pointer disabled:opacity-50" 
+              className="w-full pl-3 pr-8 py-2 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-xs outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer appearance-none disabled:opacity-50" 
               value={selectedMonth} 
               onChange={(e) => setSelectedMonth(e.target.value)}
               disabled={selectedYear === 'All'}
@@ -224,36 +225,37 @@ const Analytics = () => {
               <option value="All">All Months</option>
               {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
             </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
           </div>
         </div>
       </div>
 
       {/* KPI Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Total Revenue" value={kpis.revenue} icon={DollarSign} colorClass="bg-blue-600" />
-        <KpiCard title="Total Expense" value={kpis.expense} icon={TrendingDown} colorClass="bg-rose-500" />
-        <KpiCard title="Total Net Profit" value={kpis.profit} icon={TrendingUp} colorClass="bg-emerald-600" />
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow h-36">
-          <div className="flex justify-between items-start">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+        <KpiCard title="Total Revenue" value={kpis.revenue} icon={DollarSign} colorClass="bg-blue-50" iconColor="text-blue-600" />
+        <KpiCard title="Total Expense" value={kpis.expense} icon={TrendingDown} colorClass="bg-rose-50" iconColor="text-rose-600" />
+        <KpiCard title="Net Operating Profit" value={kpis.profit} icon={TrendingUp} colorClass="bg-emerald-50" iconColor="text-emerald-600" />
+        <div className="glass-card p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between hover:shadow-glass-hover transition-all duration-300 min-h-[130px]">
+          <div className="flex justify-between items-start gap-3">
             <div className="space-y-1">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Active Users</p>
-              <h3 className="text-3xl font-black text-slate-900 tracking-tight">{kpis.active}</h3>
+              <p className="text-xs font-semibold text-slate-500">Active Customers</p>
+              <h3 className="text-2xl font-bold text-slate-900 font-display tracking-tight">{kpis.active}</h3>
             </div>
-            <div className="p-3 rounded-2xl bg-indigo-600 bg-opacity-10">
-              <Users size={20} className="text-indigo-600" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-indigo-50 text-indigo-600 shadow-xs">
+              <Users size={18} />
             </div>
           </div>
+          <p className="text-[11px] text-slate-400 font-medium mt-2">Receiving meal deliveries</p>
         </div>
       </div>
 
       {/* Main Adaptive Trend Chart */}
-      <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col h-[450px]">
-        <div className="flex items-center gap-3 mb-8">
-           <div className="p-2 bg-primary-50 text-primary-600 rounded-xl"><Activity size={20}/></div>
+      <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[420px]">
+        <div className="flex items-center gap-3 mb-6">
+           <div className="p-2.5 bg-primary-50 text-primary-600 rounded-xl border border-primary-100/60 shadow-xs"><Activity size={18}/></div>
            <div>
-              <h3 className="text-xl font-black text-slate-900 tracking-tight">Performance Trends</h3>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Performance Trends</h3>
+              <p className="text-xs text-slate-400 font-medium">
                 {selectedYear === 'All' ? 'Yearly Progression' : selectedMonth === 'All' ? `Monthly Breakdown (${selectedYear})` : `Weekly Distribution (${MONTHS[parseInt(selectedMonth)]} ${selectedYear})`}
               </p>
            </div>
@@ -262,118 +264,195 @@ const Analytics = () => {
            <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={trendData}>
                  <defs>
-                    <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient>
-                    <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f43f5e" stopOpacity={0.1}/><stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/></linearGradient>
+                    <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0.01}/></linearGradient>
+                    <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f43f5e" stopOpacity={0.25}/><stop offset="95%" stopColor="#f43f5e" stopOpacity={0.01}/></linearGradient>
                  </defs>
-                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 900}} />
-                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 900}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
-                 <Tooltip contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', padding: '16px' }} />
-                 <Legend verticalAlign="top" height={36} iconType="circle" />
-                 <Area type="monotone" dataKey="Revenue" stroke="#3b82f6" strokeWidth={4} fill="url(#colorRev)" />
-                 <Area type="monotone" dataKey="Expense" stroke="#f43f5e" strokeWidth={4} fill="url(#colorExp)" />
-                 <Area type="monotone" dataKey="Profit" stroke="#10b981" strokeWidth={4} fill="transparent" strokeDasharray="5 5" />
+                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.6)" />
+                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} />
+                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                 <Tooltip 
+                   content={({ active, payload, label }) => {
+                     if (active && payload && payload.length) {
+                       return (
+                         <div className="bg-white/95 backdrop-blur-md px-3.5 py-2.5 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs space-y-1">
+                           <p className="font-bold text-slate-800 font-display mb-1">{label}</p>
+                           {payload.map((item: any, idx: number) => (
+                             <div key={idx} className="flex justify-between items-center gap-4">
+                               <div className="flex items-center gap-1.5">
+                                 <span className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
+                                 <span className="text-slate-500 font-medium">{item.name}</span>
+                               </div>
+                               <span className="font-bold font-mono text-slate-900">₹{Number(item.value).toLocaleString()}</span>
+                             </div>
+                           ))}
+                         </div>
+                       );
+                     }
+                     return null;
+                   }}
+                 />
+                 <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
+                 <Area type="monotone" dataKey="Revenue" stroke="#3b82f6" strokeWidth={3} fill="url(#colorRev)" />
+                 <Area type="monotone" dataKey="Expense" stroke="#f43f5e" strokeWidth={3} fill="url(#colorExp)" />
+                 <Area type="monotone" dataKey="Profit" stroke="#10b981" strokeWidth={2.5} fill="transparent" strokeDasharray="4 4" />
               </AreaChart>
            </ResponsiveContainer>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Expense Breakdown */}
-        <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-rose-50 text-rose-600 rounded-xl"><PieIcon size={20}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Expense Breakdown</h3>
+              <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-100/60 shadow-xs"><PieIcon size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Expense Breakdown</h3>
+                <p className="text-xs text-slate-400 font-medium">Spending categorized by operational type</p>
+              </div>
            </div>
-           <div className="flex-1">
+           <div className="flex-1 relative">
               <ResponsiveContainer width="100%" height="100%">
                  <PieChart>
-                    <Pie data={expenseBreakdown} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={5} dataKey="value">
-                       {expenseBreakdown.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
+                    <Pie data={expenseBreakdown} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={4} dataKey="value">
+                       {expenseBreakdown.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(255,255,255,0.8)" strokeWidth={2} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" />
+                    <Tooltip 
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const item = payload[0];
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                              <p className="font-bold text-slate-800 font-display">{item.name}</p>
+                              <p className="text-rose-600 font-bold font-mono mt-0.5">₹{Number(item.value).toLocaleString()}</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
                  </PieChart>
               </ResponsiveContainer>
            </div>
         </div>
 
         {/* Customer Growth */}
-        <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-blue-50 text-blue-600 rounded-xl"><BarChart3 size={20}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Customer Growth</h3>
+              <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100/60 shadow-xs"><BarChart3 size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Customer Growth</h3>
+                <p className="text-xs text-slate-400 font-medium">Monthly customer onboarding volume</p>
+              </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                  <BarChart data={customerGrowth}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 900}} allowDecimals={false} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '20px', border: 'none' }} />
-                    <Bar dataKey="Signups" fill="#6366f1" radius={[6, 6, 0, 0]} barSize={24} />
+                    <defs>
+                      <linearGradient id="signupBarGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#6366f1" stopOpacity={0.95}/>
+                        <stop offset="100%" stopColor="#818cf8" stopOpacity={0.5}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.6)" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} allowDecimals={false} />
+                    <Tooltip 
+                      cursor={{fill: 'rgba(241, 245, 249, 0.6)', radius: 8}} 
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                              <p className="font-bold text-slate-800 font-display mb-0.5">{label}</p>
+                              <p className="text-indigo-600 font-bold font-mono">{payload[0].value} customers</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="Signups" fill="url(#signupBarGrad)" radius={[6, 6, 2, 2]} barSize={22} />
                  </BarChart>
               </ResponsiveContainer>
            </div>
         </div>
 
         {/* Revenue by Plan */}
-        <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><DollarSign size={20}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Revenue by Plan</h3>
+              <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100/60 shadow-xs"><DollarSign size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Revenue by Plan</h3>
+                <p className="text-xs text-slate-400 font-medium">Monetary contribution by subscription plan</p>
+              </div>
            </div>
-           <div className="flex-1">
+           <div className="flex-1 relative">
               <ResponsiveContainer width="100%" height="100%">
                  <PieChart>
-                    <Pie data={revenueByPlan} cx="50%" cy="50%" outerRadius={100} dataKey="value">
-                       {revenueByPlan.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                    <Pie data={revenueByPlan} cx="50%" cy="50%" innerRadius={60} outerRadius={95} paddingAngle={4} dataKey="value">
+                       {revenueByPlan.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(255,255,255,0.8)" strokeWidth={2} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: '20px', border: 'none' }} />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="rect" />
+                    <Tooltip 
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const item = payload[0];
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                              <p className="font-bold text-slate-800 font-display">{item.name}</p>
+                              <p className="text-emerald-600 font-bold font-mono mt-0.5">₹{Number(item.value).toLocaleString()}</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
                  </PieChart>
               </ResponsiveContainer>
            </div>
         </div>
 
-        {/* Meal Time Breakdown - UPDATED TO STACKED VERTICAL BARS */}
-        <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col h-[400px]">
+        {/* Meal Time Breakdown */}
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-orange-50 text-orange-600 rounded-xl"><Utensils size={20}/></div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight uppercase">Meal Time Breakdown</h3>
+              <div className="p-2.5 bg-orange-50 text-orange-600 rounded-xl border border-orange-100/60 shadow-xs"><Utensils size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Meal Time Distribution</h3>
+                <p className="text-xs text-slate-400 font-medium">Breakfast, Lunch & Dinner distribution</p>
+              </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={mealTimeBreakdown.data} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                 <BarChart data={mealTimeBreakdown.data} margin={{ top: 15, right: 10, left: -15, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.6)" />
                     <XAxis 
                       dataKey="name" 
                       axisLine={false} 
                       tickLine={false} 
-                      tick={{fill: '#475569', fontWeight: 900, fontSize: 12}} 
+                      tick={{fill: '#475569', fontWeight: 600, fontSize: 12}} 
                     />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 900}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} />
                     <Tooltip 
-                      cursor={{fill: '#f8fafc'}} 
-                      contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} 
+                      cursor={{fill: 'rgba(241, 245, 249, 0.6)', radius: 8}} 
+                      contentStyle={{ borderRadius: '16px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} 
                     />
-                    <Legend verticalAlign="top" align="center" iconType="rect" wrapperStyle={{ paddingBottom: '20px' }} />
+                    <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={{ paddingBottom: '16px', fontSize: '11px', fontWeight: 600 }} />
                     {mealTimeBreakdown.plans.map((planName, index) => (
                       <Bar 
                         key={planName} 
                         dataKey={planName} 
                         stackId="a" 
                         fill={COLORS[index % COLORS.length]} 
-                        barSize={60}
-                        radius={index === mealTimeBreakdown.plans.length - 1 ? [10, 10, 0, 0] : [0, 0, 0, 0]}
+                        barSize={48}
+                        radius={index === mealTimeBreakdown.plans.length - 1 ? [8, 8, 0, 0] : [0, 0, 0, 0]}
                       />
                     ))}
                  </BarChart>
               </ResponsiveContainer>
            </div>
-           <div className="mt-4 text-center">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active plans per meal time</p>
+           <div className="mt-2 text-center">
+              <p className="text-[11px] font-medium text-slate-400">Active customer subscriptions grouped by meal schedule</p>
            </div>
         </div>
 

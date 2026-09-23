@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, Legend, LineChart, Line
+  PieChart, Pie, Cell, Legend, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
 import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
@@ -253,20 +253,40 @@ const Dashboard = () => {
         {/* Cash Flow Chart */}
         <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-primary-50 text-primary-600 rounded-xl border border-primary-100/60 shadow-xs"><BarChart3 size={18}/></div>
+              <div className="p-2.5 bg-primary-50 text-primary-600 rounded-xl border border-primary-100/60 shadow-xs"><BarChart3 size={18}/></div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Monthly Cash Flow</h3>
-                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'Complete history' : `Year ${selectedYear}`}</p>
+                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'Complete transaction history' : `Year ${selectedYear}`}</p>
               </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                  <BarChart data={cashFlowData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '14px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} />
-                    <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={24} />
+                    <defs>
+                      <linearGradient id="cashFlowGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#2563eb" stopOpacity={0.95}/>
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.4}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.6)" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} tickFormatter={(v) => `₹${v >= 1000 ? (v/1000).toFixed(0) + 'k' : v}`} />
+                    <Tooltip 
+                      cursor={{fill: 'rgba(241, 245, 249, 0.6)', radius: 8}} 
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2.5 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                              <p className="font-bold text-slate-800 font-display mb-1">{label}</p>
+                              <p className="text-primary-600 font-black font-mono text-sm">₹{Number(payload[0].value).toLocaleString()}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">Collected Collections</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="amount" fill="url(#cashFlowGrad)" radius={[8, 8, 2, 2]} barSize={26} />
                  </BarChart>
               </ResponsiveContainer>
            </div>
@@ -275,43 +295,76 @@ const Dashboard = () => {
         {/* Plan Wise Revenue Pie */}
         <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-orange-50 text-orange-600 rounded-xl border border-orange-100/60 shadow-xs"><PieIcon size={18}/></div>
+              <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-100/60 shadow-xs"><PieIcon size={18}/></div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Plan Revenue Distribution</h3>
-                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'All-time volume' : `Year ${selectedYear}`}</p>
+                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'All-time volume breakdown' : `Year ${selectedYear}`}</p>
               </div>
            </div>
-           <div className="flex-1">
+           <div className="flex-1 relative">
               <ResponsiveContainer width="100%" height="100%">
                  <PieChart>
-                    <Pie data={planRevenueData} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={4} dataKey="value">
-                       {planRevenueData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />)}
+                    <Pie data={planRevenueData} cx="50%" cy="50%" innerRadius={70} outerRadius={102} paddingAngle={4} dataKey="value">
+                       {planRevenueData.map((_, index) => (
+                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(255,255,255,0.8)" strokeWidth={2} />
+                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 500 }} />
+                    <Tooltip 
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0];
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                              <p className="font-bold text-slate-800 font-display">{data.name}</p>
+                              <p className="text-emerald-600 font-bold font-mono mt-0.5">₹{Number(data.value).toLocaleString()}</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
                  </PieChart>
               </ResponsiveContainer>
            </div>
         </div>
 
-        {/* Customer Growth Line Chart (Full Width on 2-col grid) */}
+        {/* Customer Growth Area Chart (Full Width on 2-col grid) */}
         <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px] lg:col-span-2">
            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100/60 shadow-xs"><TrendingUp size={18}/></div>
+              <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100/60 shadow-xs"><TrendingUp size={18}/></div>
               <div>
-                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Customer Signup Trends</h3>
-                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'Historical registration trend' : `Signups for ${selectedYear}`}</p>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Customer Signup Velocity</h3>
+                <p className="text-xs text-slate-400">{selectedYear === 'All' ? 'Historical monthly registrations' : `Signups in ${selectedYear}`}</p>
               </div>
            </div>
            <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={customerGrowthData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 500}} allowDecimals={false} />
-                    <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid rgba(226, 232, 240, 0.8)', boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08)' }} />
-                    <Line type="monotone" dataKey="count" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} name="New Signups" />
-                 </LineChart>
+                 <AreaChart data={customerGrowthData}>
+                    <defs>
+                      <linearGradient id="growthGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.35}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.6)" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 600}} allowDecimals={false} />
+                    <Tooltip 
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
+                              <p className="font-bold text-slate-800 font-display mb-0.5">{label}</p>
+                              <p className="text-emerald-600 font-bold font-mono text-sm">{payload[0].value} signups</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Area type="monotone" dataKey="count" stroke="#10b981" strokeWidth={3} fill="url(#growthGradient)" dot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 7, fill: '#059669', stroke: '#fff', strokeWidth: 2 }} name="New Signups" />
+                 </AreaChart>
               </ResponsiveContainer>
            </div>
         </div>

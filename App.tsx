@@ -318,25 +318,25 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
           </div>
         )}
         
-        <header className="h-16 bg-white/75 backdrop-blur-xl border-b border-white/80 shadow-xs flex items-center justify-between px-4 md:px-8 z-30 shrink-0">
+        <header className="h-12 bg-white/80 backdrop-blur-xl border-b border-white/80 shadow-xs flex items-center justify-between px-3.5 md:px-6 z-30 shrink-0">
            <button 
              onClick={() => setIsSidebarOpen(true)} 
-             className="p-2 text-slate-600 hover:text-slate-900 hover:bg-white/90 rounded-xl border border-transparent hover:border-slate-200/60 transition-all shadow-xs"
+             className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/90 rounded-lg border border-transparent hover:border-slate-200/60 transition-all shadow-xs"
              aria-label="Open navigation menu"
            >
-             <Menu size={20} />
+             <Menu size={18} />
            </button>
            
-           <div className="flex items-center gap-3 md:gap-4 ml-auto">
+           <div className="flex items-center gap-2.5 md:gap-3.5 ml-auto">
               <div className="relative">
                 <button 
                   onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} 
-                  className="p-2.5 text-slate-600 hover:text-primary-600 hover:bg-white/80 rounded-xl border border-transparent hover:border-slate-200/60 relative transition-all"
+                  className="p-1.5 text-slate-600 hover:text-primary-600 hover:bg-white/80 rounded-lg border border-transparent hover:border-slate-200/60 relative transition-all"
                   aria-label="View notifications"
                 >
-                   <Bell size={18} />
+                   <Bell size={17} />
                    {expiringCustomers.length > 0 && (
-                     <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white ring-1 ring-red-400" />
+                     <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border-2 border-white ring-1 ring-red-400" />
                    )}
                 </button>
                 {isNotificationsOpen && (
@@ -418,7 +418,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
            </div>
         </header>
         
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+        <main className="flex-1 overflow-y-auto p-3.5 sm:p-5 md:p-6">
           <div className="max-w-7xl mx-auto">
             <ErrorBoundary>
               <Outlet />

@@ -4,14 +4,17 @@ import {
   Loader2, ArrowUp, ArrowDown, Phone,
   Sunrise, Sun, Moon, Star, CheckCircle2, UserX, 
   ArrowRight, MessageSquare, ClipboardList, ExternalLink, Users, LayoutGrid, ListChecks,
-  Compass, Navigation, Sparkles, Zap
+  Compass, Navigation, Sparkles, Zap, RotateCcw, Share2, Smartphone, Activity
 } from 'lucide-react';
 import { useStreamCollection, updateItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
-import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
+import { calculateRemainingDeliveries, getTodayStr, getPlanDeliveryDayNumber, getCustomerUncollectedBoxesCount } from '../services/store';
 import { writeBatch, doc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { RouteOptimizerModal } from '../components/RouteOptimizerModal';
+import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
+import { ReusableBoxTracker } from '../components/ReusableBoxTracker';
+import { LiveFleetTracker } from '../components/LiveFleetTracker';
 import { optimizeRouteOrder, formatWhatsAppOptimizedRoute } from '../services/routeOptimizer';
 
 const StatCard = ({ title, value, icon: Icon, colorClass, subtext }: any) => (
@@ -37,17 +40,42 @@ const Deliveries = () => {
   const { data: staff = [], loading: l2 } = useStreamCollection<any>('staff');
   const { data: plans = [], loading: l3 } = useStreamCollection<any>('plans');
   const { data: branches = [], loading: l4 } = useStreamCollection<any>('branches');
+  const { data: deliveryLogs = [] } = useStreamCollection<any>('delivery_logs');
 
+  const [mainTab, setMainTab] = useState<'routes' | 'boxes' | 'fleet'>('routes');
   const [activeMealTab, setActiveMealTab] = useState<'Breakfast' | 'Lunch' | 'Dinner'>('Lunch');
   const [selectedBranch, setSelectedBranch] = useState('All');
   const [expandedBoyId, setExpandedBoyId] = useState<string | null>(null);
   const [expandedMatrixBoyId, setExpandedMatrixBoyId] = useState<string | null>(null);
   const [optimizerModalData, setOptimizerModalData] = useState<{ boy: any; customers: any[]; branch: any } | null>(null);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [selectedShareBoy, setSelectedShareBoy] = useState<any>(null);
 
   const isLoading = l1 || l2 || l3 || l4;
 
   const todayStr = getTodayStr();
   const dayOfWeek = new Date().getDay();
+
+  // Map of today's delivery status by customer and mealTime
+  const todayLogsMap = useMemo(() => {
+    const map: Record<string, any> = {};
+    deliveryLogs.forEach((l: any) => {
+      if (l.date === todayStr) {
+        map[`${l.customerId}_${l.mealTime}`] = l;
+      }
+    });
+    return map;
+  }, [deliveryLogs, todayStr]);
+
+  // Overall uncollected boxes count across customers
+  const totalUncollectedBoxes = useMemo(() => {
+    return customers.reduce((sum, c) => sum + getCustomerUncollectedBoxesCount(c), 0);
+  }, [customers]);
+
+  // Online delivery boys count
+  const onlineStaffCount = useMemo(() => {
+    return staff.filter(s => s.status === 'Online' && s.lastAttendanceDate === todayStr).length;
+  }, [staff, todayStr]);
 
   // --- GLOBAL DAILY SUMMARY ---
   const globalDailySummary = useMemo(() => {
@@ -242,18 +270,110 @@ const Deliveries = () => {
           <h1 className="text-2xl sm:text-3xl font-bold font-display text-slate-900 tracking-tight">Delivery Logistics & Routing</h1>
           <p className="text-xs sm:text-sm text-slate-500 font-normal mt-1">Real-time dispatches, shortest round-trip route solver, and workload management.</p>
         </div>
-        <div className="w-full md:w-60 relative">
-          <select 
-            className="w-full py-2.5 pl-4 pr-10 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-glass outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all"
-            value={selectedBranch}
-            onChange={(e) => setSelectedBranch(e.target.value)}
+        
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          {/* Share Driver App Link Button */}
+          <button
+            onClick={() => { setSelectedShareBoy(null); setShareModalOpen(true); }}
+            className="flex-1 md:flex-none px-3.5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all active:scale-95"
+            title="Open Driver Portal Link Generator & WhatsApp Dispatch"
           >
-            <option value="All">All Kitchen Branches</option>
-            {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-          <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={15} />
+            <Smartphone size={15} />
+            <span>Share Driver App Link</span>
+          </button>
+
+          {/* Branch selector */}
+          <div className="w-full sm:w-56 relative">
+            <select 
+              className="w-full py-2.5 pl-4 pr-10 bg-white/85 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-700 shadow-glass outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 appearance-none cursor-pointer transition-all"
+              value={selectedBranch}
+              onChange={(e) => setSelectedBranch(e.target.value)}
+            >
+              <option value="All">All Kitchen Branches</option>
+              {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={15} />
+          </div>
         </div>
       </div>
+
+      {/* Main Tab Navigation */}
+      <div className="flex items-center gap-2 p-1.5 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-2xl shadow-xs overflow-x-auto no-scrollbar">
+        <button
+          onClick={() => setMainTab('routes')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            mainTab === 'routes'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+          }`}
+        >
+          <Truck size={15} />
+          <span>Route Dispatch & Workload</span>
+        </button>
+
+        <button
+          onClick={() => setMainTab('boxes')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            mainTab === 'boxes'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+          }`}
+        >
+          <Package size={15} />
+          <span>Customer Box Inventory</span>
+          {totalUncollectedBoxes > 0 && (
+            <span className={`px-2 py-0.2 rounded-full text-[10px] font-black ${
+              mainTab === 'boxes' ? 'bg-amber-400 text-slate-950' : 'bg-amber-100 text-amber-800'
+            }`}>
+              {totalUncollectedBoxes} uncollected
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setMainTab('fleet')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            mainTab === 'fleet'
+              ? 'bg-slate-900 text-white shadow-md'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+          }`}
+        >
+          <Activity size={15} />
+          <span>Live Rider Fleet & GPS Tracker</span>
+          {onlineStaffCount > 0 && (
+            <span className={`flex items-center gap-1 px-2 py-0.2 rounded-full text-[10px] font-bold ${
+              mainTab === 'fleet' ? 'bg-emerald-400 text-slate-950' : 'bg-emerald-100 text-emerald-800'
+            }`}>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+              {onlineStaffCount} Online
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* TAB 2: REUSABLE BOX INVENTORY & CUSTOMER TRACKER */}
+      {mainTab === 'boxes' && (
+        <ReusableBoxTracker 
+          customers={customers} 
+          currentUser={currentUser} 
+          todayStr={todayStr} 
+        />
+      )}
+
+      {/* TAB 3: LIVE FLEET & GPS TRACKER */}
+      {mainTab === 'fleet' && (
+        <LiveFleetTracker 
+          staff={staff} 
+          customers={customers} 
+          deliveryLogs={deliveryLogs} 
+          todayStr={todayStr} 
+          onShareLink={(boy) => { setSelectedShareBoy(boy); setShareModalOpen(true); }}
+        />
+      )}
+
+      {/* TAB 1: EXISTING ROUTE DISPATCH & WORKLOAD */}
+      {mainTab === 'routes' && (
+        <div className="space-y-8 animate-in fade-in duration-200">
 
       {/* 2. GLOBAL KITCHEN LOAD (TODAY) */}
       <div className="space-y-3">
@@ -493,6 +613,13 @@ const Deliveries = () => {
                   </div>
                   <div className="flex items-center gap-2.5 w-full xl:w-auto justify-end">
                     <button 
+                      onClick={(e) => { e.stopPropagation(); setSelectedShareBoy(boy); setShareModalOpen(true); }} 
+                      className="flex-1 xl:flex-none bg-amber-400 hover:bg-amber-300 text-slate-950 px-3.5 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                      title="Share personalized Driver Portal link & login"
+                    >
+                      <Smartphone size={14} /> Driver App
+                    </button>
+                    <button 
                       onClick={(e) => { e.stopPropagation(); handleOpenOptimizer(boy, boyCustomers); }} 
                       className="flex-1 xl:flex-none bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
                     >
@@ -527,7 +654,7 @@ const Deliveries = () => {
                       </button>
                     </div>
                     <div className="overflow-x-auto no-scrollbar">
-                      <table className="w-full text-left border-collapse min-w-[1000px] text-xs">
+                      <table className="w-full text-left border-collapse min-w-[1050px] text-xs">
                         <thead className="bg-slate-50/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200/60">
                           <tr>
                             <th className="py-3 px-4 w-12 text-center">Stop</th>
@@ -536,6 +663,7 @@ const Deliveries = () => {
                             <th className="py-3 px-4">Contact</th>
                             <th className="py-3 px-4 min-w-[200px]">Meal Plans</th>
                             <th className="py-3 px-3 text-center">Priority</th>
+                            <th className="py-3 px-3 text-center">Live Status</th>
                             <th className="py-3 px-4">Delivery Area / Address</th>
                             <th className="py-3 px-3 text-center">Remaining</th>
                             <th className="py-3 px-3 text-center">Maps</th>
@@ -551,6 +679,12 @@ const Deliveries = () => {
                                  return acc;
                               }, {});
                               const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
+
+                              const logKey = `${c.id}_${activeMealTab}`;
+                              const logRecord = todayLogsMap[logKey];
+                              const isDelivered = logRecord?.status === 'Delivered';
+                              const boxCondition = logRecord?.boxStatus;
+
                               return (
                                 <tr key={c.id} className={`hover:bg-slate-50/70 transition-colors ${overallStarred ? 'bg-amber-50/30' : ''}`}>
                                   <td className="py-3 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
@@ -578,10 +712,54 @@ const Deliveries = () => {
                                           <span className="bg-slate-900 text-white text-[10px] font-bold w-4 h-4 rounded flex items-center justify-center shrink-0">{gp.count}</span>
                                         </div>
                                       ))}
+                                      {sessionPlans.filter((p: any) => p.reusableBoxType && p.reusableBoxType !== 'None').map((rp: any, rIdx: number) => {
+                                        const dayNum = getPlanDeliveryDayNumber(rp, todayStr);
+                                        const isSecondDayOrMore = dayNum >= 2;
+                                        return (
+                                          <div 
+                                            key={`box-${rIdx}`} 
+                                            className={`text-[10px] font-bold px-2 py-1 rounded-lg inline-flex items-center gap-1 border shadow-xs ${
+                                              isSecondDayOrMore 
+                                                ? 'bg-teal-50 border-teal-200 text-teal-800' 
+                                                : 'bg-slate-50 border-slate-200 text-slate-500'
+                                            }`}
+                                          >
+                                            <RotateCcw size={10} className={isSecondDayOrMore ? 'text-teal-600 animate-spin-slow' : 'text-slate-400'} />
+                                            <span>
+                                              {isSecondDayOrMore 
+                                                ? `🔄 Recollect: Yesterday's ${rp.reusableBoxType}${rp.boxTagOrNumber ? ` (#${rp.boxTagOrNumber})` : ''}`
+                                                : `📦 Day 1: New ${rp.reusableBoxType} (recollect starts tomorrow)`}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   </td>
                                   <td className="py-3 px-3 text-center">
                                     {overallStarred ? <Star size={15} className="text-amber-500 mx-auto" fill="currentColor" /> : <span className="text-slate-300">—</span>}
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <div className="flex flex-col items-center gap-1">
+                                      {isDelivered ? (
+                                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1 shadow-xs">
+                                          <CheckCircle2 size={11} className="text-emerald-600" />
+                                          Delivered
+                                        </span>
+                                      ) : (
+                                        <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md font-medium text-[10px]">
+                                          Pending
+                                        </span>
+                                      )}
+                                      {boxCondition && boxCondition !== 'None' && (
+                                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border shadow-xs ${
+                                          boxCondition === 'Collected' || boxCondition === 'Collected Clean'
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                                        }`}>
+                                          🍱 {boxCondition}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="py-3 px-4">
                                     <div>
@@ -630,6 +808,17 @@ const Deliveries = () => {
           </div>
         )}
       </div>
+      </div>
+      )}
+
+      {/* Driver Portal Link Share Modal */}
+      <ShareDriverLinkModal
+        isOpen={shareModalOpen}
+        onClose={() => setShareModalOpen(false)}
+        bizId={currentUser?.uid || ''}
+        staff={staff}
+        selectedBoy={selectedShareBoy}
+      />
 
       {/* Route Optimizer Modal */}
       {optimizerModalData && (

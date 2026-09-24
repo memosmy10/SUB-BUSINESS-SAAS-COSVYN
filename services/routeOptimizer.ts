@@ -10,6 +10,8 @@
  * - Formats WhatsApp dispatch route messages for delivery staff
  */
 
+import { getPlanDeliveryDayNumber } from './store';
+
 export interface LatLng {
   lat: number;
   lng: number;
@@ -407,11 +409,35 @@ export const formatWhatsAppOptimizedRoute = (
 ): string => {
   const { hub, orderedStops, totalDistanceKm, totalEstMinutes, masterGoogleMapsUrl, googleMapsLegsUrls } = routeResult;
 
+  // Calculate box recollection statistics
+  let totalRecollectionsToday = 0;
+  let totalDay1NewBoxes = 0;
+
+  orderedStops.forEach((stop) => {
+    const sessionPlans = stop.activePlans?.filter((p: any) => p.mealTime === mealTime) || [];
+    sessionPlans.forEach((p: any) => {
+      if (p.reusableBoxType && p.reusableBoxType !== 'None') {
+        const dayNum = getPlanDeliveryDayNumber(p.startDate, dateStr, p.weekdays || [1, 2, 3, 4, 5, 6], p.pauses || []);
+        if (dayNum >= 2) {
+          totalRecollectionsToday++;
+        } else if (dayNum === 1) {
+          totalDay1NewBoxes++;
+        }
+      }
+    });
+  });
+
   let msg = `🚚 *SHORTEST ROUTE DISPATCH - ${mealTime.toUpperCase()}*\n`;
   msg += `👤 Partner: *${deliveryBoy.name}*\n`;
   msg += `📅 Date: ${dateStr}\n`;
   msg += `📍 Hub: *${hub.name}* (Round Trip: Hub ➔ Orders ➔ Hub)\n`;
   msg += `📦 Total Orders: *${orderedStops.length} Customers*\n`;
+  if (totalRecollectionsToday > 0) {
+    msg += `🔄 *REUSABLE BOXES TO RECOLLECT: ${totalRecollectionsToday} Boxes* (Day 2+ drops)\n`;
+  }
+  if (totalDay1NewBoxes > 0) {
+    msg += `🟢 *Day 1 New Subscriptions: ${totalDay1NewBoxes} Boxes* (Issue new box, no previous box)\n`;
+  }
   msg += `🛣️ Est. Distance: *~${totalDistanceKm} km* (~${totalEstMinutes} mins)\n\n`;
 
   msg += `🗺️ *ONE-TAP GOOGLE MAPS MASTER ROUTE:*\n${masterGoogleMapsUrl}\n\n`;
@@ -428,9 +454,9 @@ export const formatWhatsAppOptimizedRoute = (
   msg += `📋 *OPTIMIZED DELIVERY SEQUENCE:*\n\n`;
 
   orderedStops.forEach((stop, i) => {
-    const plansCount = stop.activePlans?.filter((p: any) => p.mealTime === mealTime).length || 1;
-    const planNames = stop.activePlans
-      ?.filter((p: any) => p.mealTime === mealTime)
+    const sessionPlans = stop.activePlans?.filter((p: any) => p.mealTime === mealTime) || [];
+    const plansCount = sessionPlans.length || 1;
+    const planNames = sessionPlans
       .map((p: any) => `${p.planName}${p.isStarred ? ' ⭐' : ''}`)
       .join(', ') || 'Tiffin Box';
 
@@ -438,6 +464,23 @@ export const formatWhatsAppOptimizedRoute = (
     msg += `   🍱 Plan: ${planNames}\n`;
     msg += `   📍 Address: ${stop.address}${stop.area ? `, ${stop.area}` : ''}\n`;
     msg += `   📞 Call: ${stop.mobile}\n`;
+
+    // Reusable Box Instructions
+    sessionPlans.forEach((p: any) => {
+      const boxType = p.reusableBoxType || 'None';
+      if (boxType && boxType !== 'None') {
+        const dayNum = getPlanDeliveryDayNumber(p.startDate, dateStr, p.weekdays || [1, 2, 3, 4, 5, 6], p.pauses || []);
+        if (dayNum === 1) {
+          msg += `   🟢 *BOX: ${boxType}* (Day 1: First Delivery - Issue Fresh Box, NO yesterday box to collect)\n`;
+        } else if (dayNum >= 2) {
+          msg += `   ⚠️ *RECOLLECT: Yesterday's ${boxType}* (Day ${dayNum} of subscription)\n`;
+          msg += `      👉 Check: Clean & intact? (Inspect for missing lid/parts or unclean)\n`;
+        } else {
+          msg += `   📦 *Box:* ${boxType}\n`;
+        }
+      }
+    });
+
     if (stop.notes) {
       msg += `   📝 Note: ${stop.notes}\n`;
     }

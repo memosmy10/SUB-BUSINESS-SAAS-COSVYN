@@ -18,6 +18,7 @@ import Payments from './pages/Payments';
 import Invoices from './pages/Invoices';
 import Expenses from './pages/Expenses';
 import Deliveries from './pages/Deliveries';
+import DriverPortal from './pages/DriverPortal';
 import Inventory from './pages/Inventory';
 import Messages from './pages/Messages';
 import AdminLayout from './layouts/AdminLayout';
@@ -446,6 +447,7 @@ const App = () => {
             <Route path="/shipping" element={<Shipping />} />
             <Route path="/refunds" element={<Refunds />} />
             <Route path="/contact" element={<Contact />} />
+            <Route path="/driver" element={<DriverPortal />} />
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/app" element={<ProtectedRoute />}>
               <Route index element={<Navigate to="dashboard" replace />} />

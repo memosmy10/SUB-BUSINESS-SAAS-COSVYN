@@ -8,6 +8,7 @@ import {
   optimizeRouteOrder, formatWhatsAppOptimizedRoute, 
   OptimizedRouteResult, HubLocation, extractCoordinates 
 } from '../services/routeOptimizer';
+import { getPlanDeliveryDayNumber } from '../services/store';
 
 interface RouteOptimizerModalProps {
   isOpen: boolean;
@@ -406,11 +407,36 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           </p>
 
                           <div className="flex flex-wrap items-center gap-2 mt-2">
-                            {sessionPlans.map((sp: any, i: number) => (
-                              <span key={i} className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
-                                {sp.planName} {sp.isStarred && '⭐'}
-                              </span>
-                            ))}
+                            {sessionPlans.map((sp: any, i: number) => {
+                              const boxType = sp.reusableBoxType;
+                              const isReusable = boxType && boxType !== 'None';
+                              const dayNum = isReusable ? getPlanDeliveryDayNumber(sp.startDate, todayDateStr, sp.weekdays || [1, 2, 3, 4, 5, 6], sp.pauses || []) : 0;
+
+                              return (
+                                <React.Fragment key={i}>
+                                  <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
+                                    {sp.planName} {sp.isStarred && '⭐'}
+                                  </span>
+
+                                  {isReusable && (
+                                    dayNum >= 2 ? (
+                                      <span className="text-[10px] font-bold bg-amber-500/15 text-amber-900 border border-amber-400/40 px-2.5 py-0.5 rounded-md flex items-center gap-1 shadow-2xs">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                        🔄 Recollect: Yesterday's {boxType} (Day {dayNum})
+                                      </span>
+                                    ) : dayNum === 1 ? (
+                                      <span className="text-[10px] font-semibold bg-emerald-500/15 text-emerald-800 border border-emerald-400/30 px-2.5 py-0.5 rounded-md flex items-center gap-1">
+                                        🟢 Day 1: New {boxType} (No collection)
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md border border-slate-200">
+                                        🍱 {boxType}
+                                      </span>
+                                    )
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
                             {stop.notes && (
                               <span className="text-[10px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100">
                                 Note: {stop.notes}

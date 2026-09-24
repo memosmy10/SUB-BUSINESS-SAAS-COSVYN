@@ -14,6 +14,7 @@ export interface Customer {
   joinedDate: string;
   mrr: number; // Monthly Recurring Revenue
   avatarUrl: string;
+  reusableBoxType?: string;
 }
 
 export interface Transaction {
@@ -40,6 +41,10 @@ export interface Delivery {
   address: string;
   status: 'Pending' | 'Shipped' | 'Delivered' | 'Returned';
   expectedDate: string;
+  reusableBoxType?: string;
+  deliveryDayNumber?: number;
+  boxRecollectionStatus?: 'Collected Clean' | 'Collected Unclean' | 'Damaged / Missing Part' | 'Not Returned' | 'Pending';
+  boxIssueNote?: string;
 }
 
 export interface ChartDataPoint {

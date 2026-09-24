@@ -6,9 +6,11 @@ import {
 } from 'recharts';
 import { 
   TrendingUp, TrendingDown, Users, DollarSign, Activity, Loader2, 
-  ChevronDown, Calendar, Store, PieChart as PieIcon, BarChart3, Utensils
+  ChevronDown, Calendar, Store, PieChart as PieIcon, BarChart3, Utensils, Package
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
+import { GlassmorphicDonutChart } from '../components/GlassmorphicDonutChart';
+import { getCustomerBoxHealth, getCustomerUncollectedBoxesCount } from '../services/store';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6', '#f43f5e', '#84cc16'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -158,6 +160,35 @@ const Analytics = () => {
     };
   }, [filteredData.fCust]);
 
+  // Reusable Box Health Analytics Breakdown
+  const reusableBoxHealthData = useMemo(() => {
+    let clean = 0;
+    let unclean = 0;
+    let damaged = 0;
+    let withCustomer = 0;
+
+    customers.forEach(c => {
+      const health = getCustomerBoxHealth(c);
+      clean += health.clean;
+      unclean += health.unclean;
+      damaged += health.damaged;
+      withCustomer += getCustomerUncollectedBoxesCount(c);
+    });
+
+    const list = [
+      { name: 'Clean Returned', value: clean, color: '#10b981' },
+      { name: 'Unclean / Washing Due', value: unclean, color: '#f59e0b' },
+      { name: 'Damaged / Missing', value: damaged, color: '#f43f5e' },
+      { name: 'With Customers (Uncollected)', value: withCustomer, color: '#6366f1' },
+    ];
+    
+    const activeData = list.filter(d => d.value > 0);
+    if (activeData.length === 0) {
+      return [{ name: 'Containers Active', value: customers.filter(c => c.reusableBoxEnabled).length || 1, color: '#3b82f6' }];
+    }
+    return activeData;
+  }, [customers]);
+
   const KpiCard = ({ title, value, icon: Icon, colorClass, iconColor }: any) => (
     <div className="glass-card p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between hover:shadow-glass-hover transition-all duration-300 min-h-[130px]">
       <div className="flex justify-between items-start gap-3">
@@ -303,42 +334,26 @@ const Analytics = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Expense Breakdown */}
-        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
-           <div className="flex items-center gap-3 mb-6">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col min-h-[410px]">
+           <div className="flex items-center gap-3 mb-4">
               <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-100/60 shadow-xs"><PieIcon size={18}/></div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Expense Breakdown</h3>
                 <p className="text-xs text-slate-400 font-medium">Spending categorized by operational type</p>
               </div>
            </div>
-           <div className="flex-1 relative">
-              <ResponsiveContainer width="100%" height="100%">
-                 <PieChart>
-                    <Pie data={expenseBreakdown} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={4} dataKey="value">
-                       {expenseBreakdown.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(255,255,255,0.8)" strokeWidth={2} />)}
-                    </Pie>
-                    <Tooltip 
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          const item = payload[0];
-                          return (
-                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
-                              <p className="font-bold text-slate-800 font-display">{item.name}</p>
-                              <p className="text-rose-600 font-bold font-mono mt-0.5">₹{Number(item.value).toLocaleString()}</p>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
-                 </PieChart>
-              </ResponsiveContainer>
+           <div className="flex-1">
+              <GlassmorphicDonutChart 
+                data={expenseBreakdown}
+                centerLabel="Total Expense"
+                height={260}
+                isCurrency={true}
+              />
            </div>
         </div>
 
         {/* Customer Growth */}
-        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col min-h-[410px]">
            <div className="flex items-center gap-3 mb-6">
               <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100/60 shadow-xs"><BarChart3 size={18}/></div>
               <div>
@@ -379,37 +394,40 @@ const Analytics = () => {
         </div>
 
         {/* Revenue by Plan */}
-        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col h-[380px]">
-           <div className="flex items-center gap-3 mb-6">
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col min-h-[410px]">
+           <div className="flex items-center gap-3 mb-4">
               <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100/60 shadow-xs"><DollarSign size={18}/></div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Revenue by Plan</h3>
                 <p className="text-xs text-slate-400 font-medium">Monetary contribution by subscription plan</p>
               </div>
            </div>
-           <div className="flex-1 relative">
-              <ResponsiveContainer width="100%" height="100%">
-                 <PieChart>
-                    <Pie data={revenueByPlan} cx="50%" cy="50%" innerRadius={60} outerRadius={95} paddingAngle={4} dataKey="value">
-                       {revenueByPlan.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(255,255,255,0.8)" strokeWidth={2} />)}
-                    </Pie>
-                    <Tooltip 
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          const item = payload[0];
-                          return (
-                            <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-glass-lg text-xs">
-                              <p className="font-bold text-slate-800 font-display">{item.name}</p>
-                              <p className="text-emerald-600 font-bold font-mono mt-0.5">₹{Number(item.value).toLocaleString()}</p>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 600, color: '#475569' }} />
-                 </PieChart>
-              </ResponsiveContainer>
+           <div className="flex-1">
+              <GlassmorphicDonutChart 
+                data={revenueByPlan}
+                centerLabel="Plan Revenue"
+                height={260}
+                isCurrency={true}
+              />
+           </div>
+        </div>
+
+        {/* Reusable Box Recovery Health */}
+        <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass flex flex-col min-h-[410px]">
+           <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-100/60 shadow-xs"><Package size={18}/></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 font-display tracking-tight">Reusable Box Health</h3>
+                <p className="text-xs text-slate-400 font-medium">Recovery condition, cleanliness & customer retention</p>
+              </div>
+           </div>
+           <div className="flex-1">
+              <GlassmorphicDonutChart 
+                data={reusableBoxHealthData}
+                centerLabel="Containers"
+                height={260}
+                isCurrency={false}
+              />
            </div>
         </div>
 

@@ -8,7 +8,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem } from '../services/dbService';
 import { 
   calculateEndDate, calculateRemainingDeliveries,
-  GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr
+  GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
+  REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber
 } from '../services/store';
 import { doc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -339,6 +340,8 @@ const Customers = () => {
                     const mealTimes = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
                     const isExpanded = expandedRows.has(c.id);
                     const hasStarredPlan = (c.activePlans || []).some(p => p.isStarred);
+                    const boxHealth = getCustomerBoxHealth(c);
+                    const reusableBoxPlans = (c.activePlans || []).filter((p: any) => p.reusableBoxType && p.reusableBoxType !== 'None');
 
                     return (
                       <React.Fragment key={c.id}>
@@ -346,7 +349,7 @@ const Customers = () => {
                           <td className="p-3.5 text-center text-slate-400">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                           <td className="p-3.5 text-center text-slate-400 font-medium">{idx + 1}</td>
                           <td className="p-3.5">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-slate-900 truncate max-w-[140px] text-sm">{c.name}</span>
                               {c.highlightMark && c.highlightMark !== 'None' && (
                                 <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${
@@ -354,6 +357,16 @@ const Customers = () => {
                                   c.highlightMark === 'Dietary' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 
                                   'bg-primary-50 text-primary-700 border border-primary-200/60'
                                 }`}>{c.highlightMark}</span>
+                              )}
+                              {boxHealth.damagedOrDirty > 0 && (
+                                <span className="text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-md flex items-center gap-0.5" title={`${boxHealth.damagedOrDirty} damaged / unclean box recorded`}>
+                                  ⚠️ Box Issue
+                                </span>
+                              )}
+                              {boxHealth.unreturned > 1 && (
+                                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md" title={`${boxHealth.unreturned} boxes pending recollection`}>
+                                  🔄 {boxHealth.unreturned} Pending
+                                </span>
                               )}
                             </div>
                             <div className="text-xs text-slate-400 font-mono mt-0.5">{c.mobile}</div>
@@ -368,7 +381,8 @@ const Customers = () => {
                             )}
                           </td>
                           <td className="p-3.5">
-                            <div className="flex flex-wrap gap-1">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex flex-wrap gap-1">
                                 {mealTimes.map((m:string, idx: number) => (
                                   <span key={`${m}-${idx}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border shadow-xs ${
                                     m === 'Breakfast' ? 'bg-amber-50 text-amber-700 border-amber-200/60' : 
@@ -376,6 +390,17 @@ const Customers = () => {
                                     'bg-violet-50 text-violet-700 border-violet-200/60'
                                   }`}>{m}</span>
                                 ))}
+                              </div>
+                              {reusableBoxPlans.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                  {reusableBoxPlans.map((p: any, pIdx: number) => (
+                                    <span key={pIdx} className="text-[9px] font-bold text-teal-800 bg-teal-50 border border-teal-200/70 px-1.5 py-0.5 rounded-md inline-flex items-center gap-1" title={`${p.mealTime}: ${p.reusableBoxType}${p.boxTagOrNumber ? ` (#${p.boxTagOrNumber})` : ''}`}>
+                                      <RotateCcw size={9} className="text-teal-600" />
+                                      <span className="truncate max-w-[85px]">{p.reusableBoxType.replace('Stainless Steel ', 'SS ').replace('Insulated ', 'Ins. ')}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[120px]">{c.area || '—'}</td>
@@ -521,6 +546,54 @@ const StatusFilter = ({ value, onChange }: { value: string, onChange: (val: stri
 };
 
 const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCustomer, plans: any[], onClose: () => void }) => {
+  const { currentUser } = useAuth();
+  const [isLoggingBox, setIsLoggingBox] = useState(false);
+  const [boxLogForm, setBoxLogForm] = useState({
+    mealTime: (customer.activePlans?.[0]?.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner',
+    date: getTodayStr(),
+    status: 'returned_clean' as 'returned_clean' | 'unclean' | 'damaged' | 'missing_part' | 'not_returned',
+    notes: '',
+    boxTagOrNumber: customer.activePlans?.[0]?.boxTagOrNumber || ''
+  });
+  const [savingBoxLog, setSavingBoxLog] = useState(false);
+
+  const boxHealth = getCustomerBoxHealth(customer);
+  const reusablePlans = (customer.activePlans || []).filter(p => p.reusableBoxType && p.reusableBoxType !== 'None');
+  const hasReusableBoxes = reusablePlans.length > 0 || (customer.pastPlans || []).some(p => p.reusableBoxType && p.reusableBoxType !== 'None');
+
+  const handleSaveBoxLog = async () => {
+    if (!currentUser) return;
+    setSavingBoxLog(true);
+    try {
+      const key = `${boxLogForm.date}_${boxLogForm.mealTime}`;
+      const updatedCollections = {
+        ...(customer.boxCollections || {}),
+        [key]: {
+          date: boxLogForm.date,
+          mealTime: boxLogForm.mealTime,
+          status: boxLogForm.status,
+          notes: boxLogForm.notes,
+          boxTagOrNumber: boxLogForm.boxTagOrNumber,
+          recordedAt: new Date().toISOString()
+        }
+      };
+      await updateItem(currentUser.uid, 'customers', customer.id, {
+        boxCollections: updatedCollections
+      });
+      setIsLoggingBox(false);
+      setBoxLogForm(prev => ({
+        ...prev,
+        notes: '',
+        status: 'returned_clean'
+      }));
+    } catch (err) {
+      console.error('Error logging box status:', err);
+      alert('Failed to save box log');
+    } finally {
+      setSavingBoxLog(false);
+    }
+  };
+
   const handleShareAll = () => {
     let msg = `*Subscription Summary: ${customer.name}*\n\n`;
     const activePlans = customer.activePlans || [];
@@ -581,6 +654,170 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
       </div>
       
       <div className="space-y-8">
+        {/* Reusable Box Management Section */}
+        {hasReusableBoxes && (
+          <div className="bg-gradient-to-br from-teal-500/10 via-emerald-500/5 to-cyan-500/10 backdrop-blur-md rounded-2xl border border-teal-200/70 p-5 shadow-glass space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-teal-200/40">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-sm">
+                  <RotateCcw size={16} />
+                </div>
+                <div>
+                  <h5 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    Reusable Box Lifecycle & Health
+                  </h5>
+                  <p className="text-[11px] text-slate-500">
+                    Auto-recollection tracks from 2nd delivery day forward. Record returned clean, unclean, or damaged boxes.
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsLoggingBox(!isLoggingBox)}
+                className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+              >
+                <Plus size={14} /> {isLoggingBox ? 'Cancel Log' : 'Record Box Return'}
+              </button>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="bg-white/80 p-3 rounded-xl border border-teal-100 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Tracked Collections</span>
+                <p className="text-lg font-black text-slate-800">{boxHealth.totalExpected}</p>
+              </div>
+              <div className="bg-white/80 p-3 rounded-xl border border-teal-100 text-center">
+                <span className="text-[10px] font-bold text-emerald-600 uppercase">Returned Clean</span>
+                <p className="text-lg font-black text-emerald-700">{boxHealth.totalCollected}</p>
+              </div>
+              <div className="bg-white/80 p-3 rounded-xl border border-teal-100 text-center">
+                <span className="text-[10px] font-bold text-amber-600 uppercase">Pending / Not Returned</span>
+                <p className="text-lg font-black text-amber-700">{boxHealth.unreturned}</p>
+              </div>
+              <div className="bg-white/80 p-3 rounded-xl border border-teal-100 text-center">
+                <span className="text-[10px] font-bold text-rose-600 uppercase">Issues (Damage/Dirty)</span>
+                <p className={`text-lg font-black ${boxHealth.damagedOrDirty > 0 ? 'text-rose-600 animate-pulse' : 'text-slate-400'}`}>
+                  {boxHealth.damagedOrDirty}
+                </p>
+              </div>
+            </div>
+
+            {/* Log Entry Form */}
+            {isLoggingBox && (
+              <div className="bg-white p-4 rounded-xl border border-teal-200/80 space-y-3 animate-in fade-in-50">
+                <div className="font-bold text-xs text-slate-800 flex items-center gap-2">
+                  <CheckCircle size={14} className="text-teal-600" /> Log Box Collection Entry
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Meal Time</label>
+                    <select 
+                      className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white font-semibold"
+                      value={boxLogForm.mealTime}
+                      onChange={e => setBoxLogForm({...boxLogForm, mealTime: e.target.value as any})}
+                    >
+                      <option value="Breakfast">Breakfast</option>
+                      <option value="Lunch">Lunch</option>
+                      <option value="Dinner">Dinner</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Date</label>
+                    <input 
+                      type="date"
+                      className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white font-semibold"
+                      value={boxLogForm.date}
+                      onChange={e => setBoxLogForm({...boxLogForm, date: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Return Status</label>
+                    <select 
+                      className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white font-bold"
+                      value={boxLogForm.status}
+                      onChange={e => setBoxLogForm({...boxLogForm, status: e.target.value as any})}
+                    >
+                      <option value="returned_clean">✅ Returned Clean</option>
+                      <option value="unclean">⚠️ Returned Unclean (Needs Wash)</option>
+                      <option value="missing_part">⚠️ Missing Lid or Part</option>
+                      <option value="damaged">❌ Broken / Damaged Box</option>
+                      <option value="not_returned">⏳ Customer Did Not Return</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Box Tag / ID</label>
+                    <input 
+                      placeholder="e.g. BX-102"
+                      className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white uppercase font-mono"
+                      value={boxLogForm.boxTagOrNumber}
+                      onChange={e => setBoxLogForm({...boxLogForm, boxTagOrNumber: e.target.value})}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <input 
+                    placeholder="Optional note: e.g. Customer promised to wash next time, dent on outer lid..."
+                    className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white"
+                    value={boxLogForm.notes}
+                    onChange={e => setBoxLogForm({...boxLogForm, notes: e.target.value})}
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsLoggingBox(false)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="button" 
+                    disabled={savingBoxLog}
+                    onClick={handleSaveBoxLog}
+                    className="px-4 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+                  >
+                    {savingBoxLog ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                    Save Record
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Collection History Log */}
+            {boxHealth.history && boxHealth.history.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Recent Box Recollection Events</span>
+                <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1">
+                  {boxHealth.history.slice(0, 10).map((h, i) => {
+                    const isIssue = h.status === 'damaged' || h.status === 'unclean' || h.status === 'missing_part';
+                    const isClean = h.status === 'returned_clean';
+                    return (
+                      <div 
+                        key={i} 
+                        className={`text-xs p-2 rounded-xl border flex items-center gap-2 ${
+                          isClean ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' :
+                          isIssue ? 'bg-rose-50/80 border-rose-200 text-rose-900 font-semibold' :
+                          'bg-amber-50/80 border-amber-200 text-amber-900'
+                        }`}
+                      >
+                        <span className="font-mono text-[10px] text-slate-500">{h.date} ({h.mealTime})</span>
+                        <span className="font-bold text-[11px]">
+                          {h.status === 'returned_clean' ? '✅ Clean' :
+                           h.status === 'unclean' ? '⚠️ Unclean' :
+                           h.status === 'missing_part' ? '⚠️ Missing Part' :
+                           h.status === 'damaged' ? '❌ Damaged' : '⏳ Not Returned'}
+                        </span>
+                        {h.boxTagOrNumber && <span className="font-mono text-[10px] text-slate-600">#{h.boxTagOrNumber}</span>}
+                        {h.notes && <span className="text-[10px] italic text-slate-600">"{h.notes}"</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Active Plans Section */}
         {activePlans.length > 0 && (
           <div className="space-y-6">
@@ -761,6 +998,23 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
           <div>
             <div className="font-black text-slate-900 uppercase text-[11px] tracking-widest">{plan.mealTime} PLAN</div>
             <div className="text-sm font-bold text-slate-500">{plan.planName} (₹{plan.price})</div>
+            {plan.reusableBoxType && plan.reusableBoxType !== 'None' ? (
+              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200/70 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                  <RotateCcw size={10} className="text-teal-600" />
+                  {plan.reusableBoxType}
+                  {plan.boxTagOrNumber && <span className="font-mono text-slate-500 ml-0.5">#{plan.boxTagOrNumber}</span>}
+                  {plan.boxDeposit ? <span className="text-slate-600 ml-0.5">(₹{plan.boxDeposit} dep)</span> : null}
+                </span>
+                <span className="text-[9px] text-slate-400 font-medium">
+                  {getPlanDeliveryDayNumber(plan, today) >= 2 
+                    ? `Day #${getPlanDeliveryDayNumber(plan, today)} · Recollection Active`
+                    : '1st Day Delivery · Recollection starts tomorrow'}
+                </span>
+              </div>
+            ) : (
+              <div className="text-[10px] text-slate-400 font-medium mt-0.5">📦 Disposable / No Reusable Box</div>
+            )}
           </div>
         </div>
         
@@ -870,12 +1124,18 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
      mealTime: 'Lunch', 
      planId: '', 
      startDate: getTodayStr(),
-     isStarred: false 
+     isStarred: false,
+     reusableBoxType: 'Stainless Steel 3-Tier Dabba',
+     boxTagOrNumber: '',
+     boxDeposit: 0
    });
 
    const [isCustomPlanOpen, setIsCustomPlanOpen] = useState(false);
    const [customPlanForm, setCustomPlanForm] = useState({
-     name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false
+     name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false,
+     reusableBoxType: 'Stainless Steel 3-Tier Dabba',
+     boxTagOrNumber: '',
+     boxDeposit: 0
    });
 
    const currentBranchPlans = plans.filter((p:any) => p.branchId === formData.branchId);
@@ -898,10 +1158,13 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
         planName: selectedPlan.name, 
         price: selectedPlan.price, 
         endDate, 
-        pauses: [] 
+        pauses: [],
+        reusableBoxType: newPlanForm.reusableBoxType || 'None',
+        boxTagOrNumber: newPlanForm.boxTagOrNumber || '',
+        boxDeposit: Number(newPlanForm.boxDeposit) || 0
       }]);
-      // Reset isStarred for next plan
-      setNewPlanForm(prev => ({ ...prev, isStarred: false }));
+      // Reset isStarred and box tag for next plan
+      setNewPlanForm(prev => ({ ...prev, isStarred: false, boxTagOrNumber: '' }));
    };
 
    const addCustomPlan = () => {
@@ -920,12 +1183,18 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
             isStarred: customPlanForm.isStarred,
             isCustom: true,
             totalDeliveries: Number(customPlanForm.totalDeliveries),
-            weekdays: customPlanForm.weekdays
+            weekdays: customPlanForm.weekdays,
+            reusableBoxType: customPlanForm.reusableBoxType || 'None',
+            boxTagOrNumber: customPlanForm.boxTagOrNumber || '',
+            boxDeposit: Number(customPlanForm.boxDeposit) || 0
          });
       }
       setActivePlans([...activePlans, ...newPlans]);
       setIsCustomPlanOpen(false);
-      setCustomPlanForm({ name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false });
+      setCustomPlanForm({ 
+        name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false,
+        reusableBoxType: 'Stainless Steel 3-Tier Dabba', boxTagOrNumber: '', boxDeposit: 0 
+      });
    };
 
    const plansTotal = activePlans.reduce((sum, p) => sum + Number(p.price), 0);
@@ -1027,21 +1296,62 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
 
                <div className="bg-slate-50 p-4 rounded-xl space-y-4 border border-slate-200">
                   <h4 className="text-[10px] font-black text-primary-600 uppercase tracking-widest flex items-center gap-2"><Clock size={14}/> Add Subscribed Plans *</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
-                     <div><ModalLabel>Time</ModalLabel><select className="w-full p-2.5 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.mealTime} onChange={e => setNewPlanForm({...newPlanForm, mealTime: e.target.value as any})}><option value="Breakfast">Breakfast</option><option value="Lunch">Lunch</option><option value="Dinner">Dinner</option></select></div>
-                     <div className="md:col-span-1"><ModalLabel>Plan</ModalLabel><select className="w-full p-2.5 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.planId} onChange={e => setNewPlanForm({...newPlanForm, planId: e.target.value})}>{currentBranchPlans.map((p:any) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                     <div><ModalLabel>Start Date</ModalLabel><input type="date" className="w-full p-2.5 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.startDate} onChange={e => setNewPlanForm({...newPlanForm, startDate: e.target.value})} /></div>
-                     <div className="flex flex-col items-center">
-                        <ModalLabel>Star</ModalLabel>
-                        <button 
-                          type="button" 
-                          onClick={() => setNewPlanForm({...newPlanForm, isStarred: !newPlanForm.isStarred})}
-                          className={`p-2.5 rounded-xl border transition-all ${newPlanForm.isStarred ? 'bg-amber-100 border-amber-300 text-amber-600' : 'bg-white border-slate-200 text-slate-300'}`}
-                        >
-                          <Star size={16} fill={newPlanForm.isStarred ? "currentColor" : "none"} />
-                        </button>
+                  <div className="space-y-2.5 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                     <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                        <div><ModalLabel>Time</ModalLabel><select className="w-full p-2 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.mealTime} onChange={e => setNewPlanForm({...newPlanForm, mealTime: e.target.value as any})}><option value="Breakfast">Breakfast</option><option value="Lunch">Lunch</option><option value="Dinner">Dinner</option></select></div>
+                        <div className="md:col-span-2"><ModalLabel>Plan</ModalLabel><select className="w-full p-2 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.planId} onChange={e => setNewPlanForm({...newPlanForm, planId: e.target.value})}>{currentBranchPlans.map((p:any) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                        <div><ModalLabel>Start Date</ModalLabel><input type="date" className="w-full p-2 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.startDate} onChange={e => setNewPlanForm({...newPlanForm, startDate: e.target.value})} /></div>
                      </div>
-                     <button type="button" onClick={addPlan} className="bg-slate-900 text-white py-2.5 rounded-xl font-bold text-[10px] uppercase h-10 hover:bg-black">Add Plan</button>
+
+                     <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end pt-1 border-t border-slate-100">
+                        <div className="md:col-span-6">
+                           <ModalLabel>Reusable Box Type (Eco / Tiffin Box)</ModalLabel>
+                           <select 
+                             className="w-full p-2 border rounded-xl font-semibold text-xs bg-white text-slate-800"
+                             value={newPlanForm.reusableBoxType}
+                             onChange={e => setNewPlanForm({...newPlanForm, reusableBoxType: e.target.value})}
+                           >
+                             {REUSABLE_BOX_TYPES.map(box => (
+                               <option key={box.id} value={box.id}>{box.name}</option>
+                             ))}
+                           </select>
+                        </div>
+                        <div className="md:col-span-3">
+                           <ModalLabel>Box Tag / ID (Optional)</ModalLabel>
+                           <input 
+                             placeholder="e.g. BX-102"
+                             className="w-full p-2 border rounded-xl font-medium text-xs bg-white uppercase"
+                             value={newPlanForm.boxTagOrNumber}
+                             onChange={e => setNewPlanForm({...newPlanForm, boxTagOrNumber: e.target.value})}
+                           />
+                        </div>
+                        <div className="md:col-span-2 flex items-center gap-1.5">
+                           <div className="w-full">
+                              <ModalLabel>Deposit (₹)</ModalLabel>
+                              <input 
+                                type="number"
+                                placeholder="0"
+                                className="w-full p-2 border rounded-xl font-medium text-xs bg-white"
+                                value={newPlanForm.boxDeposit || ''}
+                                onChange={e => setNewPlanForm({...newPlanForm, boxDeposit: Number(e.target.value)})}
+                              />
+                           </div>
+                           <div className="flex flex-col items-center">
+                              <ModalLabel>Star</ModalLabel>
+                              <button 
+                                type="button" 
+                                onClick={() => setNewPlanForm({...newPlanForm, isStarred: !newPlanForm.isStarred})}
+                                className={`p-2 rounded-xl border transition-all ${newPlanForm.isStarred ? 'bg-amber-100 border-amber-300 text-amber-600' : 'bg-white border-slate-200 text-slate-300'}`}
+                                title="Special preparation required"
+                              >
+                                <Star size={15} fill={newPlanForm.isStarred ? "currentColor" : "none"} />
+                              </button>
+                           </div>
+                        </div>
+                        <div className="md:col-span-1">
+                           <button type="button" onClick={addPlan} className="w-full bg-slate-900 text-white py-2 rounded-xl font-bold text-[10px] uppercase hover:bg-black h-9 flex items-center justify-center">Add</button>
+                        </div>
+                     </div>
                   </div>
 
                   <div className="pt-2 border-t border-slate-200">
@@ -1085,6 +1395,42 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                             ))}
                           </div>
                         </div>
+
+                        {/* Custom Plan Reusable Box Config */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                          <div className="md:col-span-1">
+                            <ModalLabel>Reusable Box Type</ModalLabel>
+                            <select 
+                              className="w-full p-2 border rounded-lg text-xs bg-white font-medium"
+                              value={customPlanForm.reusableBoxType}
+                              onChange={e => setCustomPlanForm({...customPlanForm, reusableBoxType: e.target.value})}
+                            >
+                              {REUSABLE_BOX_TYPES.map(box => (
+                                <option key={box.id} value={box.id}>{box.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <ModalLabel>Box Tag / ID</ModalLabel>
+                            <input 
+                              placeholder="e.g. BX-205"
+                              className="w-full p-2 border rounded-lg text-xs bg-white uppercase"
+                              value={customPlanForm.boxTagOrNumber}
+                              onChange={e => setCustomPlanForm({...customPlanForm, boxTagOrNumber: e.target.value})}
+                            />
+                          </div>
+                          <div>
+                            <ModalLabel>Deposit (₹)</ModalLabel>
+                            <input 
+                              type="number"
+                              placeholder="0"
+                              className="w-full p-2 border rounded-lg text-xs bg-white"
+                              value={customPlanForm.boxDeposit || ''}
+                              onChange={e => setCustomPlanForm({...customPlanForm, boxDeposit: Number(e.target.value)})}
+                            />
+                          </div>
+                        </div>
+
                         <div className="grid grid-cols-3 gap-4 items-end">
                           <div><ModalLabel>Quantity</ModalLabel><input type="number" min="1" className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.quantity} onChange={e => setCustomPlanForm({...customPlanForm, quantity: Number(e.target.value)})} /></div>
                           <div><ModalLabel>Start Date</ModalLabel><input type="date" className="w-full p-2 border rounded-lg text-xs" value={customPlanForm.startDate} onChange={e => setCustomPlanForm({...customPlanForm, startDate: e.target.value})} /></div>
@@ -1105,19 +1451,35 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                   </div>
 
                   <div className="space-y-2 mt-2">
-                     {activePlans.map((p, i) => (
-                        <div key={i} className={`flex justify-between items-center bg-white p-3 rounded-lg border text-sm shadow-sm ${p.isStarred ? 'border-amber-200' : ''}`}>
-                           <div className="flex items-center gap-3">
-                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.mealTime === 'Breakfast' ? 'bg-orange-100 text-orange-600' : p.mealTime === 'Lunch' ? 'bg-blue-100 text-blue-600' : p.mealTime === 'Purple-100 text-purple-600'}`}>{p.mealTime}</span>
-                              <div className="font-bold flex items-center gap-2">
-                                {p.planName} (₹{p.price})
-                                {p.isStarred && <Star size={12} fill="#f59e0b" className="text-amber-500" />}
+                     {activePlans.map((p: any, i: number) => {
+                        const isReusable = p.reusableBoxType && p.reusableBoxType !== 'None';
+                        return (
+                        <div key={i} className={`flex justify-between items-center bg-white p-3 rounded-xl border text-sm shadow-2xs ${p.isStarred ? 'border-amber-200 ring-1 ring-amber-100' : 'border-slate-200'}`}>
+                           <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.mealTime === 'Breakfast' ? 'bg-orange-100 text-orange-600' : p.mealTime === 'Lunch' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>{p.mealTime}</span>
+                                <div className="font-bold flex items-center gap-1.5 text-slate-900">
+                                  {p.planName} (₹{p.price})
+                                  {p.isStarred && <Star size={13} fill="#f59e0b" className="text-amber-500" />}
+                                </div>
                               </div>
-                              <div className="text-[10px] text-slate-400 font-mono">Starts: {p.startDate}</div>
+                              <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                                 <span className="text-slate-400 font-mono">Starts: {p.startDate}</span>
+                                 {isReusable ? (
+                                   <span className="inline-flex items-center gap-1 font-bold text-teal-800 bg-teal-50 border border-teal-200/70 px-2 py-0.5 rounded-md">
+                                     🔄 {p.reusableBoxType}
+                                     {p.boxTagOrNumber && <span className="font-mono text-slate-500 ml-1">#{p.boxTagOrNumber}</span>}
+                                     {p.boxDeposit > 0 && <span className="text-slate-600 ml-1">₹{p.boxDeposit} dep</span>}
+                                   </span>
+                                 ) : (
+                                   <span className="text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md font-medium">📦 Disposable / None</span>
+                                 )}
+                              </div>
                            </div>
-                           <button type="button" onClick={() => setActivePlans(activePlans.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
+                           <button type="button" onClick={() => setActivePlans(activePlans.filter((_, idx) => idx !== i))} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16}/></button>
                         </div>
-                     ))}
+                        );
+                     })}
                   </div>
                </div>
 

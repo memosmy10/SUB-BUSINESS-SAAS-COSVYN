@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   RefreshCw, Plus, Store, Search, Calendar, X, 
-  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw
+  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem } from '../services/dbService';
@@ -252,6 +252,51 @@ const Customers = () => {
     );
   }
 
+  const handleExportCSV = () => {
+    if (!filteredCustomers.length) {
+      alert("No customer records to export.");
+      return;
+    }
+    const headers = [
+      "Customer Name",
+      "Mobile",
+      "Address",
+      "Area",
+      "Branch",
+      "Payment Status",
+      "Days Remaining",
+      "Uncollected Boxes",
+      "Active Plans",
+      "Special Notes"
+    ];
+    const rows = filteredCustomers.map(c => {
+      const branch = branches.find((b: any) => b.id === c.branchId)?.name || 'Default';
+      const plansList = (c.activePlans || []).map(p => `${p.planName} (${p.mealTime})`).join("; ");
+      return [
+        `"${(c.name || '').replace(/"/g, '""')}"`,
+        `"${c.mobile || ''}"`,
+        `"${(c.address || '').replace(/"/g, '""')}"`,
+        `"${(c.area || '').replace(/"/g, '""')}"`,
+        `"${branch.replace(/"/g, '""')}"`,
+        `"${c.paymentStatus || 'Pending'}"`,
+        c.realDaysLeft ?? 0,
+        c.uncollectedBoxesCount ?? 0,
+        `"${plansList.replace(/"/g, '""')}"`,
+        `"${(c.notes || '').replace(/"/g, '""')}"`
+      ];
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    const todayStr = getTodayStr();
+    link.setAttribute("download", `customers_export_${todayStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-6 pb-20 pt-1 animate-in fade-in duration-300">
       
@@ -289,6 +334,14 @@ const Customers = () => {
             <Star className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-500" size={14} />
             <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
          </div>
+         <button
+            onClick={handleExportCSV}
+            className="px-3.5 py-2 bg-white/90 hover:bg-slate-100 text-slate-700 border border-slate-200/80 rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all active:scale-95"
+            title="Download Customer Roster as CSV"
+         >
+            <Download size={14} className="text-primary-600" />
+            <span>Export CSV</span>
+         </button>
          {(filters.name || filters.starred !== 'All' || filters.branchId !== 'All' || filters.paymentStatus !== 'All' || filters.timings.length > 0) && (
            <button 
             onClick={() => setFilters({ name: '', mobile: '', area: '', branchId: 'All', paymentStatus: 'All', timings: [], starred: 'All' })}

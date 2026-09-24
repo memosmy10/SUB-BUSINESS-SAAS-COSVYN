@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { 
   Menu, X, ArrowRight, Zap, TrendingUp, Package, CreditCard, 
   MapPin, BarChart3, Star, Check, Layout, Users, LogIn, 
-  Settings, UserPlus, Activity, PieChart
+  Settings, UserPlus, Activity, PieChart, Smartphone, RotateCcw, Truck
 } from 'lucide-react';
 import { useGlobalPricing } from '../services/dbService';
 import { calculateEffectivePrice } from '../services/saasStore';
@@ -278,34 +278,34 @@ const LandingPage = () => {
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[
               { 
+                title: "Driver Mobile Web App & Live GPS Fleet Tracker", 
+                desc: "Riders log in with mobile number, view stop routes, punch attendance, and mark drops live with Google Maps navigation.", 
+                icon: Truck 
+              },
+              { 
+                title: "Reusable Box (Tiffin Dabba) Recovery Manager", 
+                desc: "Stop losing packaging. Track uncollected containers per customer, auto-prompt Day 2+ returns, and send WhatsApp reminders.", 
+                icon: RotateCcw 
+              },
+              { 
                 title: "Smart Customer Lifecycle Management", 
-                desc: "Manage signups, renewals, pauses, and expiries automatically.", 
+                desc: "Manage subscriptions, automated renewals, pauses, resume dates, custom dietary marks, and 1-click CSV export.", 
                 icon: Users 
               },
               { 
-                title: "Autonomous Delivery Route Planning", 
-                desc: "Assign delivery boys, optimize routes, and share via WhatsApp.", 
+                title: "Autonomous Delivery Route Optimizer", 
+                desc: "Sequence multi-stop delivery routes per meal session (Breakfast, Lunch, Dinner) and dispatch via WhatsApp.", 
                 icon: MapPin 
               },
               { 
                 title: "Predictive Financial Intelligence", 
-                desc: "Track revenue, expenses, profit, and pending payments.", 
+                desc: "Track revenue, automated GST invoices, operational expenses, profit margins, and pending payment collections.", 
                 icon: BarChart3 
               },
               { 
-                title: "Branch & Plan Performance Analytics", 
-                desc: "Compare branches, plans, and monthly performance.", 
-                icon: Layout 
-              },
-              { 
-                title: "Payments & Expense Tracking", 
-                desc: "See what’s paid, what’s pending, and where money is going.", 
-                icon: CreditCard 
-              },
-              { 
-                title: "One Dashboard For Your Entire Business", 
-                desc: "Skip spreadsheets and manual calculations.", 
-                icon: Activity 
+                title: "Kitchen Preparation Display (KDS)", 
+                desc: "Live daily prep counts, dish breakdowns, special dietary requests, and raw material inventory forecasting.", 
+                icon: Package 
               }
             ].map((feature, idx) => (
               <div 

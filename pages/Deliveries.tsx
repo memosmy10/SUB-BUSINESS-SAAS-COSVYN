@@ -366,6 +366,10 @@ const Deliveries = () => {
           staff={staff} 
           customers={customers} 
           deliveryLogs={deliveryLogs} 
+          plans={plans}
+          branches={branches}
+          selectedBranch={selectedBranch}
+          activeMealTab={activeMealTab}
           todayStr={todayStr} 
           onShareLink={(boy) => { setSelectedShareBoy(boy); setShareModalOpen(true); }}
         />

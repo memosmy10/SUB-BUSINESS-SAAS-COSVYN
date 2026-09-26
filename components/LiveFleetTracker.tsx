@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Truck, Navigation, MapPin, Phone, MessageSquare, 
   ExternalLink, CheckCircle2, Clock, AlertTriangle, 
-  Package, RotateCcw, Share2, Sparkles, Activity, ShieldCheck
+  Package, RotateCcw, Share2, Sparkles, Activity, ShieldCheck,
+  Sunrise, Sun, Moon, Calendar
 } from 'lucide-react';
 import { DeliveryBoyStaff, GlobalCustomer } from '../services/store';
 
@@ -10,6 +11,10 @@ interface LiveFleetTrackerProps {
   staff: DeliveryBoyStaff[];
   customers: GlobalCustomer[];
   deliveryLogs: any[];
+  plans?: any[];
+  branches?: any[];
+  selectedBranch?: string;
+  activeMealTab?: 'Breakfast' | 'Lunch' | 'Dinner' | 'All';
   todayStr: string;
   onShareLink: (boy: any) => void;
 }
@@ -18,29 +23,127 @@ export const LiveFleetTracker: React.FC<LiveFleetTrackerProps> = ({
   staff,
   customers,
   deliveryLogs,
+  plans = [],
+  branches = [],
+  selectedBranch = 'All',
+  activeMealTab = 'Lunch',
   todayStr,
   onShareLink
 }) => {
-  // Compute real-time stats for each rider
+  const dayOfWeek = new Date().getDay();
+
+  // Selected session tab within Live Fleet view (synced with activeMealTab)
+  const [selectedSession, setSelectedSession] = useState<'Breakfast' | 'Lunch' | 'Dinner' | 'All'>(
+    activeMealTab === 'All' ? 'Lunch' : activeMealTab
+  );
+
+  useEffect(() => {
+    if (activeMealTab && activeMealTab !== 'All') {
+      setSelectedSession(activeMealTab);
+    }
+  }, [activeMealTab]);
+
+  // Filter staff by selected branch
+  const branchFilteredStaff = useMemo(() => {
+    if (!selectedBranch || selectedBranch === 'All') return staff;
+    const branchObj = branches.find(b => b.id === selectedBranch);
+    const branchName = branchObj?.name;
+    return staff.filter(s => s.branchId === selectedBranch || (branchName && s.branchId === branchName));
+  }, [staff, selectedBranch, branches]);
+
+  // Compute real-time stats for each rider based on TODAY's scheduled drops for this branch and session
   const riderMetrics = useMemo(() => {
-    return staff.map(boy => {
-      // Find stops assigned to this boy (by ID or name)
-      const boyCustomers = customers.filter(c => 
-        c.deliveryBoyId === boy.id || 
-        c.deliveryBoyId === boy.name || 
-        c.deliveryBoyName === boy.name
-      );
-      
-      // Find today's logs by this boy
-      const boyLogsToday = deliveryLogs.filter(l => 
-        l.date === todayStr && (l.deliveryBoyId === boy.id || l.deliveryBoyName === boy.name)
-      );
+    return branchFilteredStaff.map(boy => {
+      // Find active customers assigned to this boy within the selected branch
+      const boyAssignedCustomers = customers.filter(c => {
+        if (c.isActive === false) return false;
 
-      const deliveredCount = boyLogsToday.filter(l => l.status === 'Delivered').length;
-      const totalStops = boyCustomers.length;
-      const completionRate = totalStops > 0 ? Math.round((deliveredCount / totalStops) * 100) : 0;
+        // 1. If a specific branch is selected in Deliveries page:
+        if (selectedBranch !== 'All') {
+          const branchObj = branches.find(b => b.id === selectedBranch);
+          const branchName = branchObj?.name;
+          const matchesSelectedBranch = c.branchId === selectedBranch || (branchName && c.branchId === branchName);
+          if (!matchesSelectedBranch) return false;
+        }
 
-      // Reusable boxes recollection
+        // 2. Rider's branch matching (if boy has a branch assigned):
+        if (boy.branchId) {
+          const boyBranchObj = branches.find(b => b.id === boy.branchId);
+          const boyBranchName = boyBranchObj?.name;
+          const matchesBoyBranch = !c.branchId || c.branchId === boy.branchId || (boyBranchName && c.branchId === boyBranchName);
+          if (!matchesBoyBranch) return false;
+        }
+
+        // 3. Strict assignment:
+        if (c.deliveryBoyId) {
+          return c.deliveryBoyId === boy.id || c.deliveryBoyId === boy.name;
+        }
+
+        // If c.deliveryBoyId is empty, fallback to exact deliveryBoyName
+        if (c.deliveryBoyName && boy.name) {
+          return c.deliveryBoyName.trim().toLowerCase() === boy.name.trim().toLowerCase();
+        }
+
+        return false;
+      });
+
+      // Filter customers that actually have scheduled meals TODAY for the selected session
+      const todayActiveCustomers: { customer: GlobalCustomer; mealBoxesCount: number }[] = [];
+      let totalMealBoxesToday = 0;
+
+      boyAssignedCustomers.forEach(c => {
+        let customerBoxesInSession = 0;
+
+        (c.activePlans || []).forEach((ap: any) => {
+          // If viewing a specific meal session (Breakfast/Lunch/Dinner), only count plans for that session
+          if (selectedSession !== 'All' && ap.mealTime !== selectedSession) return;
+
+          const planConfig = plans.find((p: any) => p.id === ap.planId);
+          const weekdays = planConfig?.weekdays || ap.weekdays || [1, 2, 3, 4, 5, 6];
+          const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
+          const isValidDay = weekdays.includes(dayOfWeek);
+          const isWithinRange = todayStr >= ap.startDate && (!ap.endDate || todayStr <= ap.endDate);
+
+          if (isWithinRange && isValidDay && !isPaused) {
+            const qty = Number(ap.quantity) || 1;
+            customerBoxesInSession += qty;
+            totalMealBoxesToday += qty;
+          }
+        });
+
+        if (customerBoxesInSession > 0) {
+          todayActiveCustomers.push({ customer: c, mealBoxesCount: customerBoxesInSession });
+        }
+      });
+
+      const totalStops = todayActiveCustomers.length;
+
+      // Find today's logs by this boy for the current meal session
+      const boyLogsToday = deliveryLogs.filter(l => {
+        const isBoyLog = l.deliveryBoyId === boy.id || l.deliveryBoyName === boy.name;
+        const isToday = l.date === todayStr;
+        const matchesMeal = selectedSession === 'All' || l.mealTime === selectedSession;
+        return isToday && isBoyLog && matchesMeal;
+      });
+
+      // Count delivered stops and delivered boxes in this session
+      let deliveredStops = 0;
+      let deliveredBoxes = 0;
+
+      todayActiveCustomers.forEach(item => {
+        const isStopDelivered = boyLogsToday.some(l => 
+          l.customerId === item.customer.id && 
+          l.status === 'Delivered'
+        );
+        if (isStopDelivered) {
+          deliveredStops++;
+          deliveredBoxes += item.mealBoxesCount;
+        }
+      });
+
+      const completionRate = totalStops > 0 ? Math.round((deliveredStops / totalStops) * 100) : 0;
+
+      // Reusable boxes recollection for this boy today
       const boxesCollected = boyLogsToday.filter(l => 
         l.boxStatus === 'Collected' || l.boxStatus === 'Collected Clean'
       ).length;
@@ -66,7 +169,9 @@ export const LiveFleetTracker: React.FC<LiveFleetTrackerProps> = ({
       return {
         ...boy,
         totalStops,
-        deliveredCount,
+        totalMealBoxesToday,
+        deliveredStops,
+        deliveredBoxes,
         completionRate,
         boxesCollected,
         boxIssues,
@@ -75,7 +180,7 @@ export const LiveFleetTracker: React.FC<LiveFleetTrackerProps> = ({
         hasGps: typeof boy.currentLat === 'number' && typeof boy.currentLng === 'number'
       };
     });
-  }, [staff, customers, deliveryLogs, todayStr]);
+  }, [branchFilteredStaff, customers, deliveryLogs, plans, todayStr, dayOfWeek, selectedBranch, selectedSession, branches]);
 
   // Today's live logs feed
   const recentFeed = useMemo(() => {
@@ -88,7 +193,7 @@ export const LiveFleetTracker: React.FC<LiveFleetTrackerProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
-      {/* Header */}
+      {/* Header & Session Selector */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold font-display text-slate-900 tracking-tight flex items-center gap-2.5">
@@ -96,8 +201,32 @@ export const LiveFleetTracker: React.FC<LiveFleetTrackerProps> = ({
             Live Rider Fleet & GPS Dispatch Tracker
           </h2>
           <p className="text-xs text-slate-500 font-normal mt-0.5">
-            Real-time geolocation coordinates, shift status, and delivery completions streaming from driver phones.
+            Real-time coordinates, assigned stops & boxes for <strong className="text-slate-800">{selectedSession === 'All' ? 'All Day' : selectedSession}</strong>
+            {selectedBranch !== 'All' ? ` • ${branches.find(b => b.id === selectedBranch)?.name || selectedBranch}` : ' • All Branches'}
           </p>
+        </div>
+
+        {/* Meal Session Toggle */}
+        <div className="glass-panel p-1 rounded-xl flex gap-1 shadow-xs border border-slate-200/80 bg-white/90">
+          {[
+            { id: 'Breakfast', label: 'Breakfast', icon: Sunrise, color: 'text-orange-600' },
+            { id: 'Lunch', label: 'Lunch', icon: Sun, color: 'text-blue-600' },
+            { id: 'Dinner', label: 'Dinner', icon: Moon, color: 'text-purple-600' },
+            { id: 'All', label: 'All Day', icon: Calendar, color: 'text-slate-700' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setSelectedSession(tab.id as any)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                selectedSession === tab.id
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <tab.icon size={13} className={selectedSession === tab.id ? 'text-amber-400' : tab.color} />
+              <span>{tab.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -178,10 +307,20 @@ export const LiveFleetTracker: React.FC<LiveFleetTrackerProps> = ({
             {/* Delivery Progress Bar */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500 font-medium">Today's Deliveries</span>
+                <span className="text-slate-500 font-medium">Route ({selectedSession})</span>
                 <span className="font-bold text-slate-900">
-                  {rider.deliveredCount} <span className="text-slate-400 font-normal">/ {rider.totalStops}</span>
-                  <span className="ml-1.5 text-primary-600 font-semibold">({rider.completionRate}%)</span>
+                  {rider.totalStops > 0 ? (
+                    <>
+                      <span className="text-primary-600 font-extrabold">{rider.deliveredStops}</span>
+                      <span className="text-slate-500 font-normal"> / {rider.totalStops} Stops</span>
+                      <span className="text-[11px] text-slate-600 font-bold ml-1.5">({rider.deliveredBoxes} / {rider.totalMealBoxesToday} Boxes)</span>
+                      <span className="ml-1 text-emerald-600 font-bold">({rider.completionRate}%)</span>
+                    </>
+                  ) : (
+                    <span className="text-slate-400 font-medium text-[11px] bg-slate-100 px-2 py-0.5 rounded-full">
+                      0 Drops Scheduled ({selectedSession})
+                    </span>
+                  )}
                 </span>
               </div>
               <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">

@@ -26,7 +26,15 @@ export interface PauseEvent {
   type: 'User' | 'Branch';
 }
 
-export type BoxRecollectionStatus = 'Collected Clean' | 'Collected Unclean' | 'Damaged / Missing Part' | 'Not Returned' | 'Pending';
+export type BoxRecollectionStatus = 
+  | 'Collected' 
+  | 'Collected Clean' 
+  | 'Collected Unclean' 
+  | 'Dirty / Unwashed' 
+  | 'Damaged / Missing Part' 
+  | 'Damaged / Missing Parts' 
+  | 'Not Returned' 
+  | 'Pending';
 
 export interface BoxCollectionEntry {
   status: BoxRecollectionStatus;
@@ -61,6 +69,7 @@ export interface SubscribedPlan {
   startDate: string;
   endDate: string;
   price: number;
+  quantity?: number;
   pauses: PauseEvent[];
   isStarred?: boolean; // Track special preparation requirements per plan
   isCustom?: boolean;
@@ -111,6 +120,9 @@ export interface GlobalCustomer {
   // Highlight and Notes
   highlightMark?: 'None' | 'VIP' | 'Dietary' | 'Allergy' | 'Urgent';
   notes?: string;
+  isStarred?: boolean;
+  starredQuery?: string;
+  specialNotes?: string;
 
   // Reusable Box Collection Records (keyed by `${dateStr}_${mealTime}`)
   boxCollections?: Record<string, BoxCollectionEntry>;

@@ -1,11 +1,11 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Plus, Trash2, X, Store, Truck, Calendar, Loader2, Edit2, Check
+  Plus, Trash2, X, Store, Truck, Calendar, Loader2, Edit2, Check, Package, ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, deleteItem, updateItem } from '../services/dbService';
-import { INDIA_STATES } from '../services/store';
+import { INDIA_STATES, REUSABLE_BOX_TYPES } from '../services/store';
 
 // --- Types ---
 interface Branch { 
@@ -18,6 +18,14 @@ interface Branch {
 }
 interface Plan { id: string; branchId: string; name: string; description: string; price: number; category: string; numberOfDeliveryDays: number; weekdays: number[]; deliveryTypeLabel: string; }
 interface DeliveryBoy { id: string; branchId: string; name: string; mobile: string; dateOfJoining: string; salary: number; }
+interface CustomBoxType { 
+  id: string; 
+  name: string; 
+  shortLabel?: string; 
+  description?: string; 
+  defaultDeposit?: number; 
+  isCustom?: boolean;
+}
 
 const WEEKDAYS_MAP = [
   { id: 0, label: 'Sun' }, { id: 1, label: 'Mon' }, { id: 2, label: 'Tue' }, 
@@ -40,16 +48,41 @@ const Settings = () => {
   const { data: branches, loading: l1 } = useStreamCollection<Branch>('branches');
   const { data: plans, loading: l2 } = useStreamCollection<Plan>('plans');
   const { data: deliveryBoys, loading: l3 } = useStreamCollection<DeliveryBoy>('staff');
+  const { data: dbBoxTypes = [], loading: l4 } = useStreamCollection<CustomBoxType>('box_types');
 
-  const isLoading = l1 || l2 || l3;
+  const isLoading = l1 || l2 || l3 || l4;
+
+  // Combine built-in standard box types with business owner's custom configured box types
+  const allBoxTypes = useMemo(() => {
+    const customMap = new Map<string, CustomBoxType>();
+    // First seed standard built-in types
+    REUSABLE_BOX_TYPES.forEach(b => {
+      customMap.set(b.id, {
+        id: b.id,
+        name: b.name,
+        shortLabel: b.shortLabel,
+        description: b.description,
+        defaultDeposit: b.defaultDeposit,
+        isCustom: false
+      });
+    });
+    // Overlay or append Firestore custom types
+    dbBoxTypes.forEach(b => {
+      customMap.set(b.id, {
+        ...b,
+        isCustom: true
+      });
+    });
+    return Array.from(customMap.values());
+  }, [dbBoxTypes]);
 
   // Modal State
-  const [activeModal, setActiveModal] = useState<'branch' | 'plan' | 'delivery' | null>(null);
+  const [activeModal, setActiveModal] = useState<'branch' | 'plan' | 'delivery' | 'boxType' | null>(null);
   const [editingItem, setEditingItem] = useState<any>(null);
 
   // --- ACTIONS ---
   
-  const handleOpenModal = (type: 'branch' | 'plan' | 'delivery', item?: any) => {
+  const handleOpenModal = (type: 'branch' | 'plan' | 'delivery' | 'boxType', item?: any) => {
     setEditingItem(item || null);
     setActiveModal(type);
   };
@@ -82,6 +115,17 @@ const Settings = () => {
       await updateItem(currentUser.uid, 'staff', editingItem.id, data);
     } else {
       await addItem(currentUser.uid, 'staff', data);
+    }
+    setActiveModal(null);
+    setEditingItem(null);
+  };
+
+  const handleSaveBoxType = async (data: Omit<CustomBoxType, 'id'>) => {
+    if(!currentUser) return;
+    if (editingItem && editingItem.isCustom) {
+      await updateItem(currentUser.uid, 'box_types', editingItem.id, data);
+    } else {
+      await addItem(currentUser.uid, 'box_types', { ...data, isCustom: true });
     }
     setActiveModal(null);
     setEditingItem(null);
@@ -356,6 +400,91 @@ const Settings = () => {
     );
   };
 
+  const BoxTypeModal = ({ initialData, onClose }: { initialData?: CustomBoxType, onClose: () => void }) => {
+    const [formData, setFormData] = useState({ 
+      name: initialData?.name || '', 
+      shortLabel: initialData?.shortLabel || '',
+      defaultDeposit: initialData?.defaultDeposit ?? 200,
+      description: initialData?.description || ''
+    });
+    
+    const handleSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!formData.name.trim()) return;
+      handleSaveBoxType({
+        name: formData.name.trim(),
+        shortLabel: formData.shortLabel.trim() || formData.name.slice(0, 12),
+        defaultDeposit: Number(formData.defaultDeposit) || 0,
+        description: formData.description.trim()
+      });
+    };
+    
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-in fade-in">
+        <div className="glass-card bg-white/95 rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-7 border border-white/80">
+          <div className="flex justify-between mb-5 items-center">
+            <div>
+              <h3 className="font-bold font-display text-lg text-slate-900">{initialData ? 'Edit Box Type' : 'Add New Box Type'}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Custom tiffin container for customer subscriptions & driver recollection</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
+          </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Box Type Name *</label>
+              <input 
+                required autoFocus
+                placeholder="e.g. 5-Compartment Stainless Steel Tray" 
+                className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
+                value={formData.name}
+                onChange={e => setFormData({...formData, name: e.target.value})} 
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Short Label / Tag</label>
+                <input 
+                  placeholder="e.g. Steel 5-Comp" 
+                  className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
+                  value={formData.shortLabel}
+                  onChange={e => setFormData({...formData, shortLabel: e.target.value})} 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Refundable Deposit (₹)</label>
+                <input 
+                  type="number"
+                  placeholder="e.g. 250" 
+                  className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" 
+                  value={formData.defaultDeposit}
+                  onChange={e => setFormData({...formData, defaultDeposit: Number(e.target.value)})} 
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Description (Optional)</label>
+              <textarea 
+                rows={2}
+                placeholder="e.g. Heavy duty food-grade steel with leakproof silicone ring..." 
+                className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium resize-none" 
+                value={formData.description}
+                onChange={e => setFormData({...formData, description: e.target.value})} 
+              />
+            </div>
+
+            <div className="pt-2">
+              <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95">
+                {initialData ? 'Update Box Type' : 'Save Box Type'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   if (isLoading) {
     return (
       <div className="h-[60vh] flex flex-col items-center justify-center gap-3">
@@ -541,9 +670,88 @@ const Settings = () => {
         </div>
       </div>
 
+      {/* REUSABLE BOX TYPES */}
+      <div className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+              <Package size={18} />
+            </div>
+            <div>
+              <h2 className="font-bold font-display text-base text-slate-900">Reusable Box Types & Configurations</h2>
+              <p className="text-[11px] text-slate-400">Custom containers available in the Customer dropdown and driver collection portal</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => handleOpenModal('boxType')} 
+            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95"
+          >
+            <Plus size={15}/> Add Box Type
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+              <tr>
+                <th className="px-6 py-3">Box Type Name</th>
+                <th className="px-6 py-3">Tag / Badge</th>
+                <th className="px-6 py-3">Refundable Deposit</th>
+                <th className="px-6 py-3">Description</th>
+                <th className="px-6 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {allBoxTypes.map(box => (
+                <tr key={box.id} className="hover:bg-slate-50/70 transition-colors">
+                  <td className="px-6 py-3.5">
+                    <div className="font-semibold text-slate-900 flex items-center gap-2">
+                      <span>{box.name}</span>
+                      {box.isCustom ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                          Custom
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium border border-slate-200">
+                          Standard
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-3.5">
+                    <span className="font-mono text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                      {box.shortLabel || box.id}
+                    </span>
+                  </td>
+                  <td className="px-6 py-3.5 font-bold text-slate-900">
+                    {box.defaultDeposit && box.defaultDeposit > 0 ? `₹${box.defaultDeposit}` : 'No Deposit'}
+                  </td>
+                  <td className="px-6 py-3.5 text-slate-400 text-[11px] max-w-xs truncate">
+                    {box.description || '—'}
+                  </td>
+                  <td className="px-6 py-3.5 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      {box.isCustom ? (
+                        <>
+                          <button onClick={() => handleOpenModal('boxType', box)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors" title="Edit"><Edit2 size={14}/></button>
+                          <button onClick={() => handleDelete('box_types', box.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors" title="Delete"><Trash2 size={14}/></button>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 italic px-2">Default</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {allBoxTypes.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-400">No box types found.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {activeModal === 'branch' && <BranchModal initialData={editingItem} onClose={() => { setActiveModal(null); setEditingItem(null); }} />}
       {activeModal === 'plan' && <PlanModal initialData={editingItem} onClose={() => { setActiveModal(null); setEditingItem(null); }} />}
       {activeModal === 'delivery' && <DeliveryBoyModal initialData={editingItem} onClose={() => { setActiveModal(null); setEditingItem(null); }} />}
+      {activeModal === 'boxType' && <BoxTypeModal initialData={editingItem} onClose={() => { setActiveModal(null); setEditingItem(null); }} />}
     </div>
   );
 };

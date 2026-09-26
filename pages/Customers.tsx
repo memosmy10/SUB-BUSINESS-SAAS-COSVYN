@@ -44,8 +44,24 @@ const Customers = () => {
   const { data: branches = [], loading: l2 } = useStreamCollection<any>('branches');
   const { data: plans = [], loading: l3 } = useStreamCollection<any>('plans');
   const { data: staff = [], loading: l4 } = useStreamCollection<any>('staff');
+  const { data: dbBoxTypes = [] } = useStreamCollection<any>('box_types');
 
   const isLoading = l1 || l2 || l3 || l4;
+
+  // Combine standard and custom box types from settings
+  const availableBoxTypes = useMemo(() => {
+    const map = new Map<string, any>();
+    REUSABLE_BOX_TYPES.forEach(b => map.set(b.id, b));
+    dbBoxTypes.forEach((b: any) => {
+      map.set(b.id || b.name, {
+        id: b.id || b.name,
+        name: b.name,
+        shortLabel: b.shortLabel || b.name,
+        defaultDeposit: b.defaultDeposit || 0
+      });
+    });
+    return Array.from(map.values());
+  }, [dbBoxTypes]);
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isRenewal, setIsRenewal] = useState(false);
@@ -193,9 +209,9 @@ const Customers = () => {
   const filteredCustomers = useMemo(() => {
     return enrichedCustomers.filter(c => {
       const mealTimes = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
-      const hasStarredPlan = (c.activePlans || []).some(p => p.isStarred);
+      const isStarredCustomer = Boolean(c.isStarred || (c.activePlans || []).some(p => p.isStarred));
       
-      const matchesStarred = filters.starred === 'All' || (filters.starred === 'Yes' && hasStarredPlan) || (filters.starred === 'No' && !hasStarredPlan);
+      const matchesStarred = filters.starred === 'All' || (filters.starred === 'Yes' && isStarredCustomer) || (filters.starred === 'No' && !isStarredCustomer);
       const matchesBranch = filters.branchId === 'All' || c.branchId === filters.branchId;
       const matchesStatus = filters.paymentStatus === 'All' || 
                             (filters.paymentStatus === 'Paid' && (c.pendingAmount || 0) <= 0) || 
@@ -392,7 +408,7 @@ const Customers = () => {
                     const branch = branches.find((b:any) => b.id === c.branchId);
                     const mealTimes = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
                     const isExpanded = expandedRows.has(c.id);
-                    const hasStarredPlan = (c.activePlans || []).some(p => p.isStarred);
+                    const isStarredCustomer = Boolean(c.isStarred || (c.activePlans || []).some(p => p.isStarred));
                     const boxHealth = getCustomerBoxHealth(c);
                     const reusableBoxPlans = (c.activePlans || []).filter((p: any) => p.reusableBoxType && p.reusableBoxType !== 'None');
 
@@ -425,9 +441,14 @@ const Customers = () => {
                             <div className="text-xs text-slate-400 font-mono mt-0.5">{c.mobile}</div>
                           </td>
                           <td className="p-3.5 text-center">
-                            {hasStarredPlan ? (
-                              <div className="flex justify-center" title="Has active special request">
-                                <Star size={15} fill="#f59e0b" className="text-amber-500 animate-pulse" />
+                            {isStarredCustomer ? (
+                              <div className="flex flex-col items-center justify-center gap-0.5" title={c.starredQuery || c.notes || 'VIP Starred Customer'}>
+                                <Star size={16} fill="#f59e0b" className="text-amber-500 animate-pulse" />
+                                {(c.starredQuery || c.notes) && (
+                                  <span className="text-[9px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded-md max-w-[100px] truncate">
+                                    {c.starredQuery || c.notes}
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <span className="text-slate-300">—</span>
@@ -511,7 +532,18 @@ const Customers = () => {
          </div>
       </div>
 
-      {isAddModalOpen && <CustomerModal plans={plans} staff={staff} branches={branches} initialData={activeCustomer} isRenewal={isRenewal} onClose={() => { setIsAddModalOpen(false); setActiveCustomer(null); setIsRenewal(false); }} onSubmit={handleSaveCustomer} />}
+      {isAddModalOpen && (
+        <CustomerModal 
+          plans={plans} 
+          staff={staff} 
+          branches={branches} 
+          initialData={activeCustomer} 
+          isRenewal={isRenewal} 
+          availableBoxTypes={availableBoxTypes}
+          onClose={() => { setIsAddModalOpen(false); setActiveCustomer(null); setIsRenewal(false); }} 
+          onSubmit={handleSaveCustomer} 
+        />
+      )}
       {isPauseModalOpen && <PauseCustomerModal customers={customers} branches={branches} plans={plans} onClose={() => setIsPauseModalOpen(false)} onSubmit={handlePausePlans} />}
       {isPauseBranchModalOpen && <PauseBranchModal branches={branches} customers={customers} onClose={() => setIsPauseBranchModalOpen(false)} onSubmit={handlePauseBranch} />}
     </div>
@@ -1164,11 +1196,13 @@ const DAYS = [
   { label: 'Sat', value: 6 },
 ];
 
-const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose, onSubmit }: any) => {
+const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose, onSubmit, availableBoxTypes = REUSABLE_BOX_TYPES }: any) => {
    const [formData, setFormData] = useState<any>({
       branchId: branches[0]?.id || '', name: '', mobile: '', address: '', area: '', 
       deliveryBoyId: '', amountPaid: 0, deliveryCharges: 0, activePlans: [], 
       highlightMark: 'None', notes: '', locationLink: '',
+      isStarred: false,
+      starredQuery: '',
       ...initialData
    });
 
@@ -1178,7 +1212,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
      planId: '', 
      startDate: getTodayStr(),
      isStarred: false,
-     reusableBoxType: 'Stainless Steel 3-Tier Dabba',
+     reusableBoxType: availableBoxTypes[1]?.name || 'Stainless Steel 3-Tier Dabba',
      boxTagOrNumber: '',
      boxDeposit: 0
    });
@@ -1186,7 +1220,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    const [isCustomPlanOpen, setIsCustomPlanOpen] = useState(false);
    const [customPlanForm, setCustomPlanForm] = useState({
      name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false,
-     reusableBoxType: 'Stainless Steel 3-Tier Dabba',
+     reusableBoxType: availableBoxTypes[1]?.name || 'Stainless Steel 3-Tier Dabba',
      boxTagOrNumber: '',
      boxDeposit: 0
    });
@@ -1269,8 +1303,13 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
         ? [...(initialData?.pastPlans || []), ...(initialData?.activePlans || [])]
         : (initialData?.pastPlans || []);
 
+      const isStarred = Boolean(formData.isStarred || activePlans.some(p => p.isStarred));
+      const starredQuery = (formData.starredQuery || formData.notes || '').trim();
+
       onSubmit({ 
          ...formData, 
+         isStarred,
+         starredQuery,
          activePlans, 
          pastPlans,
          planId: primary.planId, 
@@ -1319,10 +1358,52 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                   </div>
                </div>
 
-               {/* Highlight Mark & Notes */}
+               {/* Starred Customer & Special Instructions / Query Notes */}
+               <div className="p-4 bg-amber-50/70 rounded-2xl border border-amber-200/90 space-y-3">
+                  <div className="flex items-center justify-between">
+                     <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          className="w-4 h-4 text-amber-500 rounded border-slate-300 focus:ring-amber-400 cursor-pointer"
+                          checked={formData.isStarred}
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            setFormData({ 
+                              ...formData, 
+                              isStarred: checked,
+                              highlightMark: checked && formData.highlightMark === 'None' ? 'VIP' : formData.highlightMark 
+                            });
+                          }}
+                        />
+                        <span className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                          <Star size={16} fill={formData.isStarred ? "#f59e0b" : "none"} className={formData.isStarred ? "text-amber-500" : "text-slate-400"} />
+                          Star Customer (VIP / High Priority Tracking)
+                        </span>
+                     </label>
+                     <span className="text-[10px] text-amber-700 font-semibold px-2 py-0.5 rounded-full bg-amber-100/80">
+                       Rider & Kitchen Alert
+                     </span>
+                  </div>
+
+                  <div>
+                     <ModalLabel>Customer Special Query & Custom Notes (Dietary / Delivery instructions)</ModalLabel>
+                     <textarea 
+                       className="w-full p-2.5 bg-white border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-400 outline-none font-medium text-slate-800 text-xs resize-none h-[54px] placeholder:text-slate-400"
+                       placeholder="e.g. Ring bell twice, deliver at 2nd floor, less spicy, no onion garlic, call before arriving..."
+                       value={formData.starredQuery || formData.notes || ''}
+                       onChange={e => setFormData({
+                         ...formData, 
+                         starredQuery: e.target.value,
+                         notes: e.target.value
+                       })}
+                     />
+                  </div>
+               </div>
+
+               {/* Highlight Mark */}
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <div>
-                   <ModalLabel>Highlight Mark *</ModalLabel>
+                   <ModalLabel>Category / Mark *</ModalLabel>
                    <select 
                     required
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-bold text-slate-700 text-sm"
@@ -1336,14 +1417,11 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                      <option value="Urgent">Urgent Preparation</option>
                    </select>
                  </div>
-                 <div className="md:row-span-1">
-                   <ModalLabel>Preparation Note (Optional)</ModalLabel>
-                   <textarea 
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-medium text-slate-700 text-sm resize-none h-[42px]"
-                    placeholder="e.g. Less spicy, No onions..."
-                    value={formData.notes}
-                    onChange={e => setFormData({...formData, notes: e.target.value})}
-                   />
+                 <div>
+                   <ModalLabel>Internal Preparation Mark</ModalLabel>
+                   <p className="text-xs text-slate-500 mt-2">
+                     {formData.isStarred ? '⭐ Customer is Starred - highlighted for cooks & riders.' : 'Standard priority customer.'}
+                   </p>
                  </div>
                </div>
 
@@ -1364,8 +1442,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                              value={newPlanForm.reusableBoxType}
                              onChange={e => setNewPlanForm({...newPlanForm, reusableBoxType: e.target.value})}
                            >
-                             {REUSABLE_BOX_TYPES.map(box => (
-                               <option key={box.id} value={box.id}>{box.name}</option>
+                             {availableBoxTypes.map((box: any) => (
+                               <option key={box.id || box.name} value={box.name || box.id}>{box.name}</option>
                              ))}
                            </select>
                         </div>
@@ -1458,8 +1536,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                               value={customPlanForm.reusableBoxType}
                               onChange={e => setCustomPlanForm({...customPlanForm, reusableBoxType: e.target.value})}
                             >
-                              {REUSABLE_BOX_TYPES.map(box => (
-                                <option key={box.id} value={box.id}>{box.name}</option>
+                              {availableBoxTypes.map((box: any) => (
+                                <option key={box.id || box.name} value={box.name || box.id}>{box.name}</option>
                               ))}
                             </select>
                           </div>

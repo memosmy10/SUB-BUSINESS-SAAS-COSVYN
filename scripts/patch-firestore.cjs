@@ -37,6 +37,19 @@ for (const relPath of filesToPatch) {
     modified = true;
   }
 
+  // Pattern 3: Prevent circular structure errors (Y2/Ka) in __PRIVATE_argToString
+  if (content.includes('__PRIVATE_formatJSON') || content.includes('Converting to JSON failed, just log the object directly')) {
+    content = content.replace(
+      /\/\/ Converting to JSON failed, just log the object directly[\s\n]*return e;/g,
+      'return (e && e.message) ? e.message : String(e);'
+    );
+    content = content.replace(
+      /\}\s*catch\s*\([a-zA-Z0-9_]*\)\s*\{\s*return\s+e\s*;\s*\}/g,
+      '} catch (_err) { return (e && e.message) ? e.message : String(e); }'
+    );
+    modified = true;
+  }
+
   if (modified) {
     fs.writeFileSync(fullPath, content, 'utf8');
     console.log(`[patch-firestore] Patched: ${relPath}`);

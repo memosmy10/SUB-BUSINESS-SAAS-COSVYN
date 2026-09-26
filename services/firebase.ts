@@ -2,7 +2,10 @@
 // @ts-ignore
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore, memoryLocalCache } from "firebase/firestore";
+import { initializeFirestore, memoryLocalCache, setLogLevel } from "firebase/firestore";
+
+// Silence internal WebChannel reconnect logs in iFrame
+setLogLevel('silent');
 
 // Your web app's Firebase configuration
 const firebaseConfig = {

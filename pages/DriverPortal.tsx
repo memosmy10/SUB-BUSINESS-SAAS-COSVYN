@@ -3,7 +3,7 @@ import {
   Truck, MapPin, Phone, MessageSquare, CheckCircle2, Clock, 
   AlertCircle, AlertTriangle, Navigation, ArrowRight, RefreshCw, 
   ChevronRight, Calendar, User, Shield, Info, Battery, Compass,
-  Sparkles, Check, X, RotateCcw, Package, HelpCircle, ExternalLink, Play
+  Sparkles, Check, X, RotateCcw, Package, HelpCircle, ExternalLink, Play, Star
 } from 'lucide-react';
 import { 
   collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc 
@@ -192,6 +192,7 @@ export const DriverPortal: React.FC = () => {
   const [allStaff, setAllStaff] = useState<DeliveryBoyStaff[]>([]);
   const [customers, setCustomers] = useState<GlobalCustomer[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
   const [deliveryLogs, setDeliveryLogs] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [isShiftActive, setIsShiftActive] = useState(false);
@@ -301,6 +302,13 @@ export const DriverPortal: React.FC = () => {
       setPlans(list);
     });
 
+    // Branches stream
+    const branchesRef = collection(db, 'businesses', bizId, 'branches');
+    const unsubscribeBranches = onSnapshot(branchesRef, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBranches(list);
+    });
+
     // Today's delivery logs stream
     const logsRef = collection(db, 'businesses', bizId, 'delivery_logs');
     const unsubscribeLogs = onSnapshot(logsRef, (snap) => {
@@ -318,6 +326,7 @@ export const DriverPortal: React.FC = () => {
       unsubscribeStaff();
       unsubscribeCust();
       unsubscribePlans();
+      unsubscribeBranches();
       unsubscribeLogs();
     };
   }, [bizId, selectedBoyId, todayStr]);
@@ -361,19 +370,26 @@ export const DriverPortal: React.FC = () => {
     }
   }, [isShiftActive, bizId, selectedBoyId]);
 
-  // Active delivery boy
+  // Active delivery boy & their branch hub
   const currentBoy = useMemo(() => {
     return allStaff.find(s => s.id === selectedBoyId) || null;
   }, [allStaff, selectedBoyId]);
 
+  const driverBranch = useMemo(() => {
+    if (!currentBoy?.branchId) return branches[0] || null;
+    return branches.find(b => b.id === currentBoy.branchId) || branches[0] || null;
+  }, [currentBoy, branches]);
+
   // Stops assigned to this delivery boy for the selected meal session
+  // Grouped BY CUSTOMER (Stop-based Route)
   const stops = useMemo(() => {
     if (!selectedBoyId) return [];
 
-    const activeStops: any[] = [];
+    const activeCustomerStops: any[] = [];
 
     customers
       .filter(c => {
+        if (c.isActive === false) return false;
         if (showAllUnassigned) return true;
         return (
           c.deliveryBoyId === selectedBoyId || 
@@ -382,6 +398,10 @@ export const DriverPortal: React.FC = () => {
         );
       })
       .forEach(c => {
+        // Collect all scheduled plans for this customer for today in the selected meal session
+        const scheduledPlans: any[] = [];
+        let stopTotalBoxes = 0;
+
         (c.activePlans || []).forEach((ap: SubscribedPlan) => {
           if (ap.mealTime !== selectedMeal) return;
 
@@ -392,49 +412,202 @@ export const DriverPortal: React.FC = () => {
           const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
 
           if (isWithinRange && isValidDay && !isPaused) {
-            const logKey = `${c.id}_${selectedMeal}`;
-            const logRecord = deliveryLogs[logKey];
-            const isDelivered = logRecord?.status === 'Delivered';
-
-            // Check if Customer is on Day 2+ for reusable box
-            const isDay2Plus = isCustomerDeliveryDay2Plus(c, todayStr);
-
-            activeStops.push({
-              customer: c,
-              plan: ap,
+            const qty = Number(ap.quantity) || 1;
+            stopTotalBoxes += qty;
+            scheduledPlans.push({
+              ...ap,
               planConfig,
-              logKey,
-              logRecord,
-              isDelivered,
-              isDay2Plus,
-              routeOrder: c.routeOrder ?? 999
+              quantity: qty
             });
           }
         });
+
+        // Only include customer if they actually have a scheduled meal today in this session!
+        if (scheduledPlans.length > 0) {
+          const logKey = `${c.id}_${selectedMeal}`;
+          const logRecord = deliveryLogs[logKey];
+          const isDelivered = logRecord?.status === 'Delivered';
+
+          // Check if Customer is on Day 2+ for reusable box
+          const isDay2Plus = isCustomerDeliveryDay2Plus(c, todayStr);
+
+          // Box variants breakdown
+          const boxVariantMap: Record<string, { count: number; boxType: string; isStarred: boolean }> = {};
+          scheduledPlans.forEach(p => {
+            const variantKey = p.planName || 'Standard Meal';
+            if (!boxVariantMap[variantKey]) {
+              boxVariantMap[variantKey] = {
+                count: 0,
+                boxType: p.reusableBoxType || c.reusableBoxType || 'Stainless Steel 3-Tier Dabba',
+                isStarred: Boolean(p.isStarred)
+              };
+            }
+            boxVariantMap[variantKey].count += p.quantity || 1;
+            if (p.isStarred) boxVariantMap[variantKey].isStarred = true;
+          });
+
+          const primaryBoxType = scheduledPlans.find(p => p.reusableBoxType && p.reusableBoxType !== 'None')?.reusableBoxType || 
+                                 c.reusableBoxType || 
+                                 'Stainless Steel 3-Tier Dabba';
+
+          // In dabba delivery, every stop tracks tiffin box recollection by default
+          const isReusableApplicable = true;
+
+          const isStarred = Boolean(
+            c.isStarred || 
+            (c.highlightMark && c.highlightMark !== 'None') || 
+            scheduledPlans.some(p => p.isStarred)
+          );
+
+          const starredQuery = c.starredQuery || c.notes || (c.highlightMark && c.highlightMark !== 'None' ? c.highlightMark : '');
+
+          activeCustomerStops.push({
+            customer: c,
+            scheduledPlans,
+            totalBoxes: stopTotalBoxes,
+            boxVariants: Object.entries(boxVariantMap).map(([name, data]) => ({
+              planName: name,
+              ...data
+            })),
+            isStarred,
+            starredQuery,
+            isReusableApplicable,
+            primaryBoxType,
+            logKey,
+            logRecord,
+            isDelivered,
+            isDay2Plus,
+            routeOrder: c.routeOrder ?? 999
+          });
+        }
       });
 
     // Sort by optimal route order
-    return activeStops.sort((a, b) => a.routeOrder - b.routeOrder);
+    return activeCustomerStops.sort((a, b) => a.routeOrder - b.routeOrder);
   }, [customers, selectedBoyId, currentBoy, selectedMeal, plans, todayStr, dayOfWeek, deliveryLogs, showAllUnassigned, allStaff.length]);
 
   // Summary Metrics
   const metrics = useMemo(() => {
-    const total = stops.length;
-    const delivered = stops.filter(s => s.isDelivered).length;
-    const pending = total - delivered;
+    const totalStops = stops.length;
+    const deliveredStops = stops.filter(s => s.isDelivered).length;
+    const pendingStops = totalStops - deliveredStops;
+    const totalBoxesToDeliver = stops.reduce((sum, s) => sum + (s.totalBoxes || 1), 0);
+    const deliveredBoxes = stops.filter(s => s.isDelivered).reduce((sum, s) => sum + (s.totalBoxes || 1), 0);
 
     // Reusable boxes metrics
-    const reusableStops = stops.filter(s => s.customer.reusableBoxEnabled && s.isDay2Plus);
+    const reusableStops = stops.filter(s => s.isReusableApplicable);
     const boxesToRecollect = reusableStops.length;
-    const boxesCollected = reusableStops.filter(s => s.logRecord?.boxStatus === 'Collected').length;
+    const boxesCollected = reusableStops.filter(s => 
+      s.logRecord?.boxStatus === 'Collected' || s.logRecord?.boxStatus === 'Collected Clean'
+    ).length;
     const boxesIssues = reusableStops.filter(s => 
       s.logRecord?.boxStatus === 'Dirty / Unwashed' || 
       s.logRecord?.boxStatus === 'Damaged / Missing Parts' || 
       s.logRecord?.boxStatus === 'Not Returned'
     ).length;
 
-    return { total, delivered, pending, boxesToRecollect, boxesCollected, boxesIssues };
+    return { 
+      total: totalStops, 
+      delivered: deliveredStops, 
+      pending: pendingStops, 
+      totalBoxesToDeliver,
+      deliveredBoxes,
+      boxesToRecollect, 
+      boxesCollected, 
+      boxesIssues 
+    };
   }, [stops]);
+
+  // Quick 1-Tap Box Status Update
+  const handleQuickBoxStatus = async (stop: any, status: BoxRecollectionStatus, note: string = '') => {
+    if (!bizId) return;
+
+    const customer = stop.customer;
+    const logKey = stop.logKey;
+    const now = new Date();
+    const isClean = status === 'Collected' || status === 'Collected Clean';
+    const isCollectedAny = isClean || status === 'Dirty / Unwashed';
+
+    // Optimistic UI update
+    setDeliveryLogs(prev => ({
+      ...prev,
+      [logKey]: {
+        ...(prev[logKey] || {}),
+        date: todayStr,
+        customerId: customer.id,
+        customerName: customer.name,
+        deliveryBoyId: selectedBoyId,
+        deliveryBoyName: currentBoy?.name || 'Rider',
+        mealTime: selectedMeal,
+        reusableBoxEnabled: true,
+        boxType: customer.reusableBoxType || stop.primaryBoxType || 'Stainless Steel 3-Tier Dabba',
+        isDay2Plus: true,
+        boxStatus: status,
+        boxNotes: note.trim(),
+        boxCollectedAt: isClean ? now.toISOString() : null,
+        updatedAt: now.toISOString()
+      }
+    }));
+
+    setCustomers(prev => prev.map(c => {
+      if (c.id === customer.id) {
+        const prevCount = typeof c.uncollectedBoxesCount === 'number' ? c.uncollectedBoxesCount : 1;
+        const newCount = isCollectedAny ? Math.max(0, prevCount - 1) : prevCount;
+        return {
+          ...c,
+          uncollectedBoxesCount: newCount,
+          boxCollections: {
+            ...(c.boxCollections || {}),
+            [`${todayStr}_${selectedMeal}`]: {
+              status,
+              boxType: customer.reusableBoxType || stop.primaryBoxType || 'Stainless Steel 3-Tier Dabba',
+              issueNote: note.trim(),
+              collectedAt: now.toISOString(),
+              updatedBy: currentBoy?.name || 'Delivery Partner'
+            }
+          }
+        };
+      }
+      return c;
+    }));
+
+    if (bizId === 'demo') return;
+
+    try {
+      const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${customer.id}_${selectedMeal}`);
+      await setDoc(logDocRef, {
+        date: todayStr,
+        customerId: customer.id,
+        customerName: customer.name,
+        deliveryBoyId: selectedBoyId,
+        deliveryBoyName: currentBoy?.name || 'Rider',
+        mealTime: selectedMeal,
+        reusableBoxEnabled: true,
+        boxType: customer.reusableBoxType || stop.primaryBoxType || 'Stainless Steel 3-Tier Dabba',
+        isDay2Plus: true,
+        boxStatus: status,
+        boxNotes: note.trim(),
+        boxCollectedAt: isClean ? now.toISOString() : null,
+        updatedAt: now.toISOString()
+      }, { merge: true });
+
+      const custDocRef = doc(db, 'businesses', bizId, 'customers', customer.id);
+      const prevCount = typeof customer.uncollectedBoxesCount === 'number' ? customer.uncollectedBoxesCount : 1;
+      const newCount = isCollectedAny ? Math.max(0, prevCount - 1) : prevCount;
+      await updateDoc(custDocRef, {
+        uncollectedBoxesCount: newCount,
+        [`boxCollections.${todayStr}_${selectedMeal}`]: {
+          status,
+          boxType: customer.reusableBoxType || stop.primaryBoxType || 'Stainless Steel 3-Tier Dabba',
+          issueNote: note.trim(),
+          collectedAt: now.toISOString(),
+          updatedBy: currentBoy?.name || 'Delivery Partner'
+        }
+      });
+    } catch (err) {
+      console.warn("Save quick box status err:", err);
+    }
+  };
 
   // Handle Attendance Punch In / Shift Start
   const handlePunchIn = async () => {
@@ -890,8 +1063,20 @@ export const DriverPortal: React.FC = () => {
           </div>
 
           {stops.map((stop, idx) => {
-            const { customer, plan, logKey, logRecord, isDelivered, isDay2Plus } = stop;
-            const hasBox = customer.reusableBoxEnabled;
+            const { 
+              customer, 
+              scheduledPlans, 
+              totalBoxes, 
+              boxVariants, 
+              isStarred, 
+              starredQuery, 
+              logKey, 
+              logRecord, 
+              isDelivered, 
+              isDay2Plus, 
+              isReusableApplicable, 
+              primaryBoxType 
+            } = stop;
             const boxStatus = logRecord?.boxStatus;
 
             return (
@@ -899,19 +1084,25 @@ export const DriverPortal: React.FC = () => {
                 key={`${customer.id}-${idx}`}
                 className={`glass-card rounded-2xl border transition-all duration-300 p-4 relative overflow-hidden ${
                   isDelivered 
-                    ? 'bg-white/[0.03] border-white/10 opacity-80' 
+                    ? 'bg-white/[0.04] border-emerald-500/30 shadow-xs' 
                     : 'bg-white/[0.08] border-white/20 shadow-glass hover:border-amber-500/40'
                 }`}
               >
                 {/* Top Badge Row */}
-                <div className="flex items-start justify-between gap-2 mb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center shadow-xs">
-                      {idx + 1}
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-xl bg-slate-800 text-amber-400 border border-amber-400/40 font-black text-xs flex items-center gap-1 shadow-xs">
+                      Stop {idx + 1} of {stops.length}
                     </span>
-                    <h3 className="font-bold font-display text-base text-white tracking-tight">
-                      {customer.name}
-                    </h3>
+                    <span className="px-2.5 py-1 rounded-xl bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1 shadow-xs">
+                      <Package size={13} className="text-slate-950" />
+                      {totalBoxes} Box{totalBoxes > 1 ? 'es' : ''} at this Stop
+                    </span>
+                    {isStarred && (
+                      <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold flex items-center gap-1 animate-pulse">
+                        <Star size={11} fill="currentColor" /> Star Customer
+                      </span>
+                    )}
                   </div>
 
                   {/* Delivery Status Checkbox */}
@@ -919,31 +1110,77 @@ export const DriverPortal: React.FC = () => {
                     onClick={() => handleToggleDelivered(stop)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm ${
                       isDelivered 
-                        ? 'bg-emerald-500 text-slate-950' 
+                        ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-400/50' 
                         : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/20'
                     }`}
                   >
                     <CheckCircle2 size={15} className={isDelivered ? 'text-slate-950' : 'text-slate-400'} />
-                    <span>{isDelivered ? 'Delivered' : 'Mark Done'}</span>
+                    <span>{isDelivered ? 'Delivered ✅' : 'Mark Done'}</span>
                   </button>
                 </div>
 
-                {/* Plan and Special Notes */}
-                <div className="flex flex-wrap items-center gap-1.5 mb-3 text-[11px]">
-                  <span className="bg-white/10 text-slate-300 px-2 py-0.5 rounded-md font-medium">
-                    {plan.planName}
-                  </span>
-                  {customer.highlightMark && customer.highlightMark !== 'None' && (
-                    <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded-md font-semibold">
-                      {customer.highlightMark}
-                    </span>
-                  )}
-                  {customer.notes && (
-                    <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md font-medium italic">
-                      "{customer.notes}"
-                    </span>
-                  )}
+                {/* Customer Name */}
+                <div className="mb-2">
+                  <h3 className="font-bold font-display text-base text-white tracking-tight flex items-center gap-2">
+                    <span>{customer.name}</span>
+                    {customer.mobile && (
+                      <span className="text-xs font-mono text-slate-400 font-normal">
+                        ({customer.mobile})
+                      </span>
+                    )}
+                  </h3>
                 </div>
+
+                {/* Total Boxes & Box Variants Breakdown */}
+                <div className="p-2.5 bg-white/5 border border-white/10 rounded-xl mb-3 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <Package size={14} className="text-amber-400" />
+                      Delivery Contents ({totalBoxes} Total):
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      {boxVariants.length} Variant{boxVariants.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+
+                  {/* Variant pills with counts, box types, and starred mark */}
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {boxVariants.map((v: any, vIdx: number) => (
+                      <span 
+                        key={vIdx}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 text-slate-200 text-[11px] font-semibold border border-white/10"
+                      >
+                        <span className="w-4 h-4 rounded bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center justify-center">
+                          {v.count}x
+                        </span>
+                        <span>{v.planName}</span>
+                        <span className="text-[10px] text-amber-300/80 font-mono font-normal">
+                          [{v.boxType}]
+                        </span>
+                        {v.isStarred && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-400 font-bold ml-0.5">
+                            <Star size={11} fill="#f59e0b" /> Special
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Starred Customer Query & Instructions Banner */}
+                {isStarred && (
+                  <div className="p-2.5 bg-amber-500/15 border border-amber-500/40 rounded-xl mb-3 flex items-start gap-2 text-xs">
+                    <Star size={16} fill="#f59e0b" className="text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <div className="font-bold text-amber-300 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+                        <span>⭐ Starred Customer Query & Instructions</span>
+                      </div>
+                      <p className="text-amber-100 text-xs font-medium mt-0.5 leading-snug">
+                        {starredQuery ? `"${starredQuery}"` : '"Special high-priority customer. Check dietary and packaging instructions."'}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Address & Navigation */}
                 <div className="p-3 bg-black/20 rounded-xl border border-white/5 mb-3 text-xs space-y-2">
@@ -984,85 +1221,221 @@ export const DriverPortal: React.FC = () => {
                   </div>
                 </div>
 
-                {/* REUSABLE BOX SECTION (Applied from 2nd Day of delivery) */}
-                {hasBox && (
-                  <div className="mt-2.5 pt-2.5 border-t border-white/10">
-                    {!isDay2Plus ? (
-                      /* Day 1: First Handover */
-                      <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center gap-2.5 text-xs text-blue-200">
-                        <Package size={16} className="text-blue-400 shrink-0" />
-                        <div className="flex-1">
-                          <p className="font-bold text-blue-300">📦 Day 1 Delivery — Handover Fresh Box</p>
-                          <p className="text-[11px] text-blue-200/80">
-                            Provide {customer.reusableBoxType || 'Reusable Box'}. No previous box to collect today.
-                          </p>
-                        </div>
-                      </div>
+                {/* REUSABLE BOX RECOLLECTION / RETURN SECTION (Always accessible) */}
+                <div className="mt-2.5 pt-2.5 border-t border-white/10 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px]">
+                        TIFFIN BOX RETURN
+                      </span>
+                      <span className="font-bold text-slate-200">
+                        {primaryBoxType}
+                      </span>
+                    </div>
+
+                    {/* Current Status Pill */}
+                    {boxStatus ? (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+                        boxStatus === 'Collected' || boxStatus === 'Collected Clean'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' :
+                        boxStatus === 'Dirty / Unwashed'
+                          ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' :
+                        boxStatus === 'Damaged / Missing Parts'
+                          ? 'bg-red-500/20 text-red-300 border-red-500/40' :
+                        boxStatus === 'Pending'
+                          ? 'bg-slate-500/20 text-slate-300 border-slate-500/40' :
+                          'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                      }`}>
+                        {boxStatus === 'Collected' || boxStatus === 'Collected Clean' ? '✅ Collected Clean' :
+                         boxStatus === 'Dirty / Unwashed' ? '🧽 Uncleaned' :
+                         boxStatus === 'Damaged / Missing Parts' ? '💥 Damaged' :
+                         boxStatus === 'Pending' ? '⏭️ Skipped' : '❌ Not Returned / Missing'}
+                      </span>
                     ) : (
-                      /* Day 2 onwards: Recollect Yesterday's Box */
-                      <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="p-1 rounded bg-amber-500 text-slate-950 font-black text-[10px]">
-                              RECOLLECT
-                            </span>
-                            <span className="font-bold text-amber-300 text-xs">
-                              Yesterday's Box: {customer.reusableBoxType || 'Reusable Tiffin'}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => {
-                              setActiveBoxModal({ customer, logKey });
-                              setSelectedBoxStatus(boxStatus || 'Collected');
-                              setBoxNotes(logRecord?.boxNotes || '');
-                            }}
-                            className="text-[11px] font-bold text-amber-300 hover:text-amber-200 underline"
-                          >
-                            {boxStatus ? 'Edit Status' : 'Log Return'}
-                          </button>
-                        </div>
-
-                        {/* Current Box Status Pill */}
-                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                          {boxStatus ? (
-                            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 ${
-                              boxStatus === 'Collected' 
-                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' :
-                              boxStatus === 'Dirty / Unwashed'
-                                ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' :
-                              boxStatus === 'Damaged / Missing Parts'
-                                ? 'bg-red-500/20 text-red-300 border-red-500/40' :
-                                'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                            }`}>
-                              {boxStatus === 'Collected' ? '✅' : boxStatus === 'Dirty / Unwashed' ? '🧽' : boxStatus === 'Damaged / Missing Parts' ? '💥' : '⏳'}
-                              {boxStatus}
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                setActiveBoxModal({ customer, logKey });
-                                setSelectedBoxStatus('Collected');
-                                setBoxNotes('');
-                              }}
-                              className="w-full py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5"
-                            >
-                              <Check size={14} /> Mark Box Recollected (Clean)
-                            </button>
-                          )}
-
-                          {logRecord?.boxNotes && (
-                            <span className="text-[10px] text-slate-400 italic">
-                              Note: {logRecord.boxNotes}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <span className="text-[10px] text-amber-300/80 font-medium">
+                        Update Return Status:
+                      </span>
                     )}
+                  </div>
+
+                  {/* Quick 1-Tap Buttons for Rider */}
+                  <div className="grid grid-cols-5 gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickBoxStatus(stop, 'Collected')}
+                      className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 border ${
+                        boxStatus === 'Collected' || boxStatus === 'Collected Clean'
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm'
+                          : 'bg-white/5 hover:bg-white/10 text-emerald-300 border-emerald-500/30'
+                      }`}
+                      title="Collected Clean & Intact"
+                    >
+                      <span className="text-xs">✅</span>
+                      <span>Clean</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickBoxStatus(stop, 'Dirty / Unwashed')}
+                      className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 border ${
+                        boxStatus === 'Dirty / Unwashed'
+                          ? 'bg-yellow-400 text-slate-950 border-yellow-300 shadow-sm'
+                          : 'bg-white/5 hover:bg-white/10 text-yellow-300 border-yellow-500/30'
+                      }`}
+                      title="Returned Dirty / Needs Washing"
+                    >
+                      <span className="text-xs">🧽</span>
+                      <span>Unclean</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickBoxStatus(stop, 'Damaged / Missing Parts')}
+                      className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 border ${
+                        boxStatus === 'Damaged / Missing Parts'
+                          ? 'bg-red-500 text-white border-red-400 shadow-sm'
+                          : 'bg-white/5 hover:bg-white/10 text-red-300 border-red-500/30'
+                      }`}
+                      title="Broken lid, dented, or missing clips"
+                    >
+                      <span className="text-xs">💥</span>
+                      <span>Damaged</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickBoxStatus(stop, 'Not Returned')}
+                      className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 border ${
+                        boxStatus === 'Not Returned'
+                          ? 'bg-rose-600 text-white border-rose-400 shadow-sm'
+                          : 'bg-white/5 hover:bg-white/10 text-rose-300 border-rose-500/30'
+                      }`}
+                      title="Customer forgot or wasn't available"
+                    >
+                      <span className="text-xs">❌</span>
+                      <span>Missing</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveBoxModal({ customer, logKey });
+                        setSelectedBoxStatus(boxStatus || 'Collected');
+                        setBoxNotes(logRecord?.boxNotes || '');
+                      }}
+                      className="py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 border bg-white/5 hover:bg-white/10 text-slate-300 border-white/20"
+                      title="Add custom remarks or edit note"
+                    >
+                      <span className="text-xs">✏️</span>
+                      <span>Remarks</span>
+                    </button>
+                  </div>
+
+                  {logRecord?.boxNotes && (
+                    <p className="text-[10px] text-amber-200/90 italic pt-1">
+                      Note: {logRecord.boxNotes}
+                    </p>
+                  )}
+                </div>
+
+                {/* LAST STOP: Direct Back to Branch Button inside stop card */}
+                {idx === stops.length - 1 && (
+                  <div className="mt-3 pt-3 border-t-2 border-amber-500/30 bg-amber-500/10 p-3 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🏁</span>
+                      <div>
+                        <p className="text-xs font-bold text-amber-300">Final Stop Completed?</p>
+                        <p className="text-[10px] text-slate-300">
+                          Head back to {driverBranch?.name || 'Branch Hub'}
+                        </p>
+                      </div>
+                    </div>
+                    <a
+                      href={driverBranch?.hubLocationLink || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(driverBranch?.hubAddress || driverBranch?.name || 'Kitchen Hub')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full sm:w-auto px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95"
+                    >
+                      <Navigation size={13} />
+                      <span>Back to Branch</span>
+                    </a>
                   </div>
                 )}
               </div>
             );
           })}
+
+          {/* BACK TO BRANCH / KITCHEN HUB (Always accessible after all stops / at last stop) */}
+          {stops.length > 0 && (
+            <div className="glass-card bg-linear-to-r from-amber-500/15 via-slate-900 to-primary-900/20 border-2 border-amber-500/40 rounded-3xl p-5 space-y-3.5 shadow-xl animate-in slide-in-from-bottom-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-md">
+                    🏁
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-amber-400">
+                      Final Route Stop
+                    </span>
+                    <h3 className="font-bold font-display text-base text-white">
+                      Back to Kitchen Branch Hub
+                    </h3>
+                    <p className="text-xs text-slate-300">
+                      {driverBranch?.name || currentBoy?.name + "'s Hub" || 'Kitchen Dispatch Hub'}
+                    </p>
+                  </div>
+                </div>
+
+                <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                  metrics.pending === 0 
+                    ? 'bg-emerald-500 text-slate-950 font-black' 
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}>
+                  {metrics.pending === 0 ? 'All Delivered ✅' : `${metrics.pending} Pending`}
+                </span>
+              </div>
+
+              {driverBranch?.hubAddress && (
+                <div className="p-3 bg-black/30 rounded-xl border border-white/10 text-xs text-slate-300 flex items-start gap-2">
+                  <MapPin size={15} className="text-amber-400 shrink-0 mt-0.5" />
+                  <span className="leading-snug">{driverBranch.hubAddress}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                {driverBranch?.hubLocationLink ? (
+                  <a
+                    href={driverBranch.hubLocationLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="py-2.5 px-4 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-95"
+                  >
+                    <Navigation size={15} />
+                    <span>Navigate Back to Branch</span>
+                  </a>
+                ) : (
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(driverBranch?.hubAddress || driverBranch?.name || 'Kitchen Hub')}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="py-2.5 px-4 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-95"
+                  >
+                    <Navigation size={15} />
+                    <span>Navigate Back to Branch</span>
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handlePunchOut}
+                  className="py-2.5 px-4 bg-white/10 hover:bg-white/20 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-2 border border-white/20 transition-all active:scale-95"
+                >
+                  <CheckCircle2 size={15} className="text-emerald-400" />
+                  <span>Mark Returned & End Shift</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {stops.length === 0 && (
             <div className="glass-card bg-white/5 border border-white/10 rounded-2xl p-8 text-center space-y-3">

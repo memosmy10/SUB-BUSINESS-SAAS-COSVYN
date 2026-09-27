@@ -770,31 +770,32 @@ const Deliveries = () => {
                       <p className="font-bold text-amber-700 text-sm">{boyStarBoxes}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2.5 w-full xl:w-auto justify-end">
+                  <div className="grid grid-cols-2 sm:flex sm:flex-wrap xl:flex-nowrap items-center gap-2 w-full xl:w-auto justify-end">
                     <button 
                       onClick={(e) => { e.stopPropagation(); setSelectedShareBoy(boy); setShareModalOpen(true); }} 
-                      className="flex-1 xl:flex-none bg-amber-400 hover:bg-amber-300 text-slate-950 px-3.5 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                      className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
                       title="Share personalized Driver Portal link & login"
                     >
-                      <Smartphone size={14} /> Driver App
+                      <Smartphone size={14} /> <span>Driver App</span>
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleOpenOptimizer(boy, boyCustomers); }} 
-                      className="flex-1 xl:flex-none bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
                     >
-                      <Compass size={14} /> Shortest Route
+                      <Compass size={14} /> <span>Shortest Route</span>
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleShareRoute(boy, boyCustomers); }} 
-                      className="flex-1 xl:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
                     >
-                      <MessageSquare size={14} fill="currentColor" /> Share WhatsApp
+                      <MessageSquare size={14} fill="currentColor" /> <span>WhatsApp</span>
                     </button>
-                    <div className={`p-1.5 rounded-xl border transition-colors ${isExpanded ? 'bg-slate-900 border-slate-900 text-white' : 'border-slate-200 text-slate-400 bg-white'}`}>
+                    <div className={`p-2 rounded-xl border flex items-center justify-center transition-colors cursor-pointer ${isExpanded ? 'bg-slate-900 border-slate-900 text-white' : 'border-slate-200 text-slate-400 bg-white'}`}>
                       {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </div>
                   </div>
                 </div>
+
                 {isExpanded && (
                   <div className="animate-in slide-in-from-top-1 duration-200">
                     <div className="p-3 bg-slate-50/70 border-b border-slate-200/70 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5">
@@ -807,12 +808,103 @@ const Deliveries = () => {
                       </div>
                       <button 
                         onClick={() => handleOpenOptimizer(boy, boyCustomers)}
-                        className="px-3 py-1.5 bg-slate-900 hover:bg-black text-white text-[11px] font-semibold rounded-lg flex items-center gap-1.5 shadow-xs shrink-0 active:scale-95 transition-all"
+                        className="w-full sm:w-auto px-3 py-1.5 bg-slate-900 hover:bg-black text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-xs shrink-0 active:scale-95 transition-all"
                       >
                         <Zap size={12} className="text-amber-400" /> Optimize Sequence
                       </button>
                     </div>
-                    <div className="overflow-x-auto no-scrollbar">
+
+                    {/* MOBILE CARD VIEW: Visible on small screens (< 768px) */}
+                    <div className="block md:hidden p-3 space-y-3 bg-slate-50/50 divide-y divide-slate-200/70">
+                      {boyCustomers.sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999)).map((c, idx) => {
+                        const sessionPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
+                        const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
+                        const logKey = `${c.id}_${activeMealTab}`;
+                        const logRecord = dateLogsMap[logKey];
+                        const isDelivered = logRecord?.status === 'Delivered';
+                        const boxCondition = logRecord?.boxStatus;
+                        const mapsUrl = c.locationLink && (c.locationLink.startsWith('http://') || c.locationLink.startsWith('https://'))
+                          ? c.locationLink
+                          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((c.address || '') + (c.area ? `, ${c.area}` : ''))}`;
+
+                        return (
+                          <div key={c.id} className={`pt-3 first:pt-0 ${overallStarred ? 'bg-amber-50/40 p-2.5 rounded-xl border border-amber-200/60' : ''}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-full bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-center">
+                                  {idx + 1}
+                                </span>
+                                <div>
+                                  <h4 className="font-bold text-xs text-slate-900 flex items-center gap-1">
+                                    {c.name}
+                                    {overallStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
+                                  </h4>
+                                  <p className="text-[11px] text-slate-500 font-mono">{c.mobile}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => handleMoveOrder(c.id, 'up')} className="p-1 hover:bg-slate-200 rounded text-slate-600" title="Move Up"><ArrowUp size={13}/></button>
+                                <button onClick={() => handleMoveOrder(c.id, 'down')} className="p-1 hover:bg-slate-200 rounded text-slate-600" title="Move Down"><ArrowDown size={13}/></button>
+                              </div>
+                            </div>
+
+                            <p className="text-[11px] text-slate-700 mt-1.5 leading-tight">
+                              <span className="font-semibold text-slate-800">{c.area}</span>: {c.address}
+                            </p>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-100">
+                              <div className="flex items-center gap-1.5">
+                                {isDelivered ? (
+                                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[10px] inline-flex items-center gap-1">
+                                    <CheckCircle2 size={11} className="text-emerald-600" /> Delivered
+                                  </span>
+                                ) : (
+                                  <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md font-semibold text-[10px]">
+                                    Pending
+                                  </span>
+                                )}
+                                {boxCondition && boxCondition !== 'None' && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                    🍱 {boxCondition}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                <a 
+                                  href={`tel:${c.mobile}`} 
+                                  className="p-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs" 
+                                  title="Call"
+                                >
+                                  <Phone size={13} />
+                                </a>
+                                <a 
+                                  href={`https://wa.me/${(c.mobile || '').replace(/\D/g, '')}`} 
+                                  target="_blank" 
+                                  rel="noreferrer" 
+                                  className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-xs" 
+                                  title="WhatsApp"
+                                >
+                                  <MessageSquare size={13} />
+                                </a>
+                                <a 
+                                  href={mapsUrl} 
+                                  target="_blank" 
+                                  rel="noreferrer" 
+                                  className="px-2 py-1 bg-primary-50 text-primary-700 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
+                                >
+                                  <Navigation size={11} /> Maps
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* DESKTOP TABLE VIEW: Visible on screens >= 768px */}
+                    <div className="hidden md:block overflow-x-auto no-scrollbar">
                       <table className="w-full text-left border-collapse min-w-[1050px] text-xs">
                         <thead className="bg-slate-50/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200/60">
                           <tr>

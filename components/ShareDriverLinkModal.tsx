@@ -40,8 +40,8 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="glass-card bg-white/95 border border-white/80 rounded-3xl max-w-lg w-full p-6 shadow-glass-xl text-slate-800 space-y-5 animate-in zoom-in-95 duration-200 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="glass-card bg-white/95 border border-white/80 rounded-3xl max-w-lg w-full p-4 sm:p-6 shadow-glass-xl text-slate-800 space-y-4 sm:space-y-5 animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
         
         {/* Header */}
         <div className="flex items-start justify-between gap-3">

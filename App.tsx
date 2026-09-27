@@ -274,20 +274,44 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
   const { data: customers = [] } = useStreamCollection<any>('customers');
   const { data: plans = [] } = useStreamCollection<any>('plans');
 
-  // FIX: SYNCED LIVE CALCULATION FOR NOTIFICATIONS
+  // FIX: SYNCED LIVE CALCULATION FOR NOTIFICATIONS BASED ON DATABASE AND LIVE PLAN DELIVERY COUNT
   const expiringCustomers = React.useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+
     return (customers || [])
       .map((c: any) => {
-        // Calculate the TRUE days left for each customer based on their active plans
-        const realDaysLeft = (c.activePlans || []).reduce((max: number, p: any) => {
-          const planConfig = plans.find((pl: any) => pl.id === p.planId);
-          if (!planConfig) return max;
-          const left = calculateRemainingDeliveries(p.endDate, planConfig.weekdays || [], p.pauses || []);
-          return Math.max(max, left);
-        }, 0);
+        let realDaysLeft = 0;
+        let determined = false;
+
+        // 1. If activePlans array is populated, compute remaining deliveries accurately
+        if (Array.isArray(c.activePlans) && c.activePlans.length > 0) {
+          const maxFromPlans = c.activePlans.reduce((max: number, p: any) => {
+            const planConfig = plans.find((pl: any) => pl.id === p.planId);
+            const weekdays = planConfig?.weekdays || p.weekdays || [1, 2, 3, 4, 5, 6];
+            const left = calculateRemainingDeliveries(p.endDate, weekdays, p.pauses || []);
+            return Math.max(max, left);
+          }, 0);
+          if (maxFromPlans > 0) {
+            realDaysLeft = maxFromPlans;
+            determined = true;
+          }
+        }
+
+        // 2. If not determined from activePlans, check customer's direct database daysLeft field
+        if (!determined && typeof c.daysLeft === 'number' && !isNaN(c.daysLeft)) {
+          realDaysLeft = c.daysLeft;
+          determined = true;
+        }
+
+        // 3. Fallback: check customer's endDate against today's date
+        if (!determined && c.endDate) {
+          const diff = getDaysDifference(today, c.endDate);
+          realDaysLeft = Math.max(0, diff);
+        }
+
         return { ...c, realDaysLeft };
       })
-      .filter((c: any) => c.isActive && c.realDaysLeft <= 10 && c.realDaysLeft > 0)
+      .filter((c: any) => c.isActive && c.realDaysLeft <= 10 && c.realDaysLeft >= 0)
       .sort((a: any, b: any) => a.realDaysLeft - b.realDaysLeft);
   }, [customers, plans]);
 
@@ -310,10 +334,10 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         {showExpiryWarning && (
-          <div className={`${isFreeTrial ? 'bg-emerald-600/95' : 'bg-red-600/95'} backdrop-blur-md text-white text-sm font-semibold py-2.5 px-4 z-40 flex items-center justify-center gap-3 shadow-sm animate-in slide-in-from-top-full duration-500`}>
-            {isFreeTrial ? <Zap size={16} /> : <AlertTriangle size={16} />}
-            <span>{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days. Subscribe to keep full access.` : `Your subscription expires in ${daysToExpiry} days. Renew now to avoid interruption.`}</span>
-            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-3.5 py-1 rounded-full text-xs font-bold transition-transform active:scale-95 shadow-xs">
+          <div className={`${isFreeTrial ? 'bg-emerald-600/95' : 'bg-red-600/95'} backdrop-blur-md text-white text-xs sm:text-sm font-semibold py-2 px-3 sm:px-4 z-40 flex flex-wrap items-center justify-center gap-2 sm:gap-3 shadow-sm animate-in slide-in-from-top-full duration-500`}>
+            {isFreeTrial ? <Zap size={15} /> : <AlertTriangle size={15} />}
+            <span className="text-center">{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days. Subscribe to keep full access.` : `Your subscription expires in ${daysToExpiry} days. Renew now to avoid interruption.`}</span>
+            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-3 py-1 rounded-full text-xs font-bold transition-transform active:scale-95 shadow-xs shrink-0">
               {isFreeTrial ? 'Subscribe Now' : 'Renew Plan'}
             </button>
           </div>
@@ -328,7 +352,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
              <Menu size={18} />
            </button>
            
-           <div className="flex items-center gap-2.5 md:gap-3.5 ml-auto">
+           <div className="flex items-center gap-2 md:gap-3 ml-auto">
               <div className="relative">
                 <button 
                   onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} 
@@ -342,18 +366,36 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                 </button>
                 {isNotificationsOpen && (
                    <>
-                    <div className="fixed inset-0 z-30" onClick={() => setIsNotificationsOpen(false)} />
-                    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white/95 backdrop-blur-2xl border border-slate-200/80 rounded-2xl shadow-glass-lg z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                    {/* Fixed Backdrop on mobile and click-outside for desktop */}
+                    <div 
+                      className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-xs sm:bg-transparent" 
+                      onClick={() => setIsNotificationsOpen(false)} 
+                    />
+                    
+                    {/* Responsive Modal/Popup: fits perfectly on mobile view without overflowing */}
+                    <div className="fixed inset-x-2.5 top-14 sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 max-h-[82vh] sm:max-h-[500px] bg-white/98 backdrop-blur-2xl border border-slate-200/90 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                      <div className="p-3.5 sm:p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/90 shrink-0">
                         <div>
                           <h4 className="font-bold text-slate-900 text-sm font-display">Expiring Subscriptions</h4>
-                          <p className="text-xs text-slate-500">Upcoming renewals needed</p>
+                          <p className="text-[11px] text-slate-500">Upcoming renewals needed</p>
                         </div>
-                        <span className="text-xs bg-red-50 text-red-600 border border-red-200/60 px-2.5 py-0.5 rounded-full font-semibold">{expiringCustomers.length} due</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs bg-red-50 text-red-600 border border-red-200/60 px-2 py-0.5 rounded-full font-bold">
+                            {expiringCustomers.length} due
+                          </span>
+                          <button 
+                            onClick={() => setIsNotificationsOpen(false)}
+                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition-colors"
+                            aria-label="Close notifications"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </div>
-                      <div className="max-h-[480px] overflow-y-auto no-scrollbar divide-y divide-slate-100">
+
+                      <div className="flex-1 overflow-y-auto divide-y divide-slate-100 no-scrollbar">
                         {expiringCustomers.length === 0 ? (
-                          <div className="p-12 text-center text-slate-400 flex flex-col items-center">
+                          <div className="p-10 text-center text-slate-400 flex flex-col items-center">
                             <CheckCircle size={36} className="mb-2 text-emerald-500/60" />
                             <p className="text-xs font-semibold text-slate-600">All subscriptions are up to date</p>
                             <p className="text-[11px] text-slate-400 mt-0.5">No renewals due in the next 10 days</p>
@@ -364,37 +406,39 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                           const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
                           
                           return (
-                            <div key={cust.id} className="p-4 hover:bg-slate-50/70 transition-colors">
+                            <div key={cust.id} className="p-3.5 sm:p-4 hover:bg-slate-50/70 transition-colors">
                               <div className="flex justify-between items-start gap-2">
-                                <div className="min-w-0">
+                                <div className="min-w-0 flex-1">
                                   <h5 className="font-semibold text-slate-900 text-sm truncate">{cust.name}</h5>
                                   <p className="text-slate-400 font-mono text-xs mt-0.5">{cust.mobile}</p>
                                 </div>
-                                <div className="flex flex-col items-end gap-2 shrink-0">
-                                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                                <div className="flex flex-col items-end gap-1.5 shrink-0">
+                                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
                                     cust.realDaysLeft <= 0 
-                                      ? 'bg-slate-100 text-slate-600 border border-slate-200' 
-                                      : 'bg-rose-50 text-rose-600 border border-rose-200/70'
+                                      ? 'bg-rose-50 text-rose-600 border border-rose-200' 
+                                      : cust.realDaysLeft <= 3
+                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        : 'bg-blue-50 text-blue-600 border border-blue-200/70'
                                   }`}>
-                                    {cust.realDaysLeft <= 0 ? 'Expired' : `${cust.realDaysLeft} days left`}
+                                    {cust.realDaysLeft <= 0 ? 'Ending Today' : `${cust.realDaysLeft} days left`}
                                   </span>
                                   <div className="flex gap-1.5">
-                                    <a href={whatsappLink} target="_blank" rel="noreferrer" title="Chat on WhatsApp" className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center border border-emerald-200/60 hover:bg-emerald-100 transition-colors">
-                                      <MessageSquare size={14} />
+                                    <a href={whatsappLink} target="_blank" rel="noreferrer" title="Chat on WhatsApp" className="w-7 h-7 sm:w-8 sm:h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center border border-emerald-200/60 hover:bg-emerald-100 transition-colors">
+                                      <MessageSquare size={13} />
                                     </a>
-                                    <a href={`tel:${cust.mobile}`} title="Call customer" className="w-8 h-8 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center border border-blue-200/60 hover:bg-blue-100 transition-colors">
-                                      <Phone size={14} />
+                                    <a href={`tel:${cust.mobile}`} title="Call customer" className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center border border-blue-200/60 hover:bg-blue-100 transition-colors">
+                                      <Phone size={13} />
                                     </a>
                                   </div>
                                 </div>
                               </div>
-                              <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-100/60">
-                                <span className="text-xs font-medium text-slate-600 bg-slate-100/70 px-2.5 py-0.5 rounded-md">
+                              <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-slate-100/60">
+                                <span className="text-xs font-medium text-slate-600 bg-slate-100/70 px-2 py-0.5 rounded-md truncate max-w-[160px]">
                                   {planName}
                                 </span>
                                 <button 
                                   onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} 
-                                  className="text-primary-600 hover:text-primary-700 font-semibold text-xs flex items-center gap-1 transition-colors"
+                                  className="text-primary-600 hover:text-primary-700 font-semibold text-xs flex items-center gap-1 transition-colors shrink-0"
                                 >
                                   Renew Plan <ArrowRight size={13} />
                                 </button>

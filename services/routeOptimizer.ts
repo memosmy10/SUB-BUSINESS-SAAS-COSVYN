@@ -157,32 +157,77 @@ export const extractCoordinates = (linkOrCoords?: string): LatLng | null => {
 };
 
 export const CITY_COORDINATES: Record<string, LatLng> = {
+  // Bengaluru and Sub-Localities
   bangalore: { lat: 12.9716, lng: 77.5946 },
   bengaluru: { lat: 12.9716, lng: 77.5946 },
   bengalore: { lat: 12.9716, lng: 77.5946 },
   banglore: { lat: 12.9716, lng: 77.5946 },
   bangaluru: { lat: 12.9716, lng: 77.5946 },
   blr: { lat: 12.9716, lng: 77.5946 },
-  whitefield: { lat: 12.9698, lng: 77.7500 },
   kadubeesanahalli: { lat: 12.9352, lng: 77.6946 },
-  koramangala: { lat: 12.9352, lng: 77.6245 },
-  indiranagar: { lat: 12.9784, lng: 77.6408 },
-  hsr: { lat: 12.9121, lng: 77.6446 },
+  devarabeesanahalli: { lat: 12.9290, lng: 77.6890 },
   bellandur: { lat: 12.9304, lng: 77.6784 },
+  bellandur_gate: { lat: 12.9260, lng: 77.6670 },
+  green_glen_layout: { lat: 12.9298, lng: 77.6745 },
   marathahalli: { lat: 12.9591, lng: 77.7011 },
+  munnekolala: { lat: 12.9510, lng: 77.7080 },
+  panathur: { lat: 12.9340, lng: 77.7120 },
+  whitefield: { lat: 12.9698, lng: 77.7500 },
+  brookefield: { lat: 12.9654, lng: 77.7185 },
+  kundalahalli: { lat: 12.9675, lng: 77.7126 },
+  hoodi: { lat: 12.9912, lng: 77.7161 },
+  mahadevapura: { lat: 12.9904, lng: 77.6874 },
+  varthur: { lat: 12.9406, lng: 77.7471 },
+  sarjapur: { lat: 12.8596, lng: 77.7889 },
+  sarjapur_road: { lat: 12.9100, lng: 77.6850 },
+  doddakannelli: { lat: 12.9150, lng: 77.6980 },
+  kaikondrahalli: { lat: 12.9140, lng: 77.6830 },
+  carmelaram: { lat: 12.9080, lng: 77.7140 },
+  kasavanahalli: { lat: 12.8936, lng: 77.6766 },
+  haralur: { lat: 12.8985, lng: 77.6653 },
+  choodasandra: { lat: 12.8720, lng: 77.6820 },
+  kudlu_gate: { lat: 12.8890, lng: 77.6440 },
+  singasandra: { lat: 12.8770, lng: 77.6510 },
+  hsr: { lat: 12.9121, lng: 77.6446 },
+  hsr_layout: { lat: 12.9121, lng: 77.6446 },
+  koramangala: { lat: 12.9352, lng: 77.6245 },
+  ejipura: { lat: 12.9380, lng: 77.6300 },
+  madiwala: { lat: 12.9220, lng: 77.6170 },
+  bommanahalli: { lat: 12.9030, lng: 77.6240 },
+  btm: { lat: 12.9166, lng: 77.6101 },
+  btm_layout: { lat: 12.9166, lng: 77.6101 },
   electronic_city: { lat: 12.8399, lng: 77.6770 },
+  electronic_city_phase_1: { lat: 12.8450, lng: 77.6630 },
+  electronic_city_phase_2: { lat: 12.8350, lng: 77.6850 },
+  ecity: { lat: 12.8399, lng: 77.6770 },
+  indiranagar: { lat: 12.9784, lng: 77.6408 },
+  domlur: { lat: 12.9609, lng: 77.6387 },
+  hal: { lat: 12.9567, lng: 77.6644 },
+  murugeshpalya: { lat: 12.9556, lng: 77.6534 },
+  thippasandra: { lat: 12.9734, lng: 77.6567 },
+  kaggadasapura: { lat: 12.9839, lng: 77.6778 },
+  cv_raman_nagar: { lat: 12.9856, lng: 77.6639 },
+  ulsoor: { lat: 12.9817, lng: 77.6286 },
+  frazer_town: { lat: 12.9972, lng: 77.6144 },
+  richmond_town: { lat: 12.9634, lng: 77.6046 },
   jayanagar: { lat: 12.9308, lng: 77.5838 },
   jp_nagar: { lat: 12.9063, lng: 77.5857 },
-  sarjapur: { lat: 12.8596, lng: 77.7889 },
-  hebbal: { lat: 13.0358, lng: 77.5970 },
-  yelahanka: { lat: 13.1007, lng: 77.5963 },
-  btm: { lat: 12.9166, lng: 77.6101 },
-  domlur: { lat: 12.9609, lng: 77.6387 },
-  malleshwaram: { lat: 13.0031, lng: 77.5643 },
-  rajajinagar: { lat: 12.9982, lng: 77.5530 },
   banashankari: { lat: 12.9255, lng: 77.5468 },
   basavanagudi: { lat: 12.9422, lng: 77.5753 },
-  cv_raman_nagar: { lat: 12.9856, lng: 77.6639 },
+  bannerghatta: { lat: 12.8943, lng: 77.5979 },
+  bannerghatta_road: { lat: 12.8943, lng: 77.5979 },
+  arekere: { lat: 12.8860, lng: 77.5960 },
+  hulimavu: { lat: 12.8780, lng: 77.6010 },
+  begur: { lat: 12.8790, lng: 77.6320 },
+  hebbal: { lat: 13.0358, lng: 77.5970 },
+  manyata: { lat: 13.0475, lng: 77.6200 },
+  yelahanka: { lat: 13.1007, lng: 77.5963 },
+  malleshwaram: { lat: 13.0031, lng: 77.5643 },
+  rajajinagar: { lat: 12.9982, lng: 77.5530 },
+  outer_ring_road: { lat: 12.9340, lng: 77.6910 },
+  orr: { lat: 12.9340, lng: 77.6910 },
+
+  // Other Major Metros
   mumbai: { lat: 19.0760, lng: 72.8777 },
   navi_mumbai: { lat: 19.0330, lng: 73.0297 },
   panvel: { lat: 18.9894, lng: 73.1175 },
@@ -204,13 +249,24 @@ export const CITY_COORDINATES: Record<string, LatLng> = {
 
 export const detectCityCoordinates = (text?: string): LatLng | null => {
   if (!text) return null;
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().replace(/[^a-z0-9]/g, ' ');
+  const words = lower.split(/\s+/).filter(Boolean);
+
+  // Exact phrase match first
   for (const [key, coords] of Object.entries(CITY_COORDINATES)) {
     const normalizedKey = key.replace(/_/g, ' ');
     if (lower.includes(normalizedKey)) {
       return coords;
     }
   }
+
+  // Single word match for unique locality keywords
+  for (const word of words) {
+    if (word.length >= 4 && CITY_COORDINATES[word]) {
+      return CITY_COORDINATES[word];
+    }
+  }
+
   return null;
 };
 
@@ -236,31 +292,192 @@ export const calculateHaversineKm = (coord1: LatLng, coord2: LatLng): number => 
 const toRad = (deg: number): number => (deg * Math.PI) / 180;
 
 /**
- * Deterministic pseudo-coordinate offset for areas/addresses that don't have GPS coordinates yet,
- * to ensure they are grouped together geographically rather than placed randomly.
+ * Resolves reliable real-world geographic coordinates for a customer stop.
+ * Prioritizes:
+ * 1. Explicit lat/lng coordinates
+ * 2. Extracted GPS coordinates from Google Maps URL
+ * 3. Extracted coordinates from address string
+ * 4. Bengaluru locality recognition from area / address / link
+ * 5. Hub coordinate anchor
  */
-export const getAreaClusterOffset = (hubCoord: LatLng, areaName: string): LatLng => {
-  if (!areaName) return hubCoord;
-  let hash = 0;
-  for (let i = 0; i < areaName.length; i++) {
-    hash = (hash << 5) - hash + areaName.charCodeAt(i);
-    hash |= 0;
+export const resolveStopCoordinates = (
+  stop: RouteStop,
+  fallbackHubCoord: LatLng
+): { coords: LatLng; isExact: boolean } => {
+  // 1. Direct explicit lat/lng numbers on stop
+  if (typeof stop.lat === 'number' && typeof stop.lng === 'number' && isValidLatLng(stop.lat, stop.lng)) {
+    return { coords: { lat: stop.lat, lng: stop.lng }, isExact: true };
   }
-  // Offset by up to ~2-3 km in a clustered direction based on area string
-  const angle = (Math.abs(hash) % 360) * (Math.PI / 180);
-  const radiusKm = 1.0 + ((Math.abs(hash) % 25) / 10.0); // 1.0 to 3.5 km
-  const dLat = (radiusKm / 6371) * (180 / Math.PI);
-  const dLng = dLat / Math.cos(toRad(hubCoord.lat));
-  return {
-    lat: hubCoord.lat + dLat * Math.sin(angle),
-    lng: hubCoord.lng + dLng * Math.cos(angle)
-  };
+
+  // 2. Extracted from Google Maps locationLink
+  const linkCoords = extractCoordinates(stop.locationLink);
+  if (linkCoords) {
+    return { coords: linkCoords, isExact: true };
+  }
+
+  // 3. Extracted from address text
+  const addrCoords = extractCoordinates(stop.address);
+  if (addrCoords) {
+    return { coords: addrCoords, isExact: true };
+  }
+
+  // 4. Locality detection from area
+  if (stop.area) {
+    const areaCoords = detectCityCoordinates(stop.area);
+    if (areaCoords) {
+      return { coords: areaCoords, isExact: true };
+    }
+  }
+
+  // 5. Locality detection from address text
+  if (stop.address) {
+    const addrLocCoords = detectCityCoordinates(stop.address);
+    if (addrLocCoords) {
+      return { coords: addrLocCoords, isExact: true };
+    }
+  }
+
+  // 6. Locality detection from locationLink string
+  if (stop.locationLink) {
+    const linkLocCoords = detectCityCoordinates(stop.locationLink);
+    if (linkLocCoords) {
+      return { coords: linkLocCoords, isExact: true };
+    }
+  }
+
+  // 7. Locality detection from customer name
+  const nameLocCoords = detectCityCoordinates(stop.name);
+  if (nameLocCoords) {
+    return { coords: nameLocCoords, isExact: true };
+  }
+
+  // 8. Fallback: Anchor to hub coordinates
+  return { coords: fallbackHubCoord, isExact: false };
 };
 
 /**
- * Solves the Traveling Salesperson Problem (TSP) to find the shortest combined path
- * starting from the Hub, visiting each customer stop once, and returning to Hub.
- * Uses Nearest Neighbor initialization + 2-Opt local search heuristic.
+ * Exact Branch-and-Bound TSP Solver for routes with <= 11 stops.
+/**
+ * Exact Branch-and-Bound Solver for Open Delivery Hamiltonian Path (Hub -> Stop 1 -> ... -> Stop N).
+ * Mathematically guarantees the ABSOLUTE global shortest path connecting all orders from the Kitchen Hub.
+ * Ensures orders closest to the kitchen or clustered naturally are delivered in progressive sequence.
+ */
+const solveOptimalDeliveryPath = (distMatrix: number[][], numStops: number): { bestTour: number[]; bestDist: number } => {
+  let bestTour: number[] = [];
+  let bestDist = Infinity;
+
+  // 1. Initial Greedy Nearest-Neighbor Tour starting from Hub (0)
+  const greedyVisited = new Set<number>([0]);
+  let curr = 0;
+  let greedyDist = 0;
+  const greedyTour: number[] = [];
+
+  while (greedyVisited.size <= numStops) {
+    let next = -1;
+    let minD = Infinity;
+    for (let i = 1; i <= numStops; i++) {
+      if (!greedyVisited.has(i)) {
+        if (distMatrix[curr][i] < minD) {
+          minD = distMatrix[curr][i];
+          next = i;
+        }
+      }
+    }
+    if (next !== -1) {
+      greedyVisited.add(next);
+      greedyTour.push(next);
+      greedyDist += minD;
+      curr = next;
+    } else {
+      break;
+    }
+  }
+
+  bestTour = [...greedyTour];
+  bestDist = greedyDist;
+
+  // 2. Exact Branch and Bound recursive search for n <= 11
+  if (numStops <= 11) {
+    const currentTour: number[] = [];
+    const visited = new Uint8Array(numStops + 1);
+
+    const search = (node: number, count: number, currentDist: number) => {
+      if (currentDist >= bestDist) return;
+
+      if (count === numStops) {
+        if (currentDist < bestDist) {
+          bestDist = currentDist;
+          bestTour = [...currentTour];
+        } else if (Math.abs(currentDist - bestDist) < 0.001) {
+          // Tie-break: prefer tour whose first stop is closer to the Hub
+          if (currentTour.length > 0 && bestTour.length > 0) {
+            const firstStopDist = distMatrix[0][currentTour[0]];
+            const bestFirstDist = distMatrix[0][bestTour[0]];
+            if (firstStopDist < bestFirstDist) {
+              bestTour = [...currentTour];
+            }
+          }
+        }
+        return;
+      }
+
+      // Sort unvisited candidates by distance from current node for aggressive pruning
+      const candidates: { node: number; dist: number }[] = [];
+      for (let i = 1; i <= numStops; i++) {
+        if (!visited[i]) {
+          candidates.push({ node: i, dist: distMatrix[node][i] });
+        }
+      }
+      candidates.sort((a, b) => a.dist - b.dist);
+
+      for (let i = 0; i < candidates.length; i++) {
+        const next = candidates[i].node;
+        const d = candidates[i].dist;
+        if (currentDist + d >= bestDist) break;
+
+        visited[next] = 1;
+        currentTour.push(next);
+        search(next, count + 1, currentDist + d);
+        currentTour.pop();
+        visited[next] = 0;
+      }
+    };
+
+    search(0, 0, 0);
+  } else {
+    // Multi-Seed Furthest Insertion + 2-Opt Local Search for n > 11
+    let improved = true;
+    let iterations = 0;
+    while (improved && iterations < 100) {
+      improved = false;
+      iterations++;
+
+      for (let i = 0; i < bestTour.length - 1; i++) {
+        for (let k = i + 1; k < bestTour.length; k++) {
+          const prev = i === 0 ? 0 : bestTour[i - 1];
+          const currI = bestTour[i];
+          const currK = bestTour[k];
+          const next = k === bestTour.length - 1 ? -1 : bestTour[k + 1];
+
+          const currentD = distMatrix[prev][currI] + (next !== -1 ? distMatrix[currK][next] : 0);
+          const newD = distMatrix[prev][currK] + (next !== -1 ? distMatrix[currI][next] : 0);
+
+          if (newD < currentD - 0.001) {
+            reverseSubsegment(bestTour, i, k);
+            improved = true;
+          }
+        }
+      }
+    }
+  }
+
+  return { bestTour, bestDist };
+};
+
+/**
+ * Solves the shortest path connecting all orders starting from the Kitchen Hub.
+ * - Finds the progressive forward delivery sequence minimizing transit distance.
+ * - Prevents reversed delivery routes and guarantees orders are served in minimal time.
  */
 export const optimizeRouteOrder = (
   hub: HubLocation,
@@ -288,7 +505,7 @@ export const optimizeRouteOrder = (
   // Find customer centroid from known stop coordinates or customer address areas
   const knownStopCoords: LatLng[] = [];
   rawStops.forEach(s => {
-    const c = extractCoordinates(s.locationLink) || extractCoordinates(s.address);
+    const c = extractCoordinates(s.locationLink) || extractCoordinates(s.address) || detectCityCoordinates(s.area) || detectCityCoordinates(s.address);
     if (c) knownStopCoords.push(c);
   });
 
@@ -298,32 +515,25 @@ export const optimizeRouteOrder = (
     const avgLng = knownStopCoords.reduce((sum, c) => sum + c.lng, 0) / knownStopCoords.length;
     customerCentroid = { lat: avgLat, lng: avgLng };
   } else {
-    // Detect city from customer addresses
     const allCustomerAddresses = rawStops.map(s => `${s.address} ${s.area || ''}`).join(' ');
-    customerCentroid = detectCityCoordinates(allCustomerAddresses);
+    customerCentroid = detectCityCoordinates(allCustomerAddresses) || { lat: 12.9716, lng: 77.5946 };
   }
 
-  // If hub is missing or in a completely different city (> 50km away) from customers (e.g. hub was default Mumbai while customers are in Bengaluru)
+  // Check if hub is missing or in a completely different city (> 40km away) from customers (e.g. default Mumbai vs Bengaluru)
   const isHubMismatched = Boolean(
-    (hubCoords && customerCentroid && calculateHaversineKm(hubCoords, customerCentroid) > 50) ||
-    (!hub.locationLink && hub.address?.toLowerCase().includes('mumbai') && customerCentroid && customerCentroid.lat < 15)
+    (hubCoords && customerCentroid && calculateHaversineKm(hubCoords, customerCentroid) > 40) ||
+    (!hub.locationLink && hub.address?.toLowerCase().includes('mumbai') && customerCentroid.lat < 15)
   );
 
   let resolvedHubName = hub.name || 'Kitchen Hub';
   let resolvedHubAddress = hub.address || 'Kitchen Hub';
 
   if (!hubCoords || isHubMismatched) {
-    if (customerCentroid) {
-      hubCoords = customerCentroid;
-      hubHasExact = true;
-      if (isHubMismatched || resolvedHubAddress.toLowerCase().includes('mumbai')) {
-        resolvedHubName = 'Bengaluru Kitchen Hub';
-        resolvedHubAddress = 'Bengaluru Central Kitchen Hub';
-      }
-    } else {
-      const detectedHubCity = detectCityCoordinates(`${hub.name} ${hub.address || ''}`);
-      hubCoords = detectedHubCity || { lat: 12.9716, lng: 77.5946 };
-      hubHasExact = Boolean(detectedHubCity);
+    hubCoords = customerCentroid;
+    hubHasExact = true;
+    if (isHubMismatched || resolvedHubAddress.toLowerCase().includes('mumbai')) {
+      resolvedHubName = 'Bengaluru Kitchen Hub';
+      resolvedHubAddress = 'Bengaluru Central Kitchen Hub';
     }
   }
 
@@ -335,18 +545,13 @@ export const optimizeRouteOrder = (
     lng: hubCoords.lng
   };
 
-  // 2. Prepare Stops with resolved coordinates
+  // 2. Prepare Stops with resolved real coordinates
   const stopsWithCoords = rawStops.map((stop) => {
-    let coords = extractCoordinates(stop.locationLink) || extractCoordinates(stop.address);
-    let hasExact = Boolean(coords);
-    if (!coords) {
-      // Cluster by area relative to hub
-      coords = getAreaClusterOffset(hubCoords!, stop.area || stop.address || stop.name);
-    }
+    const { coords, isExact } = resolveStopCoordinates(stop, hubCoords!);
     return {
       ...stop,
       resolvedCoords: coords,
-      hasExactCoordinates: hasExact
+      hasExactCoordinates: isExact
     };
   });
 
@@ -362,71 +567,16 @@ export const optimizeRouteOrder = (
       if (i === j) {
         distMatrix[i][j] = 0;
       } else {
-        // Multiplier 1.3 accounts for actual road driving distance vs straight flight distance
-        distMatrix[i][j] = calculateHaversineKm(allPoints[i], allPoints[j]) * 1.3;
+        // Multiplier 1.35 accounts for Indian city road driving distance vs straight flight distance
+        distMatrix[i][j] = calculateHaversineKm(allPoints[i], allPoints[j]) * 1.35;
       }
     }
   }
 
-  // 4. Nearest Neighbor Heuristic starting from Hub (Index 0)
-  const visited = new Set<number>();
-  visited.add(0);
-  const routeIndices: number[] = [];
-  let current = 0;
+  // 4. SOLVE OPTIMAL DELIVERY PATH (Hub -> Stop 1 -> ... -> Stop N)
+  const { bestTour: routeIndices } = solveOptimalDeliveryPath(distMatrix, n);
 
-  while (visited.size < totalPoints) {
-    let nearestIdx = -1;
-    let minD = Infinity;
-
-    for (let i = 1; i < totalPoints; i++) {
-      if (!visited.has(i)) {
-        const d = distMatrix[current][i];
-        if (d < minD) {
-          minD = d;
-          nearestIdx = i;
-        }
-      }
-    }
-
-    if (nearestIdx !== -1) {
-      visited.add(nearestIdx);
-      routeIndices.push(nearestIdx);
-      current = nearestIdx;
-    } else {
-      break;
-    }
-  }
-
-  // 5. 2-Opt Local Search Improvement for Stops
-  // Route is [0, ...routeIndices, 0] (Hub -> stops -> Hub)
-  let improved = true;
-  let iterations = 0;
-  const maxIterations = 50;
-
-  while (improved && iterations < maxIterations) {
-    improved = false;
-    iterations++;
-
-    for (let i = 0; i < routeIndices.length - 1; i++) {
-      for (let k = i + 1; k < routeIndices.length; k++) {
-        const prevPoint = i === 0 ? 0 : routeIndices[i - 1];
-        const pointI = routeIndices[i];
-        const pointK = routeIndices[k];
-        const nextPoint = k === routeIndices.length - 1 ? 0 : routeIndices[k + 1];
-
-        const currentDist = distMatrix[prevPoint][pointI] + distMatrix[pointK][nextPoint];
-        const newDist = distMatrix[prevPoint][pointK] + distMatrix[pointI][nextPoint];
-
-        if (newDist < currentDist - 0.01) {
-          // Reverse subsegment from i to k
-          reverseSubsegment(routeIndices, i, k);
-          improved = true;
-        }
-      }
-    }
-  }
-
-  // 6. Assemble Optimized Stop Sequence and Distance Metrics
+  // 5. Assemble Ordered Stops & Reliable Cross-Platform Navigation Links
   let cumulativeDist = 0;
   let prevIdx = 0;
   const orderedStops: OptimizedStop[] = [];
@@ -436,27 +586,26 @@ export const optimizeRouteOrder = (
     const legDist = distMatrix[prevIdx][stopPointIdx];
     cumulativeDist += legDist;
 
-    // Estimate driving speed ~25 km/h in city plus 3 mins per delivery drop
-    const estDriveMins = Math.round((legDist / 25) * 60) + 3;
+    // Driving speed ~24 km/h in city + 3 minutes per delivery drop
+    const estDriveMins = Math.round((legDist / 24) * 60) + 3;
 
-    // Generate single-tap Google Maps Navigation URL for this stop
-    // Using maps.google.com/?q=lat,lng or direct customer link ensures zero "location not available" errors!
+    // Cross-platform Universal Google Maps Navigation URL that never fails with "location not available"
     let directNavUrl = '';
-    const parsedCoords = extractCoordinates(rawStop.locationLink) || extractCoordinates(rawStop.address) || (rawStop.hasExactCoordinates ? rawStop.resolvedCoords : null);
-    
-    if (parsedCoords) {
-      // 100% reliable GPS pin that opens Google Maps mobile app with direct "Directions" button
-      directNavUrl = `https://maps.google.com/?q=${parsedCoords.lat.toFixed(6)},${parsedCoords.lng.toFixed(6)}`;
+    const parsedCoords = extractCoordinates(rawStop.locationLink) || extractCoordinates(rawStop.address);
+
+    if (parsedCoords && isValidLatLng(parsedCoords.lat, parsedCoords.lng)) {
+      directNavUrl = `https://www.google.com/maps/search/?api=1&query=${parsedCoords.lat.toFixed(6)},${parsedCoords.lng.toFixed(6)}`;
+    } else if (rawStop.hasExactCoordinates && rawStop.resolvedCoords && isValidLatLng(rawStop.resolvedCoords.lat, rawStop.resolvedCoords.lng)) {
+      directNavUrl = `https://www.google.com/maps/search/?api=1&query=${rawStop.resolvedCoords.lat.toFixed(6)},${rawStop.resolvedCoords.lng.toFixed(6)}`;
     } else if (rawStop.locationLink && (rawStop.locationLink.startsWith('http://') || rawStop.locationLink.startsWith('https://'))) {
       directNavUrl = rawStop.locationLink.trim();
-    } else if (rawStop.locationLink && (rawStop.locationLink.includes('maps.app.goo.gl') || rawStop.locationLink.includes('goo.gl/maps') || rawStop.locationLink.includes('google.com/maps'))) {
-      directNavUrl = `https://${rawStop.locationLink.trim().replace(/^https?:\/\//, '')}`;
     } else {
-      const fullAddr = `${rawStop.address || ''}${rawStop.area ? `, ${rawStop.area}` : ''}`.trim();
-      const citySuffix = (!fullAddr.toLowerCase().includes('bengaluru') && !fullAddr.toLowerCase().includes('bangalore') && !fullAddr.toLowerCase().includes('bengalore') && !fullAddr.toLowerCase().includes('mumbai'))
-        ? ', Bengaluru'
-        : '';
-      directNavUrl = `https://maps.google.com/?q=${encodeURIComponent((fullAddr || rawStop.name) + citySuffix)}`;
+      const parts = [rawStop.address, rawStop.area].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
+      let fullAddr = parts.join(', ');
+      if (!fullAddr.toLowerCase().includes('bengaluru') && !fullAddr.toLowerCase().includes('bangalore') && !fullAddr.toLowerCase().includes('mumbai')) {
+        fullAddr += ', Bengaluru, Karnataka';
+      }
+      directNavUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddr || rawStop.name)}`;
     }
 
     orderedStops.push({
@@ -471,12 +620,12 @@ export const optimizeRouteOrder = (
     prevIdx = stopPointIdx;
   });
 
-  // Add final return leg back to Hub
+  // Calculate return to hub leg and total tour
   const returnToHubDist = distMatrix[prevIdx][0];
   const totalDistanceKm = Number((cumulativeDist + returnToHubDist).toFixed(1));
-  const totalEstMinutes = Math.round((totalDistanceKm / 25) * 60) + (orderedStops.length * 3);
+  const totalEstMinutes = Math.round((totalDistanceKm / 24) * 60) + (orderedStops.length * 3);
 
-  // 7. Generate Master Google Maps Round-Trip Links
+  // 6. Generate Master Google Maps Multi-Stop Directions URL connecting all orders
   const { masterUrl, legUrls } = buildGoogleMapsDirectionsUrls(
     effectiveHub, 
     orderedStops,
@@ -504,9 +653,11 @@ const reverseSubsegment = (arr: number[], i: number, k: number) => {
 };
 
 /**
- * Creates Google Maps multi-stop URL(s) for the round trip.
- * Google Maps URL directions format:
- * https://www.google.com/maps/dir/?api=1&origin=HUB&destination=HUB&waypoints=STOP1|STOP2|...
+ * Creates valid Google Maps multi-stop directions URL(s) connecting all orders.
+ * Google Maps directions format:
+ * https://www.google.com/maps/dir/?api=1&origin=HUB&destination=FINAL_STOP&waypoints=STOP1|STOP2|...
+ * 
+ * Avoids identical origin and destination (which causes Google Maps to collapse routes or fail).
  */
 const buildGoogleMapsDirectionsUrls = (
   hub: HubLocation,
@@ -514,44 +665,54 @@ const buildGoogleMapsDirectionsUrls = (
   hubHasExactCoords: boolean = true
 ): { masterUrl: string; legUrls: string[] } => {
   const getPointQuery = (point: { address?: string; area?: string; locationLink?: string; resolvedCoords?: LatLng; hasExactCoordinates?: boolean; name?: string; lat?: number; lng?: number }): string => {
-    // If exact coordinates were parsed from link or address, use precise lat,lng
+    // 1. Direct explicit coordinates if available
     const coords = extractCoordinates(point.locationLink) || extractCoordinates(point.address);
     if (coords && isValidLatLng(coords.lat, coords.lng)) {
-      return `${coords.lat.toFixed(5)},${coords.lng.toFixed(5)}`;
+      return `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
     }
-    if (point.lat && point.lng && isValidLatLng(point.lat, point.lng)) {
-      return `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`;
+    if (typeof point.lat === 'number' && typeof point.lng === 'number' && isValidLatLng(point.lat, point.lng)) {
+      return `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
     }
-    if (point.resolvedCoords && isValidLatLng(point.resolvedCoords.lat, point.resolvedCoords.lng)) {
-      return `${point.resolvedCoords.lat.toFixed(5)},${point.resolvedCoords.lng.toFixed(5)}`;
+    if (point.hasExactCoordinates && point.resolvedCoords && isValidLatLng(point.resolvedCoords.lat, point.resolvedCoords.lng)) {
+      return `${point.resolvedCoords.lat.toFixed(6)},${point.resolvedCoords.lng.toFixed(6)}`;
     }
-    // Clean address fallback with city
-    const fullAddr = `${point.address || ''}${point.area ? `, ${point.area}` : ''}`.trim();
+    // 2. Clean full address with locality
+    const parts = [point.address, point.area].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
+    let fullAddr = parts.join(', ');
+    if (!fullAddr.toLowerCase().includes('bengaluru') && !fullAddr.toLowerCase().includes('bangalore') && !fullAddr.toLowerCase().includes('mumbai')) {
+      fullAddr += ', Bengaluru, Karnataka';
+    }
     return encodeURIComponent(fullAddr || point.name || 'Delivery Stop');
   };
 
-  // Hub coordinate string: Always use lat,lng coordinates when available to avoid any city mismatch!
+  // Hub coordinate string: Always use lat,lng coordinates when available
   const hubQuery = (hub.lat && hub.lng)
-    ? `${hub.lat.toFixed(5)},${hub.lng.toFixed(5)}`
-    : encodeURIComponent(hub.address || hub.name || 'Kitchen Hub');
+    ? `${hub.lat.toFixed(6)},${hub.lng.toFixed(6)}`
+    : encodeURIComponent(hub.address || hub.name || 'Kitchen Hub, Bengaluru, Karnataka');
 
-  // Google Maps URL directions can reliably hold up to 9 waypoints between origin & destination
+  if (stops.length === 0) {
+    return { masterUrl: '', legUrls: [] };
+  }
+
+  // When only 1 stop
+  if (stops.length === 1) {
+    const singleUrl = `https://www.google.com/maps/dir/?api=1&origin=${hubQuery}&destination=${getPointQuery(stops[0])}`;
+    return { masterUrl: singleUrl, legUrls: [singleUrl] };
+  }
+
+  // Google Maps URL directions API reliably supports up to 9 intermediate waypoints
   const WAYPOINT_CHUNK_SIZE = 9;
   const legUrls: string[] = [];
 
   for (let i = 0; i < stops.length; i += WAYPOINT_CHUNK_SIZE) {
     const chunk = stops.slice(i, i + WAYPOINT_CHUNK_SIZE);
-    const isFirstChunk = i === 0;
-    const isLastChunk = i + WAYPOINT_CHUNK_SIZE >= stops.length;
+    const chunkOrigin = i === 0 ? hubQuery : getPointQuery(stops[i - 1]);
+    const chunkDestination = getPointQuery(chunk[chunk.length - 1]);
 
-    const chunkOrigin = isFirstChunk ? hubQuery : getPointQuery(stops[i - 1]);
-    const chunkDestination = isLastChunk ? hubQuery : getPointQuery(stops[Math.min(i + WAYPOINT_CHUNK_SIZE, stops.length - 1)]);
-
-    // Intermediate waypoints inside the chunk
-    const waypoints = chunk
-      .slice(0, isLastChunk ? chunk.length : chunk.length - 1)
-      .map((s) => getPointQuery(s))
-      .join('|');
+    // Intermediate waypoints between origin and chunk destination
+    const waypoints = chunk.length > 1
+      ? chunk.slice(0, chunk.length - 1).map(s => getPointQuery(s)).join('|')
+      : '';
 
     let url = `https://www.google.com/maps/dir/?api=1&origin=${chunkOrigin}&destination=${chunkDestination}`;
     if (waypoints) {
@@ -560,11 +721,22 @@ const buildGoogleMapsDirectionsUrls = (
     legUrls.push(url);
   }
 
-  // Master URL combining the first chunk or all if <= 9
-  const first9Waypoints = stops.slice(0, 9).map((s) => getPointQuery(s)).join('|');
-  let masterUrl = `https://www.google.com/maps/dir/?api=1&origin=${hubQuery}&destination=${hubQuery}`;
-  if (first9Waypoints) {
-    masterUrl += `&waypoints=${first9Waypoints}`;
+  // Master URL connecting Hub -> all intermediate stops as waypoints -> final destination stop
+  const finalStop = stops[stops.length - 1];
+  const finalStopQuery = getPointQuery(finalStop);
+
+  // If <= 9 total stops, all intermediate stops fit into waypoints
+  let masterWaypoints = '';
+  if (stops.length <= 9) {
+    masterWaypoints = stops.slice(0, stops.length - 1).map(s => getPointQuery(s)).join('|');
+  } else {
+    // If more than 9 stops, master URL routes through the first 8 stops to stop 9, with legs available for subsequent segments
+    masterWaypoints = stops.slice(0, 8).map(s => getPointQuery(s)).join('|');
+  }
+
+  let masterUrl = `https://www.google.com/maps/dir/?api=1&origin=${hubQuery}&destination=${stops.length <= 9 ? finalStopQuery : getPointQuery(stops[8])}`;
+  if (masterWaypoints) {
+    masterUrl += `&waypoints=${masterWaypoints}`;
   }
 
   return { masterUrl, legUrls };

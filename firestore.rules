@@ -34,21 +34,36 @@ service cloud.firestore {
       // Subcollections needed for the Driver Web App & Live Route Tracking:
       match /staff/{staffId} {
         allow read: if true;
-        // Allow driver to punch in, update GPS live location and attendance
-        allow update: if true;
+        // Business owner or admin has full update permission.
+        // Drivers are strictly limited to updating live GPS, attendance, and online status.
+        allow update: if (request.auth != null && request.auth.uid == userId) || isAdmin() ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'currentLat', 'currentLng', 'lastLocationUpdate',
+              'lastAttendanceDate', 'attendanceMarkedAt', 'batteryLevel', 'updatedAt'
+            ])
+          );
         allow create, delete: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       }
 
       match /delivery_logs/{logId} {
-        // Allow drivers to view route stops and mark delivered / box recollection status
-        allow read, write: if true;
+        // Allow reading logs and recording delivery completion / box recollection
+        allow read: if true;
+        allow write: if true;
       }
 
       match /customers/{customerId} {
-        // Allow drivers to read customer stop address, delivery meal preference, phone, and box status
+        // Allow drivers to read customer stop address, meal preference, phone, and box status
         allow read: if true;
-        // Allow updating box collection tracking & uncollected count
-        allow update: if true;
+        // Business owner or admin has full update permission.
+        // Drivers are strictly restricted to updating box collection tracking, uncollected count, and route order.
+        // Financial fields (paymentStatus, amountPaid, planPrice, etc.) are protected from tampering.
+        allow update: if (request.auth != null && request.auth.uid == userId) || isAdmin() ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'boxCollections', 'uncollectedBoxesCount', 'updatedAt', 'routeOrder'
+            ])
+          );
         allow create, delete: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       }
 
@@ -64,9 +79,10 @@ service cloud.firestore {
       }
     }
 
-    // 5. PENDING ACTIVATIONS
+    // 5. PENDING ACTIVATIONS (Prevent public listing of all pending subscriber emails)
     match /pending_activations/{email} {
-      allow read: if true; 
+      allow get: if true; 
+      allow list: if isAdmin();
       allow write: if isAdmin();
     }
 

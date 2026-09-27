@@ -146,6 +146,10 @@ export interface DeliveryBoyStaff {
   lastLocationUpdate?: string;
   batteryLevel?: number;
   updatedAt?: string;
+  aadharNumber?: string;
+  homeLocation?: string;
+  salary?: number;
+  dateOfJoining?: string;
 }
 
 // Fix: Added missing Expense types used in Expenses.tsx
@@ -472,11 +476,78 @@ export const INDIA_STATES = [
   "Uttarakhand", "West Bengal", "Delhi", "Jammu and Kashmir", "Ladakh", "Puducherry"
 ];
 
+export interface BranchManager {
+  id: string;
+  name: string;
+  mobile: string;
+  aadharNumber?: string;
+  location?: string;
+  salary: number;
+  dateOfJoining: string;
+  homeLocation?: string;
+  branchId: string; // Specific branch id or 'All'
+  allowedPages: string[]; // Page keys e.g. ['dashboard', 'customers', ...]
+  email: string;
+  password: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ManagerLogEntry {
+  id: string;
+  managerId: string;
+  managerName: string;
+  managerEmail: string;
+  branchId: string;
+  branchName: string;
+  date: string; // YYYY-MM-DD
+  loginTime: string;
+  logoutTime?: string | null;
+  status: 'Active' | 'Logged Out';
+  createdAt: string;
+}
+
+export interface SaasPagePermission {
+  id: string;
+  label: string;
+  description: string;
+  path: string;
+  category: 'Operations' | 'Finance' | 'Management';
+}
+
+export const ALL_SAAS_PAGES: SaasPagePermission[] = [
+  { id: 'dashboard', label: 'Dashboard', description: 'Overview metrics, urgent tasks & daily summaries', path: '/app/dashboard', category: 'Operations' },
+  { id: 'prep', label: 'Kitchen Prep', description: 'Real-time kitchen production counts & meal prep batches', path: '/app/prep', category: 'Operations' },
+  { id: 'deliveries', label: 'Deliveries & Fleet', description: 'Live dispatch, driver routing & container tracking', path: '/app/deliveries', category: 'Operations' },
+  { id: 'customers', label: 'Customers & Subscriptions', description: 'Active customer list, renewals, meal preferences & pauses', path: '/app/customers', category: 'Operations' },
+  { id: 'notes', label: 'Customer Notes', description: 'Dietary requirements, allergies & customer special instructions', path: '/app/notes', category: 'Operations' },
+  { id: 'single-orders', label: 'Single Orders', description: 'On-demand meals, guest orders & catering bookings', path: '/app/single-orders', category: 'Operations' },
+  { id: 'inventory', label: 'Inventory & Stock', description: 'Raw materials, reorder levels & supplier stock', path: '/app/inventory', category: 'Operations' },
+  { id: 'messages', label: 'Broadcast & Messages', description: 'WhatsApp notifications, updates & announcement broadcasts', path: '/app/messages', category: 'Operations' },
+  { id: 'payments', label: 'Payments', description: 'Payment records, pending collections & transaction logs', path: '/app/payments', category: 'Finance' },
+  { id: 'invoices', label: 'GST Invoices', description: 'Generate GST-compliant tax invoices & billing records', path: '/app/invoices', category: 'Finance' },
+  { id: 'expenses', label: 'Expenses', description: 'Daily grocery, operational costs & kitchen overheads', path: '/app/expenses', category: 'Finance' },
+  { id: 'analytics', label: 'Analytics & Reports', description: 'Revenue graphs, customer retention & business profitability', path: '/app/analytics', category: 'Management' },
+  { id: 'settings', label: 'Settings & Config', description: 'Branches, subscription tiers, staff & box configurations', path: '/app/settings', category: 'Management' },
+  { id: 'profile', label: 'Business Profile', description: 'Company details, brand identity & SaaS billing plan', path: '/app/profile', category: 'Management' },
+  { id: 'support', label: 'Help & Support', description: 'Customer tickets, feature requests & system feedback', path: '/app/support', category: 'Management' },
+];
+
+export const normalizePhone = (phone: string): string => {
+  const digits = (phone || '').replace(/\D/g, '');
+  return digits.slice(-10);
+};
+
+export const normalizeEmail = (email: string): string => {
+  return (email || '').trim().toLowerCase();
+};
+
 export interface BusinessProfile {
   ownerName: string;
   email: string;
   mobile: string; 
   businessName: string;
+  logoUrl?: string;
   description: string;
   category: string;
   country: string;
@@ -489,7 +560,7 @@ export interface BusinessProfile {
 }
 
 export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
-  ownerName: "", email: "", mobile: "", businessName: "", description: "",
+  ownerName: "", email: "", mobile: "", businessName: "", logoUrl: "", description: "",
   category: "Cloud Kitchen", country: "India", state: "", city: "",
   isProfileComplete: false, planName: "None", planExpiryDate: new Date().toISOString().split('T')[0],
   planStatus: 'Inactive'

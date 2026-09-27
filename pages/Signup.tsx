@@ -4,6 +4,7 @@ import { Zap, CheckCircle, ArrowRight, Loader2, Building, Mail, Lock, Phone, Arr
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
+import { checkFreeTrialEligibility } from '../services/dbService';
 
 const Signup = () => {
   const { signupWithEmail } = useAuth();
@@ -48,10 +49,17 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      // 1. Create Authentication User
+      // 1. Check if phone number was already used for a free trial
+      const trialCheck = await checkFreeTrialEligibility(formData.email.trim(), formData.mobile);
+      if (!trialCheck.eligible) {
+        // We still allow account creation if they want to subscribe to a paid plan, but notify them
+        sessionStorage.setItem('trial_already_claimed', 'true');
+      }
+
+      // 2. Create Authentication User
       const user = await signupWithEmail(formData.email.trim(), formData.password);
 
-      // 2. Create Inactive Profile in Firestore
+      // 3. Create Inactive Profile in Firestore
       await setDoc(doc(db, 'businesses', user.uid), {
         ownerName: '', // To be filled later in profile
         email: formData.email.trim(),

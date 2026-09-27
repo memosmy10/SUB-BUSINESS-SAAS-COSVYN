@@ -194,6 +194,8 @@ export const DriverPortal: React.FC = () => {
   const [plans, setPlans] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [deliveryLogs, setDeliveryLogs] = useState<Record<string, any>>({});
+  const [businessName, setBusinessName] = useState<string>('ScaleKitchen');
+  const [logoUrl, setLogoUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [isShiftActive, setIsShiftActive] = useState(false);
   const [punchInTime, setPunchInTime] = useState<string | null>(null);
@@ -333,7 +335,18 @@ export const DriverPortal: React.FC = () => {
       setDeliveryLogs(map);
     });
 
+    // Business profile stream for branding & logo
+    const bizDocRef = doc(db, 'businesses', bizId);
+    const unsubscribeBiz = onSnapshot(bizDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.businessName) setBusinessName(data.businessName);
+        if (data.logoUrl) setLogoUrl(data.logoUrl);
+      }
+    }, (err) => console.warn("Driver biz profile err:", err));
+
     return () => {
+      unsubscribeBiz();
       unsubscribeStaff();
       unsubscribeCust();
       unsubscribePlans();
@@ -937,51 +950,76 @@ export const DriverPortal: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-850 to-slate-950 text-slate-100 flex flex-col font-sans pb-24">
       {/* Top Mobile Bar */}
-      <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-xl border-b border-white/10 px-4 py-3 flex items-center justify-between shadow-glass">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center font-bold">
-            <Truck size={18} />
+      <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-xl border-b border-white/10 px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between shadow-glass">
+        
+        {/* Left: Driver info and live status */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center font-bold">
+            <Truck size={17} />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-bold font-display text-sm tracking-tight text-white">
+            <div className="flex items-center gap-1.5">
+              <h1 className="font-bold font-display text-xs sm:text-sm tracking-tight text-white truncate max-w-[90px] sm:max-w-none">
                 {currentBoy ? currentBoy.name : 'Select Driver'}
               </h1>
               {isShiftActive && (
-                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 rounded-full animate-pulse">
+                <span className="flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 rounded-full animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Live
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+            <p className="text-[10px] sm:text-[11px] text-slate-400 flex items-center gap-1">
               <span>{todayStr}</span>
               <span>•</span>
               <button 
                 onClick={() => setLoginModalOpen(true)} 
                 className="text-amber-400 hover:underline font-medium"
               >
-                Change Rider
+                Change
               </button>
             </p>
           </div>
         </div>
 
-        {/* Shift Action Button */}
-        <div>
+        {/* Center: Business Name in Middle of Top (Requirement from Part 4) */}
+        <div className="flex-1 text-center px-1 sm:px-3">
+          <h2 className="font-bold font-display text-xs sm:text-sm tracking-tight text-white truncate max-w-[130px] sm:max-w-xs mx-auto">
+            {businessName || 'ScaleKitchen'}
+          </h2>
+          <span className="text-[9px] text-amber-400/90 font-medium hidden sm:inline-block">
+            Delivery Fleet
+          </span>
+        </div>
+
+        {/* Right Corner: Shift Action Button & Company / Business Logo (Requirement from Part 4) */}
+        <div className="flex items-center gap-2 shrink-0">
           {isShiftActive ? (
             <button 
               onClick={handlePunchOut}
-              className="text-xs font-semibold px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 shadow-xs"
+              className="text-[11px] sm:text-xs font-semibold px-2 sm:px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-xl transition-all active:scale-95 flex items-center gap-1 shadow-xs"
             >
-              <RotateCcw size={13} /> End Shift
+              <RotateCcw size={12} /> <span className="hidden sm:inline">End Shift</span>
             </button>
           ) : (
             <button 
               onClick={handlePunchIn}
-              className="text-xs font-bold px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-xl transition-all active:scale-95 shadow-md flex items-center gap-1.5"
+              className="text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-xl transition-all active:scale-95 shadow-md flex items-center gap-1"
             >
-              <Check size={14} /> Punch In
+              <Check size={13} /> <span className="hidden sm:inline">Punch In</span>
             </button>
+          )}
+
+          {/* Business Logo on Top Right Corner */}
+          {logoUrl ? (
+            <img 
+              src={logoUrl} 
+              alt={`${businessName} Logo`} 
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl object-contain bg-white/10 p-0.5 border border-white/20 shadow-xs shrink-0" 
+            />
+          ) : (
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
+              {businessName?.charAt(0) || 'K'}
+            </div>
           )}
         </div>
       </header>

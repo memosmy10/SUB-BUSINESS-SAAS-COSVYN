@@ -68,12 +68,49 @@ service cloud.firestore {
       }
 
       match /plans/{planId} {
-        // Allow drivers to read meal plan names/labels
+        // Allow drivers and managers to read meal plan names/labels
         allow read: if true;
         allow write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       }
 
-      // All other subcollections (payments, expenses, invoices, settings, etc.) remain strictly private to the business owner
+      match /branches/{branchId} {
+        // Allow public read for driver & manager app branch identification
+        allow read: if true;
+        allow write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      }
+
+      match /managers/{managerId} {
+        // Allow manager login verification
+        allow read: if true;
+        allow write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      }
+
+      match /manager_logs/{logId} {
+        // Allow recording manager login & logout audit timestamps
+        allow read: if true;
+        allow create, update: if true;
+        allow delete: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      }
+
+      // Operational subcollections (inventory, expenses, notes, single_orders)
+      match /inventory/{itemId} {
+        allow read, write: if request.auth != null;
+      }
+      match /expenses/{expenseId} {
+        allow read, write: if request.auth != null;
+      }
+      match /notes/{noteId} {
+        allow read, write: if request.auth != null;
+      }
+      match /single_orders/{orderId} {
+        allow read, write: if request.auth != null;
+      }
+      match /box_types/{boxId} {
+        allow read: if true;
+        allow write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      }
+
+      // All other subcollections (payments, invoices, settings, etc.) remain strictly private to the business owner
       match /{allSubcollections=**} {
         allow read, write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       }
@@ -86,7 +123,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 6. COLLECTION GROUPS (For Admin Panel Analytics)
+    // 6. FREE TRIAL REGISTRY (Prevent repeated free trial creation with same email or mobile)
+    match /trial_claims/{claimKey} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // 7. COLLECTION GROUPS (For Admin Panel Analytics)
     match /{path=**}/billing_history/{docId} {
       allow read: if isAdmin() || (request.auth != null && request.auth.uid == path[1]);
     }
@@ -94,7 +138,7 @@ service cloud.firestore {
       allow read: if isAdmin() || (request.auth != null && request.auth.uid == path[1]);
     }
 
-    // 7. GLOBAL INTERACTIONS
+    // 8. GLOBAL INTERACTIONS
     match /global_features/{docId} { allow read, write: if request.auth != null; }
     match /global_tickets/{docId} { allow read, write: if request.auth != null; }
     match /global_reviews/{docId} { allow read, write: if request.auth != null; }

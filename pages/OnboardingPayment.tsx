@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Check, Shield, Zap, Loader2, Tag, Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateEffectivePrice } from '../services/saasStore';
-import { useGlobalPricing, addItem } from '../services/dbService';
+import { useGlobalPricing, addItem, checkFreeTrialEligibility, recordFreeTrialClaim } from '../services/dbService';
 import { handleRazorpayPayment } from '../services/razorpayService';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -15,6 +15,9 @@ const OnboardingPayment = () => {
   const [loading, setLoading] = useState(false);
   const [activating, setActivating] = useState(false);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [isTrialEligible, setIsTrialEligible] = useState(true);
+  const [trialIneligibleReason, setTrialIneligibleReason] = useState('');
+  const [businessData, setBusinessData] = useState<any>(null);
   const [hasSetDefault, setHasSetDefault] = useState(false);
   
   // Use Global Pricing
@@ -23,7 +26,7 @@ const OnboardingPayment = () => {
   // Selection State (Default to Yearly or first available)
   const [selectedPlanId, setSelectedPlanId] = useState<string>('');
 
-  // Check if user is new
+  // Check if user is new and if they are eligible for the Free Trial
   useEffect(() => {
     const checkUserStatus = async () => {
       if (!currentUser) return;
@@ -31,9 +34,23 @@ const OnboardingPayment = () => {
         const docSnap = await getDoc(doc(db, 'businesses', currentUser.uid));
         if (docSnap.exists()) {
           const data = docSnap.data();
+          setBusinessData(data);
           // If they have no planName, it's "None", or it's "Pending", they are "new" for trial purposes
           const isNew = !data.planName || data.planName === 'None' || data.planStatus === 'Pending';
           setIsNewUser(isNew);
+
+          if (isNew) {
+            // Check if this phone number or email has already been used for a trial anywhere
+            const userEmail = data.email || currentUser.email || '';
+            const userPhone = data.mobile || '';
+            const check = await checkFreeTrialEligibility(userEmail, userPhone);
+            if (!check.eligible) {
+              setIsTrialEligible(false);
+              setTrialIneligibleReason(check.reason || 'A free trial has already been claimed for this phone or email.');
+            } else {
+              setIsTrialEligible(true);
+            }
+          }
         }
       } catch (e) {
         console.error("Error checking user status:", e);
@@ -45,27 +62,37 @@ const OnboardingPayment = () => {
   // Ensure selection defaults correctly once plans load
   useEffect(() => {
     if (!pricingLoading && plans.length > 0 && !hasSetDefault) {
-      if (isNewUser) {
+      if (isNewUser && isTrialEligible) {
         setSelectedPlanId('FreeTrial');
       } else {
         setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0].id);
       }
       setHasSetDefault(true);
     }
-  }, [pricingLoading, plans, isNewUser, hasSetDefault]);
+  }, [pricingLoading, plans, isNewUser, isTrialEligible, hasSetDefault]);
   
   // Check offer validity
   const isOfferActive = offer.isActive && new Date() < new Date(offer.endsAt);
 
   const activateFreeTrial = async () => {
     if (!currentUser) return;
+    if (!isTrialEligible) {
+      alert(trialIneligibleReason || "A free trial has already been used with this mobile or email. Please choose a paid plan.");
+      return;
+    }
     setActivating(true);
 
     try {
       const now = new Date();
-      now.setMonth(now.getMonth() + 1); // 1 Month Trial
+      now.setMonth(now.getMonth() + 1); // 1 Month Trial (30 Days)
       const expiryDate = now.toISOString().split('T')[0];
 
+      // 1. Permanently record trial claim so phone/email cannot be reused
+      const email = businessData?.email || currentUser.email || '';
+      const mobile = businessData?.mobile || '';
+      await recordFreeTrialClaim(currentUser.uid, email, mobile);
+
+      // 2. Activate free trial on business profile
       const docRef = doc(db, 'businesses', currentUser.uid);
       await updateDoc(docRef, {
         planName: 'Free Trial',
@@ -74,7 +101,7 @@ const OnboardingPayment = () => {
         updatedAt: new Date().toISOString()
       });
 
-      // Add to billing history as "Trial"
+      // 3. Add to billing history as "Trial"
       await addItem(currentUser.uid, 'billing_history', {
         amount: 0,
         date: new Date().toISOString(),
@@ -205,16 +232,20 @@ const OnboardingPayment = () => {
           {/* FREE TRIAL PLAN (ONLY FOR NEW USERS) */}
           {isNewUser && (
             <div 
-              onClick={() => setSelectedPlanId('FreeTrial')}
+              onClick={() => {
+                if (isTrialEligible) setSelectedPlanId('FreeTrial');
+              }}
               className={`
-                relative rounded-3xl p-8 cursor-pointer transition-all duration-300 flex flex-col
-                ${selectedPlanId === 'FreeTrial' 
-                  ? 'bg-white border-2 border-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.15)] ring-4 ring-emerald-500/10 scale-105 z-10' 
-                  : 'bg-white border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:-translate-y-1 opacity-70 hover:opacity-100'
+                relative rounded-3xl p-8 transition-all duration-300 flex flex-col
+                ${!isTrialEligible
+                  ? 'bg-slate-100/80 border border-slate-200 cursor-not-allowed opacity-60'
+                  : selectedPlanId === 'FreeTrial' 
+                    ? 'bg-white border-2 border-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.15)] ring-4 ring-emerald-500/10 scale-105 z-10 cursor-pointer' 
+                    : 'bg-white border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:-translate-y-1 opacity-80 hover:opacity-100 cursor-pointer'
                 }
               `}
             >
-              {selectedPlanId === 'FreeTrial' && (
+              {selectedPlanId === 'FreeTrial' && isTrialEligible && (
                 <div className="absolute -top-3 -right-3 bg-emerald-600 text-white rounded-full p-1.5 shadow-lg shadow-emerald-600/40 animate-in zoom-in duration-300">
                   <Check size={20} strokeWidth={3} />
                 </div>
@@ -222,14 +253,23 @@ const OnboardingPayment = () => {
 
               <div className="mb-6">
                 <div className="flex items-center gap-2 mb-2">
-                  <Zap size={18} className="text-emerald-500" />
-                  <h3 className={`text-xl font-bold ${selectedPlanId === 'FreeTrial' ? 'text-slate-900' : 'text-slate-700'}`}>Free Trial</h3>
+                  <Zap size={18} className={isTrialEligible ? "text-emerald-500" : "text-slate-400"} />
+                  <h3 className={`text-xl font-bold ${isTrialEligible ? (selectedPlanId === 'FreeTrial' ? 'text-slate-900' : 'text-slate-700') : 'text-slate-500'}`}>Free Trial</h3>
                 </div>
-                <p className="text-slate-500 text-sm leading-relaxed min-h-[40px]">Test all premium features for 30 days. No credit card required.</p>
+                <p className="text-slate-500 text-sm leading-relaxed min-h-[40px]">
+                  {isTrialEligible 
+                    ? 'Test all premium features for 30 days. No credit card required.' 
+                    : 'Free Trial already redeemed for this phone or email.'}
+                </p>
+                {!isTrialEligible && (
+                  <span className="inline-block mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                    1 Trial Per Phone/Email Limit Reached
+                  </span>
+                )}
               </div>
               
               <div className="flex items-baseline gap-2 mb-8">
-                <span className={`text-4xl font-extrabold tracking-tight ${selectedPlanId === 'FreeTrial' ? 'text-emerald-600' : 'text-slate-700'}`}>
+                <span className={`text-4xl font-extrabold tracking-tight ${isTrialEligible && selectedPlanId === 'FreeTrial' ? 'text-emerald-600' : 'text-slate-600'}`}>
                   ₹0
                 </span>
                 <span className="text-slate-400 text-sm font-medium">/ 30 days</span>
@@ -239,7 +279,7 @@ const OnboardingPayment = () => {
                 <ul className="space-y-4 mb-8">
                   {['Full Access', 'All Features Included', 'No Commitment', '30 Day Duration'].map((feat, i) => (
                     <li key={i} className="flex items-start gap-3 text-sm text-slate-600">
-                      <div className={`mt-0.5 rounded-full p-0.5 ${selectedPlanId === 'FreeTrial' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <div className={`mt-0.5 rounded-full p-0.5 ${isTrialEligible && selectedPlanId === 'FreeTrial' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
                         <Check size={12} strokeWidth={3} />
                       </div>
                       <span>{feat}</span>
@@ -247,20 +287,26 @@ const OnboardingPayment = () => {
                   ))}
                 </ul>
 
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedPlanId('FreeTrial');
-                    activateFreeTrial();
-                  }}
-                  className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-300 ${
-                    selectedPlanId === 'FreeTrial' 
-                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-700' 
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                  }`}
-                >
-                  Start Free Trial
-                </button>
+                {isTrialEligible ? (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedPlanId('FreeTrial');
+                      activateFreeTrial();
+                    }}
+                    className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-300 ${
+                      selectedPlanId === 'FreeTrial' 
+                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-700' 
+                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    }`}
+                  >
+                    Start Free Trial
+                  </button>
+                ) : (
+                  <div className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-500 font-bold text-xs text-center">
+                    Trial Already Claimed
+                  </div>
+                )}
               </div>
             </div>
           )}

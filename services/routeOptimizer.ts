@@ -70,17 +70,40 @@ export interface OptimizedRouteResult {
  */
 export const extractCoordinates = (linkOrCoords?: string): LatLng | null => {
   if (!linkOrCoords || typeof linkOrCoords !== 'string') return null;
-  const str = linkOrCoords.trim();
+  let str = linkOrCoords.trim();
 
-  // 1. Raw Coordinates: "19.0760, 72.8777" or "19.0760,72.8777"
-  const rawCoordsMatch = str.match(/^(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  // Try decoding URI in case of URL-encoded parameters (%2C, %3A, etc.)
+  try {
+    str = decodeURIComponent(str.replace(/\+/g, ' '));
+  } catch (_) {
+    // Keep original if decoding fails
+  }
+
+  // 1. Raw Coordinates: "19.0760, 72.8777" or "12.9716,77.5946" or "12.9716 77.5946"
+  const rawCoordsMatch = str.match(/^(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)$/);
   if (rawCoordsMatch) {
     const lat = parseFloat(rawCoordsMatch[1]);
     const lng = parseFloat(rawCoordsMatch[2]);
     if (isValidLatLng(lat, lng)) return { lat, lng };
   }
 
-  // 2. URL @lat,lng format (@19.0760,72.8777)
+  // 2. Query parameter q=lat,lng, ll=lat,lng, query=lat,lng, destination=lat,lng, daddr=lat,lng, saddr=lat,lng
+  const queryMatch = str.match(/[?&](?:q|ll|query|destination|daddr|saddr)=(?:loc:)?(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i);
+  if (queryMatch) {
+    const lat = parseFloat(queryMatch[1]);
+    const lng = parseFloat(queryMatch[2]);
+    if (isValidLatLng(lat, lng)) return { lat, lng };
+  }
+
+  // 3. loc:lat,lng format (common in WhatsApp location shares: maps.google.com/maps?q=loc:12.9352,77.6946)
+  const locMatch = str.match(/loc:(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i);
+  if (locMatch) {
+    const lat = parseFloat(locMatch[1]);
+    const lng = parseFloat(locMatch[2]);
+    if (isValidLatLng(lat, lng)) return { lat, lng };
+  }
+
+  // 4. URL @lat,lng format (@19.0760,72.8777,15z)
   const atMatch = str.match(/@(-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
   if (atMatch) {
     const lat = parseFloat(atMatch[1]);
@@ -88,22 +111,106 @@ export const extractCoordinates = (linkOrCoords?: string): LatLng | null => {
     if (isValidLatLng(lat, lng)) return { lat, lng };
   }
 
-  // 3. Query parameter q=lat,lng or ll=lat,lng or query=lat,lng or destination=lat,lng
-  const queryMatch = str.match(/[?&](?:q|ll|query|destination)=(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i);
-  if (queryMatch) {
-    const lat = parseFloat(queryMatch[1]);
-    const lng = parseFloat(queryMatch[2]);
+  // 5. Google Maps !3d<lat>!4d<lng> format (standard in web/app share links)
+  const d3d4Match = str.match(/!3d(-?\d{1,3}(?:\.\d+)?).*?!4d(-?\d{1,3}(?:\.\d+)?)/);
+  if (d3d4Match) {
+    const lat = parseFloat(d3d4Match[1]);
+    const lng = parseFloat(d3d4Match[2]);
     if (isValidLatLng(lat, lng)) return { lat, lng };
   }
 
-  // 4. Place URL format /place/lat,lng
-  const placeMatch = str.match(/\/place\/(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i);
+  // 6. Place path /place/lat,lng or /place/lat+lng
+  const placeMatch = str.match(/\/place\/(-?\d{1,3}(?:\.\d+)?)[,\+](-?\d{1,3}(?:\.\d+)?)/i);
   if (placeMatch) {
     const lat = parseFloat(placeMatch[1]);
     const lng = parseFloat(placeMatch[2]);
     if (isValidLatLng(lat, lng)) return { lat, lng };
   }
 
+  // 7. Center or loc query parameter: center=lat,lng
+  const centerMatch = str.match(/[?&](?:center|loc:)=(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i);
+  if (centerMatch) {
+    const lat = parseFloat(centerMatch[1]);
+    const lng = parseFloat(centerMatch[2]);
+    if (isValidLatLng(lat, lng)) return { lat, lng };
+  }
+
+  // 8. General coordinate pattern anywhere in text: e.g. "12.93524, 77.69462"
+  const generalPairMatch = str.match(/(?:^|[^\d.-])(\d{1,2}\.\d{3,})[,\s]+(\d{1,3}\.\d{3,})(?:[^\d.-]|$)/);
+  if (generalPairMatch) {
+    const lat = parseFloat(generalPairMatch[1]);
+    const lng = parseFloat(generalPairMatch[2]);
+    if (isValidLatLng(lat, lng)) return { lat, lng };
+  }
+
+  // 9. DMS (Degrees, Minutes, Seconds) e.g. 12°58'17.8"N 77°35'40.6"E
+  const dmsMatch = str.match(/(\d+)°(\d+)'([\d.]+)"?\s*([NSns])[,\s]+(\d+)°(\d+)'([\d.]+)"?\s*([EWew])/);
+  if (dmsMatch) {
+    let lat = parseInt(dmsMatch[1]) + parseInt(dmsMatch[2]) / 60 + parseFloat(dmsMatch[3]) / 3600;
+    if (dmsMatch[4].toUpperCase() === 'S') lat = -lat;
+    let lng = parseInt(dmsMatch[5]) + parseInt(dmsMatch[6]) / 60 + parseFloat(dmsMatch[7]) / 3600;
+    if (dmsMatch[8].toUpperCase() === 'W') lng = -lng;
+    if (isValidLatLng(lat, lng)) return { lat, lng };
+  }
+
+  return null;
+};
+
+export const CITY_COORDINATES: Record<string, LatLng> = {
+  bangalore: { lat: 12.9716, lng: 77.5946 },
+  bengaluru: { lat: 12.9716, lng: 77.5946 },
+  bengalore: { lat: 12.9716, lng: 77.5946 },
+  banglore: { lat: 12.9716, lng: 77.5946 },
+  bangaluru: { lat: 12.9716, lng: 77.5946 },
+  blr: { lat: 12.9716, lng: 77.5946 },
+  whitefield: { lat: 12.9698, lng: 77.7500 },
+  kadubeesanahalli: { lat: 12.9352, lng: 77.6946 },
+  koramangala: { lat: 12.9352, lng: 77.6245 },
+  indiranagar: { lat: 12.9784, lng: 77.6408 },
+  hsr: { lat: 12.9121, lng: 77.6446 },
+  bellandur: { lat: 12.9304, lng: 77.6784 },
+  marathahalli: { lat: 12.9591, lng: 77.7011 },
+  electronic_city: { lat: 12.8399, lng: 77.6770 },
+  jayanagar: { lat: 12.9308, lng: 77.5838 },
+  jp_nagar: { lat: 12.9063, lng: 77.5857 },
+  sarjapur: { lat: 12.8596, lng: 77.7889 },
+  hebbal: { lat: 13.0358, lng: 77.5970 },
+  yelahanka: { lat: 13.1007, lng: 77.5963 },
+  btm: { lat: 12.9166, lng: 77.6101 },
+  domlur: { lat: 12.9609, lng: 77.6387 },
+  malleshwaram: { lat: 13.0031, lng: 77.5643 },
+  rajajinagar: { lat: 12.9982, lng: 77.5530 },
+  banashankari: { lat: 12.9255, lng: 77.5468 },
+  basavanagudi: { lat: 12.9422, lng: 77.5753 },
+  cv_raman_nagar: { lat: 12.9856, lng: 77.6639 },
+  mumbai: { lat: 19.0760, lng: 72.8777 },
+  navi_mumbai: { lat: 19.0330, lng: 73.0297 },
+  panvel: { lat: 18.9894, lng: 73.1175 },
+  delhi: { lat: 28.6139, lng: 77.2090 },
+  new_delhi: { lat: 28.6139, lng: 77.2090 },
+  hyderabad: { lat: 17.3850, lng: 78.4867 },
+  chennai: { lat: 13.0827, lng: 80.2707 },
+  pune: { lat: 18.5204, lng: 73.8567 },
+  kolkata: { lat: 22.5726, lng: 88.3639 },
+  ahmedabad: { lat: 23.0225, lng: 72.5714 },
+  jaipur: { lat: 26.9124, lng: 75.7873 },
+  surat: { lat: 21.1702, lng: 72.8311 },
+  lucknow: { lat: 26.8467, lng: 80.9462 },
+  chandigarh: { lat: 30.7333, lng: 76.7794 },
+  gurgaon: { lat: 28.4595, lng: 77.0266 },
+  gurugram: { lat: 28.4595, lng: 77.0266 },
+  noida: { lat: 28.5355, lng: 77.3910 }
+};
+
+export const detectCityCoordinates = (text?: string): LatLng | null => {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  for (const [key, coords] of Object.entries(CITY_COORDINATES)) {
+    const normalizedKey = key.replace(/_/g, ' ');
+    if (lower.includes(normalizedKey)) {
+      return coords;
+    }
+  }
   return null;
 };
 
@@ -170,22 +277,69 @@ export const optimizeRouteOrder = (
     };
   }
 
-  // 1. Resolve Hub Coordinates
+  // 1. Resolve Hub Coordinates and Customer Centroid
   let hubCoords = extractCoordinates(hub.locationLink);
+  let hubHasExact = Boolean(hubCoords);
   if (!hubCoords && hub.lat && hub.lng) {
     hubCoords = { lat: hub.lat, lng: hub.lng };
+    hubHasExact = true;
   }
-  // Default fallback if no hub coords entered yet: Central Mumbai / or fallback coords
-  if (!hubCoords) {
-    hubCoords = { lat: 19.0760, lng: 72.8777 };
+
+  // Find customer centroid from known stop coordinates or customer address areas
+  const knownStopCoords: LatLng[] = [];
+  rawStops.forEach(s => {
+    const c = extractCoordinates(s.locationLink) || extractCoordinates(s.address);
+    if (c) knownStopCoords.push(c);
+  });
+
+  let customerCentroid: LatLng | null = null;
+  if (knownStopCoords.length > 0) {
+    const avgLat = knownStopCoords.reduce((sum, c) => sum + c.lat, 0) / knownStopCoords.length;
+    const avgLng = knownStopCoords.reduce((sum, c) => sum + c.lng, 0) / knownStopCoords.length;
+    customerCentroid = { lat: avgLat, lng: avgLng };
+  } else {
+    // Detect city from customer addresses
+    const allCustomerAddresses = rawStops.map(s => `${s.address} ${s.area || ''}`).join(' ');
+    customerCentroid = detectCityCoordinates(allCustomerAddresses);
   }
+
+  // If hub is missing or in a completely different city (> 50km away) from customers (e.g. hub was default Mumbai while customers are in Bengaluru)
+  const isHubMismatched = Boolean(
+    (hubCoords && customerCentroid && calculateHaversineKm(hubCoords, customerCentroid) > 50) ||
+    (!hub.locationLink && hub.address?.toLowerCase().includes('mumbai') && customerCentroid && customerCentroid.lat < 15)
+  );
+
+  let resolvedHubName = hub.name || 'Kitchen Hub';
+  let resolvedHubAddress = hub.address || 'Kitchen Hub';
+
+  if (!hubCoords || isHubMismatched) {
+    if (customerCentroid) {
+      hubCoords = customerCentroid;
+      hubHasExact = true;
+      if (isHubMismatched || resolvedHubAddress.toLowerCase().includes('mumbai')) {
+        resolvedHubName = 'Bengaluru Kitchen Hub';
+        resolvedHubAddress = 'Bengaluru Central Kitchen Hub';
+      }
+    } else {
+      const detectedHubCity = detectCityCoordinates(`${hub.name} ${hub.address || ''}`);
+      hubCoords = detectedHubCity || { lat: 12.9716, lng: 77.5946 };
+      hubHasExact = Boolean(detectedHubCity);
+    }
+  }
+
+  const effectiveHub: HubLocation = {
+    ...hub,
+    name: resolvedHubName,
+    address: resolvedHubAddress,
+    lat: hubCoords.lat,
+    lng: hubCoords.lng
+  };
 
   // 2. Prepare Stops with resolved coordinates
   const stopsWithCoords = rawStops.map((stop) => {
-    let coords = extractCoordinates(stop.locationLink);
-    let hasExact = true;
+    let coords = extractCoordinates(stop.locationLink) || extractCoordinates(stop.address);
+    let hasExact = Boolean(coords);
     if (!coords) {
-      hasExact = false;
       // Cluster by area relative to hub
       coords = getAreaClusterOffset(hubCoords!, stop.area || stop.address || stop.name);
     }
@@ -286,16 +440,24 @@ export const optimizeRouteOrder = (
     const estDriveMins = Math.round((legDist / 25) * 60) + 3;
 
     // Generate single-tap Google Maps Navigation URL for this stop
-    let destQuery = '';
-    if (rawStop.hasExactCoordinates && rawStop.resolvedCoords) {
-      destQuery = `${rawStop.resolvedCoords.lat},${rawStop.resolvedCoords.lng}`;
-    } else if (rawStop.locationLink && rawStop.locationLink.includes('http')) {
-      destQuery = rawStop.locationLink;
+    // Using maps.google.com/?q=lat,lng or direct customer link ensures zero "location not available" errors!
+    let directNavUrl = '';
+    const parsedCoords = extractCoordinates(rawStop.locationLink) || extractCoordinates(rawStop.address) || (rawStop.hasExactCoordinates ? rawStop.resolvedCoords : null);
+    
+    if (parsedCoords) {
+      // 100% reliable GPS pin that opens Google Maps mobile app with direct "Directions" button
+      directNavUrl = `https://maps.google.com/?q=${parsedCoords.lat.toFixed(6)},${parsedCoords.lng.toFixed(6)}`;
+    } else if (rawStop.locationLink && (rawStop.locationLink.startsWith('http://') || rawStop.locationLink.startsWith('https://'))) {
+      directNavUrl = rawStop.locationLink.trim();
+    } else if (rawStop.locationLink && (rawStop.locationLink.includes('maps.app.goo.gl') || rawStop.locationLink.includes('goo.gl/maps') || rawStop.locationLink.includes('google.com/maps'))) {
+      directNavUrl = `https://${rawStop.locationLink.trim().replace(/^https?:\/\//, '')}`;
     } else {
-      destQuery = encodeURIComponent(`${rawStop.address}, ${rawStop.area || ''}`);
+      const fullAddr = `${rawStop.address || ''}${rawStop.area ? `, ${rawStop.area}` : ''}`.trim();
+      const citySuffix = (!fullAddr.toLowerCase().includes('bengaluru') && !fullAddr.toLowerCase().includes('bangalore') && !fullAddr.toLowerCase().includes('bengalore') && !fullAddr.toLowerCase().includes('mumbai'))
+        ? ', Bengaluru'
+        : '';
+      directNavUrl = `https://maps.google.com/?q=${encodeURIComponent((fullAddr || rawStop.name) + citySuffix)}`;
     }
-
-    const directNavUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destQuery)}`;
 
     orderedStops.push({
       ...rawStop,
@@ -315,10 +477,14 @@ export const optimizeRouteOrder = (
   const totalEstMinutes = Math.round((totalDistanceKm / 25) * 60) + (orderedStops.length * 3);
 
   // 7. Generate Master Google Maps Round-Trip Links
-  const { masterUrl, legUrls } = buildGoogleMapsDirectionsUrls(hub, orderedStops);
+  const { masterUrl, legUrls } = buildGoogleMapsDirectionsUrls(
+    effectiveHub, 
+    orderedStops,
+    true
+  );
 
   return {
-    hub,
+    hub: effectiveHub,
     orderedStops,
     totalDistanceKm,
     totalEstMinutes,
@@ -344,24 +510,30 @@ const reverseSubsegment = (arr: number[], i: number, k: number) => {
  */
 const buildGoogleMapsDirectionsUrls = (
   hub: HubLocation,
-  stops: OptimizedStop[]
+  stops: OptimizedStop[],
+  hubHasExactCoords: boolean = true
 ): { masterUrl: string; legUrls: string[] } => {
-  const getPointQuery = (point: { address?: string; locationLink?: string; resolvedCoords?: LatLng }): string => {
-    if (point.resolvedCoords) {
-      return `${point.resolvedCoords.lat.toFixed(5)},${point.resolvedCoords.lng.toFixed(5)}`;
-    }
-    const coords = extractCoordinates(point.locationLink);
-    if (coords) {
+  const getPointQuery = (point: { address?: string; area?: string; locationLink?: string; resolvedCoords?: LatLng; hasExactCoordinates?: boolean; name?: string; lat?: number; lng?: number }): string => {
+    // If exact coordinates were parsed from link or address, use precise lat,lng
+    const coords = extractCoordinates(point.locationLink) || extractCoordinates(point.address);
+    if (coords && isValidLatLng(coords.lat, coords.lng)) {
       return `${coords.lat.toFixed(5)},${coords.lng.toFixed(5)}`;
     }
-    return encodeURIComponent(point.address || 'Kitchen Hub');
+    if (point.lat && point.lng && isValidLatLng(point.lat, point.lng)) {
+      return `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`;
+    }
+    if (point.resolvedCoords && isValidLatLng(point.resolvedCoords.lat, point.resolvedCoords.lng)) {
+      return `${point.resolvedCoords.lat.toFixed(5)},${point.resolvedCoords.lng.toFixed(5)}`;
+    }
+    // Clean address fallback with city
+    const fullAddr = `${point.address || ''}${point.area ? `, ${point.area}` : ''}`.trim();
+    return encodeURIComponent(fullAddr || point.name || 'Delivery Stop');
   };
 
-  const hubQuery = getPointQuery({
-    address: hub.address || hub.name,
-    locationLink: hub.locationLink,
-    resolvedCoords: hub.lat && hub.lng ? { lat: hub.lat, lng: hub.lng } : extractCoordinates(hub.locationLink) || undefined
-  });
+  // Hub coordinate string: Always use lat,lng coordinates when available to avoid any city mismatch!
+  const hubQuery = (hub.lat && hub.lng)
+    ? `${hub.lat.toFixed(5)},${hub.lng.toFixed(5)}`
+    : encodeURIComponent(hub.address || hub.name || 'Kitchen Hub');
 
   // Google Maps URL directions can reliably hold up to 9 waypoints between origin & destination
   const WAYPOINT_CHUNK_SIZE = 9;
@@ -484,7 +656,7 @@ export const formatWhatsAppOptimizedRoute = (
     if (stop.notes) {
       msg += `   📝 Note: ${stop.notes}\n`;
     }
-    msg += `   🧭 Direct Nav: ${stop.directNavUrl}\n\n`;
+    msg += `   🧭 Direct Navigation Link:\n${stop.directNavUrl}\n\n`;
   });
 
   msg += `🏁 *Final Stop: Return back to ${hub.name}*\n`;

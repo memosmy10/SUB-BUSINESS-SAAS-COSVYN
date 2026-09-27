@@ -4,7 +4,8 @@ import {
   Loader2, ArrowUp, ArrowDown, Phone,
   Sunrise, Sun, Moon, Star, CheckCircle2, UserX, 
   ArrowRight, MessageSquare, ClipboardList, ExternalLink, Users, LayoutGrid, ListChecks,
-  Compass, Navigation, Sparkles, Zap, RotateCcw, Share2, Smartphone, Activity
+  Compass, Navigation, Sparkles, Zap, RotateCcw, Share2, Smartphone, Activity,
+  Calendar, X
 } from 'lucide-react';
 import { useStreamCollection, updateItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
@@ -51,21 +52,45 @@ const Deliveries = () => {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [selectedShareBoy, setSelectedShareBoy] = useState<any>(null);
 
+  // DATE SELECTOR STATE (Default: Today's date)
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayStr());
+  const [isOptimizingAll, setIsOptimizingAll] = useState(false);
+  const [optimizeAllSuccess, setOptimizeAllSuccess] = useState<string | null>(null);
+
   const isLoading = l1 || l2 || l3 || l4;
 
   const todayStr = getTodayStr();
-  const dayOfWeek = new Date().getDay();
+  const isSelectedToday = selectedDate === todayStr;
 
-  // Map of today's delivery status by customer and mealTime
-  const todayLogsMap = useMemo(() => {
+  // Derive Day of Week (0 = Sun, 1 = Mon, ..., 6 = Sat) from selectedDate
+  const targetDayOfWeek = useMemo(() => {
+    const parts = selectedDate.split('-').map(Number);
+    if (parts.length === 3) {
+      return new Date(parts[0], parts[1] - 1, parts[2]).getDay();
+    }
+    return new Date().getDay();
+  }, [selectedDate]);
+
+  const handleShiftDate = (days: number) => {
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() + days);
+    const yStr = dateObj.getFullYear();
+    const mStr = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dStr = String(dateObj.getDate()).padStart(2, '0');
+    setSelectedDate(`${yStr}-${mStr}-${dStr}`);
+  };
+
+  // Map of selected date's delivery status by customer and mealTime
+  const dateLogsMap = useMemo(() => {
     const map: Record<string, any> = {};
     deliveryLogs.forEach((l: any) => {
-      if (l.date === todayStr) {
+      if (l.date === selectedDate) {
         map[`${l.customerId}_${l.mealTime}`] = l;
       }
     });
     return map;
-  }, [deliveryLogs, todayStr]);
+  }, [deliveryLogs, selectedDate]);
 
   // Overall uncollected boxes count across customers
   const totalUncollectedBoxes = useMemo(() => {
@@ -74,10 +99,10 @@ const Deliveries = () => {
 
   // Online delivery boys count
   const onlineStaffCount = useMemo(() => {
-    return staff.filter(s => s.status === 'Online' && s.lastAttendanceDate === todayStr).length;
-  }, [staff, todayStr]);
+    return staff.filter(s => s.status === 'Online' && s.lastAttendanceDate === selectedDate).length;
+  }, [staff, selectedDate]);
 
-  // --- GLOBAL DAILY SUMMARY ---
+  // --- GLOBAL KITCHEN LOAD (FOR SELECTED DATE) ---
   const globalDailySummary = useMemo(() => {
     const stats = { Breakfast: 0, Lunch: 0, Dinner: 0, GrandTotal: 0 };
     
@@ -89,9 +114,9 @@ const Deliveries = () => {
         const planConfig = plans.find(p => p.id === ap.planId);
         const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
         
-        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        const isValidDay = weekdays.includes(dayOfWeek);
-        const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
+        const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
+        const isValidDay = weekdays.includes(targetDayOfWeek);
+        const isWithinRange = selectedDate >= ap.startDate && selectedDate <= ap.endDate;
         
         if (isWithinRange && isValidDay && !isPaused) {
           if (ap.mealTime === 'Breakfast') stats.Breakfast++;
@@ -103,9 +128,9 @@ const Deliveries = () => {
     });
 
     return stats;
-  }, [customers, plans, selectedBranch, todayStr, dayOfWeek]);
+  }, [customers, plans, selectedBranch, selectedDate, targetDayOfWeek]);
 
-  // --- DELIVERY BOY WISE WORKLOAD MATRIX WITH PLAN BREAKDOWN ---
+  // --- DELIVERY BOY WISE WORKLOAD MATRIX FOR SELECTED DATE ---
   const deliveryBoyMatrix = useMemo(() => {
     const filteredStaff = staff.filter(s => selectedBranch === 'All' || s.branchId === selectedBranch);
     
@@ -129,9 +154,9 @@ const Deliveries = () => {
           const planConfig = plans.find(p => p.id === ap.planId);
           const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
           
-          const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-          const isValidDay = weekdays.includes(dayOfWeek);
-          const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
+          const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
+          const isValidDay = weekdays.includes(targetDayOfWeek);
+          const isWithinRange = selectedDate >= ap.startDate && selectedDate <= ap.endDate;
           
           if (isWithinRange && isValidDay && !isPaused) {
             const session = ap.mealTime as 'Breakfast' | 'Lunch' | 'Dinner';
@@ -150,9 +175,9 @@ const Deliveries = () => {
       
       return boyWork;
     }).sort((a, b) => b.Total - a.Total);
-  }, [customers, plans, staff, selectedBranch, todayStr, dayOfWeek]);
+  }, [customers, plans, staff, selectedBranch, selectedDate, targetDayOfWeek]);
 
-  // 1. Filter customers scheduled for TODAY and current Meal Session (FOR EXISTING MODULES)
+  // 1. Filter customers scheduled for SELECTED DATE and current Meal Session
   const deliveriesToday = useMemo(() => {
     return customers.filter(c => {
       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
@@ -161,9 +186,9 @@ const Deliveries = () => {
         const planConfig = plans.find(p => p.id === ap.planId);
         const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
         
-        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        const isValidDay = weekdays.includes(dayOfWeek);
-        const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
+        const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
+        const isValidDay = weekdays.includes(targetDayOfWeek);
+        const isWithinRange = selectedDate >= ap.startDate && selectedDate <= ap.endDate;
         const matchesMeal = ap.mealTime === activeMealTab;
         
         return isWithinRange && isValidDay && !isPaused && matchesMeal;
@@ -171,9 +196,9 @@ const Deliveries = () => {
 
       return mealPlansToday.length > 0;
     });
-  }, [customers, plans, activeMealTab, selectedBranch, todayStr, dayOfWeek]);
+  }, [customers, plans, activeMealTab, selectedBranch, selectedDate, targetDayOfWeek]);
 
-  // Existing session metrics
+  // Session metrics for selected date
   const sessionMetrics = useMemo(() => {
     let totalBoxes = 0;
     let totalStarBoxes = 0;
@@ -181,14 +206,14 @@ const Deliveries = () => {
       const sessionPlans = (c.activePlans || []).filter((ap: any) => {
         const planConfig = plans.find(p => p.id === ap.planId);
         const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
-        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        return ap.mealTime === activeMealTab && weekdays.includes(dayOfWeek) && todayStr >= ap.startDate && todayStr <= ap.endDate && !isPaused;
+        const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
+        return ap.mealTime === activeMealTab && weekdays.includes(targetDayOfWeek) && selectedDate >= ap.startDate && selectedDate <= ap.endDate && !isPaused;
       });
       totalBoxes += sessionPlans.length;
       totalStarBoxes += sessionPlans.filter((p: any) => p.isStarred || (c.highlightMark && c.highlightMark !== 'None')).length;
     });
     return { customers: deliveriesToday.length, plans: totalBoxes, starPlans: totalStarBoxes };
-  }, [deliveriesToday, activeMealTab, plans, todayStr, dayOfWeek]);
+  }, [deliveriesToday, activeMealTab, plans, selectedDate, targetDayOfWeek]);
 
   const handleMoveOrder = async (customerId: string, direction: 'up' | 'down') => {
     if (!currentUser) return;
@@ -221,6 +246,57 @@ const Deliveries = () => {
     await batch.commit();
   };
 
+  // 1-Click Auto-Sort All Partner Routes to Shortest Order
+  const handleOptimizeAllRoutes = async () => {
+    if (!currentUser || deliveriesToday.length === 0) {
+      alert("No active deliveries to optimize for this date & session.");
+      return;
+    }
+    setIsOptimizingAll(true);
+    setOptimizeAllSuccess(null);
+
+    try {
+      const batch = writeBatch(db);
+      let updatedTotalStops = 0;
+      const eligibleStaff = staff.filter(s => selectedBranch === 'All' || s.branchId === selectedBranch);
+
+      eligibleStaff.forEach(boy => {
+        const boyStops = deliveriesToday.filter(c => c.deliveryBoyId === boy.id);
+        if (boyStops.length > 0) {
+          const branch = branches.find((b: any) => b.id === boy.branchId) || 
+                         branches.find((b: any) => b.id === selectedBranch) || 
+                         branches[0] || { name: 'Main Kitchen Hub' };
+          
+          const hub = {
+            name: branch.name || 'Kitchen Hub',
+            address: branch.hubAddress || `${branch.name || 'Kitchen Hub'}, ${branch.city || ''}`,
+            locationLink: branch.hubLocationLink || ''
+          };
+
+          const routeResult = optimizeRouteOrder(hub, boyStops);
+          routeResult.orderedStops.forEach((stop, index) => {
+            const custRef = doc(db, 'businesses', currentUser.uid, 'customers', stop.id);
+            batch.update(custRef, { routeOrder: index + 1 });
+            updatedTotalStops++;
+          });
+        }
+      });
+
+      if (updatedTotalStops > 0) {
+        await batch.commit();
+        setOptimizeAllSuccess(`✅ Sorted & saved ${updatedTotalStops} stops into shortest route sequence! Delivery apps updated.`);
+        setTimeout(() => setOptimizeAllSuccess(null), 5000);
+      } else {
+        alert("No assigned deliveries found to optimize. Please assign delivery partners first.");
+      }
+    } catch (err) {
+      console.error("Error optimizing all routes:", err);
+      alert("Failed to auto-sort routes. Please try again.");
+    } finally {
+      setIsOptimizingAll(false);
+    }
+  };
+
   const handleUpdateHubLocation = async (branchId: string, hubAddress: string, hubLocationLink: string) => {
     if (!currentUser || !branchId) return;
     await updateItem(currentUser.uid, 'branches', branchId, {
@@ -240,11 +316,11 @@ const Deliveries = () => {
       locationLink: branch.hubLocationLink || ''
     };
 
-    // Calculate shortest route metrics on the fly for WhatsApp
+    // Calculate shortest route metrics on the fly for WhatsApp using selectedDate
     const routeResult = optimizeRouteOrder(hub, boyCustomers);
     const whatsappMsg = formatWhatsAppOptimizedRoute(
       activeMealTab,
-      todayStr,
+      selectedDate,
       boy,
       routeResult
     );
@@ -297,11 +373,90 @@ const Deliveries = () => {
         </div>
       </div>
 
+      {/* 2. DATE SELECTOR & LOGISTICS CONTROL BAR */}
+      <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/80 p-3.5 sm:p-4 shadow-glass flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3.5">
+        
+        {/* Left: Quick Date Stepper & Picker */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center bg-slate-100/90 rounded-xl p-1 border border-slate-200/70 shadow-inner">
+            <button
+              onClick={() => handleShiftDate(-1)}
+              className="p-1.5 hover:bg-white rounded-lg text-slate-600 transition-colors cursor-pointer"
+              title="Previous Day"
+            >
+              <ChevronDown className="rotate-90" size={16} />
+            </button>
+            
+            <div className="flex items-center gap-2 px-3 py-1 bg-white rounded-lg border border-slate-200 shadow-2xs">
+              <Calendar size={15} className="text-primary-600" />
+              <input 
+                type="date"
+                value={selectedDate}
+                onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+                className="text-xs font-black text-slate-800 outline-none bg-transparent cursor-pointer"
+              />
+            </div>
+
+            <button
+              onClick={() => handleShiftDate(1)}
+              className="p-1.5 hover:bg-white rounded-lg text-slate-600 transition-colors cursor-pointer"
+              title="Next Day"
+            >
+              <ChevronDown className="-rotate-90" size={16} />
+            </button>
+          </div>
+
+          {/* Quick Date Presets */}
+          <div className="flex items-center gap-1.5 text-xs font-bold">
+            <button
+              onClick={() => setSelectedDate(getTodayStr())}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                isSelectedToday 
+                  ? 'bg-primary-600 text-white shadow-xs' 
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              Today
+            </button>
+            <span className="text-xs text-slate-600 font-semibold px-1 hidden sm:inline">
+              {new Date(selectedDate.replace(/-/g, '/')).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            </span>
+            {!isSelectedToday && (
+              <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                selectedDate < todayStr ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+              }`}>
+                {selectedDate < todayStr ? 'Past Date Record' : 'Future Scheduled Date'}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Right: 1-Click Auto-Sort All Partner Routes Button */}
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={handleOptimizeAllRoutes}
+            disabled={isOptimizingAll || deliveriesToday.length === 0}
+            className="flex-1 md:flex-none px-4 py-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-primary-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+            title="Sorts and re-orders customer sequence (#1, #2, #3...) for all delivery partners based on shortest round-trip path"
+          >
+            <Zap size={14} className="text-amber-300" />
+            <span>{isOptimizingAll ? 'Optimizing Routes...' : '⚡ Auto-Sort All Routes (Shortest Path)'}</span>
+          </button>
+        </div>
+      </div>
+
+      {optimizeAllSuccess && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-between animate-in fade-in">
+          <span>{optimizeAllSuccess}</span>
+          <button onClick={() => setOptimizeAllSuccess(null)} className="p-1 hover:bg-emerald-100 rounded-lg cursor-pointer"><X size={14} /></button>
+        </div>
+      )}
+
       {/* Main Tab Navigation */}
       <div className="flex items-center gap-2 p-1.5 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-2xl shadow-xs overflow-x-auto no-scrollbar">
         <button
           onClick={() => setMainTab('routes')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
             mainTab === 'routes'
               ? 'bg-slate-900 text-white shadow-md'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
@@ -313,7 +468,7 @@ const Deliveries = () => {
 
         <button
           onClick={() => setMainTab('boxes')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
             mainTab === 'boxes'
               ? 'bg-slate-900 text-white shadow-md'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
@@ -332,7 +487,7 @@ const Deliveries = () => {
 
         <button
           onClick={() => setMainTab('fleet')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
             mainTab === 'fleet'
               ? 'bg-slate-900 text-white shadow-md'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
@@ -356,7 +511,7 @@ const Deliveries = () => {
         <ReusableBoxTracker 
           customers={customers} 
           currentUser={currentUser} 
-          todayStr={todayStr} 
+          todayStr={selectedDate} 
         />
       )}
 
@@ -370,7 +525,7 @@ const Deliveries = () => {
           branches={branches}
           selectedBranch={selectedBranch}
           activeMealTab={activeMealTab}
-          todayStr={todayStr} 
+          todayStr={selectedDate} 
           onShareLink={(boy) => { setSelectedShareBoy(boy); setShareModalOpen(true); }}
         />
       )}
@@ -685,7 +840,7 @@ const Deliveries = () => {
                               const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
 
                               const logKey = `${c.id}_${activeMealTab}`;
-                              const logRecord = todayLogsMap[logKey];
+                              const logRecord = dateLogsMap[logKey];
                               const isDelivered = logRecord?.status === 'Delivered';
                               const boxCondition = logRecord?.boxStatus;
 
@@ -833,6 +988,7 @@ const Deliveries = () => {
           customersToday={optimizerModalData.customers}
           mealTime={activeMealTab}
           branch={optimizerModalData.branch}
+          dateStr={selectedDate}
           onApplyNewOrder={handleApplyOptimizedOrder}
           onUpdateHubLocation={handleUpdateHubLocation}
         />

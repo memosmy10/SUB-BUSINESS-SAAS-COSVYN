@@ -361,24 +361,77 @@ export const getCustomerUncollectedBoxesCount = (customer: GlobalCustomer): numb
   return customer.isActive ? 1 : 0;
 };
 
-export const getCustomerBoxHealth = (customer: GlobalCustomer) => {
-  const collections = Object.entries(customer.boxCollections || {}).map(([key, val]: [string, any]) => ({
-    key,
-    date: val.date || key.split('_')[0],
-    mealTime: val.mealTime || key.split('_')[1] || 'Lunch',
-    status: val.status,
-    notes: val.notes || val.issueNote || '',
-    boxTagOrNumber: val.boxTagOrNumber || '',
-    boxType: val.boxType || ''
-  }));
-  const clean = collections.filter(c => c.status === 'Collected Clean' || c.status === 'returned_clean').length;
-  const unclean = collections.filter(c => c.status === 'Collected Unclean' || c.status === 'unclean').length;
-  const damaged = collections.filter(c => c.status === 'Damaged / Missing Part' || c.status === 'damaged' || c.status === 'missing_part').length;
-  const notReturned = collections.filter(c => c.status === 'Not Returned' || c.status === 'not_returned').length;
+export const getCustomerBoxHealth = (customer: GlobalCustomer, deliveryLogs?: any[]) => {
+  const collectionMap = new Map<string, any>();
+
+  // 1. From customer's embedded boxCollections
+  Object.entries(customer?.boxCollections || {}).forEach(([key, val]: [string, any]) => {
+    const rawStatus = (val?.status || '').toString().trim();
+    collectionMap.set(key, {
+      key,
+      date: val?.date || key.split('_')[0] || '',
+      mealTime: val?.mealTime || key.split('_')[1] || 'Lunch',
+      status: rawStatus,
+      notes: val?.notes || val?.issueNote || '',
+      boxTagOrNumber: val?.boxTagOrNumber || '',
+      boxType: val?.boxType || ''
+    });
+  });
+
+  // 2. Merge from deliveryLogs (recorded by delivery boys in real-time)
+  if (Array.isArray(deliveryLogs) && customer?.id) {
+    deliveryLogs.forEach((log: any) => {
+      if (log.customerId === customer.id && log.boxStatus && log.boxStatus !== 'None' && log.boxStatus !== 'Pending') {
+        const logKey = `${log.date}_${log.mealTime || 'Lunch'}`;
+        if (!collectionMap.has(logKey)) {
+          collectionMap.set(logKey, {
+            key: logKey,
+            date: log.date,
+            mealTime: log.mealTime || 'Lunch',
+            status: log.boxStatus,
+            notes: log.boxNotes || '',
+            boxTagOrNumber: '',
+            boxType: log.boxType || ''
+          });
+        }
+      }
+    });
+  }
+
+  const collections = Array.from(collectionMap.values());
+
+  const clean = collections.filter(c => 
+    c.status === 'Collected' || 
+    c.status === 'Collected Clean' || 
+    c.status === 'returned_clean'
+  ).length;
+
+  const unclean = collections.filter(c => 
+    c.status === 'Dirty / Unwashed' || 
+    c.status === 'Collected Unclean' || 
+    c.status === 'unclean'
+  ).length;
+
+  const damaged = collections.filter(c => 
+    c.status === 'Damaged / Missing Parts' || 
+    c.status === 'Damaged / Missing Part' || 
+    c.status === 'damaged' || 
+    c.status === 'missing_part'
+  ).length;
+
+  const notReturned = collections.filter(c => 
+    c.status === 'Not Returned' || 
+    c.status === 'not_returned'
+  ).length;
+
   const damagedOrDirty = unclean + damaged;
-  const unreturned = notReturned;
+  // If owner adjusted customer.uncollectedBoxesCount, respect that as current pending unreturned count
+  const unreturned = typeof customer?.uncollectedBoxesCount === 'number'
+    ? Math.max(0, customer.uncollectedBoxesCount)
+    : notReturned;
+
   const totalCollected = clean;
-  const totalExpected = collections.length;
+  const totalExpected = Math.max(collections.length, totalCollected + damagedOrDirty + unreturned);
 
   return { 
     clean, 

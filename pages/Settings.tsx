@@ -4,7 +4,7 @@ import {
   Plus, Trash2, X, Store, Truck, Calendar, Loader2, Edit2, Check, Package, ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, deleteItem, updateItem } from '../services/dbService';
+import { useStreamCollection, addItem, deleteItem, updateItem, setItem } from '../services/dbService';
 import { INDIA_STATES, REUSABLE_BOX_TYPES } from '../services/store';
 
 // --- Types ---
@@ -66,12 +66,16 @@ const Settings = () => {
         isCustom: false
       });
     });
-    // Overlay or append Firestore custom types
-    dbBoxTypes.forEach(b => {
-      customMap.set(b.id, {
-        ...b,
-        isCustom: true
-      });
+    // Overlay or append Firestore custom types (or remove deleted ones)
+    dbBoxTypes.forEach((b: any) => {
+      if (b.isDeleted) {
+        customMap.delete(b.id);
+      } else {
+        customMap.set(b.id, {
+          ...b,
+          isCustom: true
+        });
+      }
     });
     return Array.from(customMap.values());
   }, [dbBoxTypes]);
@@ -122,13 +126,40 @@ const Settings = () => {
 
   const handleSaveBoxType = async (data: Omit<CustomBoxType, 'id'>) => {
     if(!currentUser) return;
-    if (editingItem && editingItem.isCustom) {
-      await updateItem(currentUser.uid, 'box_types', editingItem.id, data);
+    if (editingItem && editingItem.id) {
+      // Update by existing ID (covers both custom and overwritten default types)
+      await setItem(currentUser.uid, 'box_types', editingItem.id, { 
+        ...data, 
+        id: editingItem.id, 
+        isCustom: true,
+        isDeleted: false,
+        updatedAt: new Date().toISOString() 
+      });
     } else {
-      await addItem(currentUser.uid, 'box_types', { ...data, isCustom: true });
+      await addItem(currentUser.uid, 'box_types', { 
+        ...data, 
+        isCustom: true,
+        isDeleted: false,
+        createdAt: new Date().toISOString() 
+      });
     }
     setActiveModal(null);
     setEditingItem(null);
+  };
+
+  const handleDeleteBoxType = async (box: CustomBoxType) => {
+    if (!currentUser || !window.confirm(`Are you sure you want to delete "${box.name}"? This will remove it from future customer selections.`)) return;
+    try {
+      await setItem(currentUser.uid, 'box_types', box.id, {
+        id: box.id,
+        name: box.name,
+        isDeleted: true,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Error deleting box type:", err);
+      alert("Failed to delete box type.");
+    }
   };
 
   const handleDelete = async (collection: string, id: string) => {
@@ -729,15 +760,23 @@ const Settings = () => {
                     {box.description || '—'}
                   </td>
                   <td className="px-6 py-3.5 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {box.isCustom ? (
-                        <>
-                          <button onClick={() => handleOpenModal('boxType', box)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors" title="Edit"><Edit2 size={14}/></button>
-                          <button onClick={() => handleDelete('box_types', box.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors" title="Delete"><Trash2 size={14}/></button>
-                        </>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 italic px-2">Default</span>
-                      )}
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button 
+                        onClick={() => handleOpenModal('boxType', box)} 
+                        className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-semibold" 
+                        title={`Edit ${box.name}`}
+                      >
+                        <Edit2 size={14}/>
+                        <span className="hidden sm:inline">Edit</span>
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteBoxType(box)} 
+                        className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-semibold" 
+                        title={`Delete ${box.name}`}
+                      >
+                        <Trash2 size={14}/>
+                        <span className="hidden sm:inline">Delete</span>
+                      </button>
                     </div>
                   </td>
                 </tr>

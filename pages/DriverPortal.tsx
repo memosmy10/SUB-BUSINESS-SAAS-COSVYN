@@ -206,6 +206,17 @@ export const DriverPortal: React.FC = () => {
   const [selectedBoxStatus, setSelectedBoxStatus] = useState<BoxRecollectionStatus>('Collected');
   const [boxNotes, setBoxNotes] = useState('');
   const [showAllUnassigned, setShowAllUnassigned] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [highlightedStopId, setHighlightedStopId] = useState<string | null>(null);
+
+  const showToast = (msg: string, stopId?: string) => {
+    setToastMessage(msg);
+    if (stopId) setHighlightedStopId(stopId);
+    setTimeout(() => {
+      setToastMessage(null);
+      if (stopId) setHighlightedStopId(null);
+    }, 4500);
+  };
 
   const todayStr = getTodayStr();
   const dayOfWeek = new Date().getDay();
@@ -571,6 +582,9 @@ export const DriverPortal: React.FC = () => {
       return c;
     }));
 
+    setHighlightedStopId(null);
+    showToast(`✅ Box status recorded as "${status}". You can now mark order as delivered!`);
+
     if (bizId === 'demo') return;
 
     try {
@@ -673,9 +687,31 @@ export const DriverPortal: React.FC = () => {
   const handleToggleDelivered = async (stop: any) => {
     if (!bizId) return;
 
+    // 1. Shift check: Rider MUST start shift / punch in first
+    if (!isShiftActive) {
+      showToast("⚠️ Shift not started! Please tap 'Start Shift / Punch In' at the top of the screen before marking orders as delivered.", stop.customer.id);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     const logKey = stop.logKey;
     const currentStatus = stop.isDelivered ? 'Pending' : 'Delivered';
     const now = new Date();
+
+    // 2. Reusable box status check: If marking as Delivered, rider MUST first update the returned box status!
+    if (currentStatus === 'Delivered') {
+      const activeBoxStatus = deliveryLogs[logKey]?.boxStatus || stop.logRecord?.boxStatus;
+      const hasReusableBox = stop.primaryBoxType && stop.primaryBoxType !== 'None';
+      
+      const isBoxStatusRecorded = activeBoxStatus && 
+        activeBoxStatus !== 'Pending' && 
+        activeBoxStatus !== 'None';
+
+      if (hasReusableBox && !isBoxStatusRecorded) {
+        showToast("📦 Please update the returned box status (Clean, Unclean, Damaged, or Missing) below before marking this order as delivered!", stop.customer.id);
+        return;
+      }
+    }
 
     // Optimistic UI update
     setDeliveryLogs(prev => ({
@@ -709,7 +745,7 @@ export const DriverPortal: React.FC = () => {
         status: currentStatus,
         deliveredAt: currentStatus === 'Delivered' ? now.toISOString() : null,
         reusableBoxEnabled: stop.customer.reusableBoxEnabled || false,
-        boxType: stop.customer.reusableBoxType || 'None',
+        boxType: stop.customer.reusableBoxType || stop.primaryBoxType || 'None',
         isDay2Plus: stop.isDay2Plus,
         boxStatus: stop.logRecord?.boxStatus || (stop.customer.reusableBoxEnabled && stop.isDay2Plus ? 'Pending' : 'None'),
         boxNotes: stop.logRecord?.boxNotes || '',
@@ -953,6 +989,22 @@ export const DriverPortal: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 max-w-xl w-full mx-auto p-4 space-y-4">
         
+        {/* Floating In-App Toast Message */}
+        {toastMessage && (
+          <div className="sticky top-16 z-50 p-3.5 bg-amber-400 text-slate-950 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border-2 border-amber-300 font-bold text-xs animate-in slide-in-from-top-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base shrink-0">🔔</span>
+              <span>{toastMessage}</span>
+            </div>
+            <button 
+              onClick={() => setToastMessage(null)}
+              className="p-1 hover:bg-black/10 rounded-lg text-slate-950 shrink-0"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
         {/* Attendance Banner when not punched in */}
         {!isShiftActive && (
           <div className="glass-card bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl flex items-center justify-between gap-3 animate-in fade-in">
@@ -1106,17 +1158,58 @@ export const DriverPortal: React.FC = () => {
                   </div>
 
                   {/* Delivery Status Checkbox */}
-                  <button
-                    onClick={() => handleToggleDelivered(stop)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm ${
-                      isDelivered 
-                        ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-400/50' 
-                        : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/20'
-                    }`}
-                  >
-                    <CheckCircle2 size={15} className={isDelivered ? 'text-slate-950' : 'text-slate-400'} />
-                    <span>{isDelivered ? 'Delivered ✅' : 'Mark Done'}</span>
-                  </button>
+                  {(() => {
+                    const hasReusableBox = primaryBoxType && primaryBoxType !== 'None';
+                    const isBoxStatusRecorded = boxStatus && boxStatus !== 'Pending' && boxStatus !== 'None';
+                    const isBlockedByShift = !isShiftActive;
+                    const isBlockedByBox = !isDelivered && hasReusableBox && !isBoxStatusRecorded;
+
+                    return (
+                      <button
+                        onClick={() => handleToggleDelivered(stop)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm ${
+                          isDelivered 
+                            ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-400/50' 
+                            : isBlockedByShift
+                              ? 'bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10'
+                              : isBlockedByBox
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                                : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/20'
+                        }`}
+                        title={
+                          isBlockedByShift
+                            ? 'Punch in at top of screen before marking delivered'
+                            : isBlockedByBox
+                              ? 'Select returned box condition below before marking delivered'
+                              : isDelivered
+                                ? 'Click to toggle back to pending'
+                                : 'Click to mark delivered'
+                        }
+                      >
+                        {isBlockedByShift ? (
+                          <>
+                            <span className="text-xs">🔒</span>
+                            <span>Punch In First</span>
+                          </>
+                        ) : isDelivered ? (
+                          <>
+                            <CheckCircle2 size={15} className="text-slate-950" />
+                            <span>Delivered ✅</span>
+                          </>
+                        ) : isBlockedByBox ? (
+                          <>
+                            <span className="text-xs">📦</span>
+                            <span>Update Box First</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 size={15} className="text-slate-400" />
+                            <span>Mark Done</span>
+                          </>
+                        )}
+                      </button>
+                    );
+                  })()}
                 </div>
 
                 {/* Customer Name */}
@@ -1222,7 +1315,11 @@ export const DriverPortal: React.FC = () => {
                 </div>
 
                 {/* REUSABLE BOX RECOLLECTION / RETURN SECTION (Always accessible) */}
-                <div className="mt-2.5 pt-2.5 border-t border-white/10 space-y-2">
+                <div className={`mt-2.5 pt-2.5 border-t border-white/10 space-y-2 p-2.5 rounded-xl transition-all duration-300 ${
+                  highlightedStopId === customer.id 
+                    ? 'bg-amber-500/20 border-2 border-amber-400 ring-4 ring-amber-400/40 shadow-xl' 
+                    : ''
+                }`}>
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1.5">
                       <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px]">

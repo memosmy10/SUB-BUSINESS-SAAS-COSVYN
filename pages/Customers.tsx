@@ -45,6 +45,7 @@ const Customers = () => {
   const { data: plans = [], loading: l3 } = useStreamCollection<any>('plans');
   const { data: staff = [], loading: l4 } = useStreamCollection<any>('staff');
   const { data: dbBoxTypes = [] } = useStreamCollection<any>('box_types');
+  const { data: deliveryLogs = [] } = useStreamCollection<any>('delivery_logs');
 
   const isLoading = l1 || l2 || l3 || l4;
 
@@ -520,7 +521,7 @@ const Customers = () => {
                         {isExpanded && (
                           <tr>
                             <td colSpan={10} className="p-0 bg-slate-50/50 border-b border-slate-200">
-                               <CustomerExpansion customer={c} plans={plans} onClose={() => toggleRow(c.id)} />
+                               <CustomerExpansion customer={c} plans={plans} deliveryLogs={deliveryLogs} onClose={() => toggleRow(c.id)} />
                             </td>
                           </tr>
                         )}
@@ -630,7 +631,7 @@ const StatusFilter = ({ value, onChange }: { value: string, onChange: (val: stri
   );
 };
 
-const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCustomer, plans: any[], onClose: () => void }) => {
+const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { customer: GlobalCustomer, plans: any[], deliveryLogs?: any[], onClose: () => void }) => {
   const { currentUser } = useAuth();
   const [isLoggingBox, setIsLoggingBox] = useState(false);
   const [boxLogForm, setBoxLogForm] = useState({
@@ -642,7 +643,7 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
   });
   const [savingBoxLog, setSavingBoxLog] = useState(false);
 
-  const boxHealth = getCustomerBoxHealth(customer);
+  const boxHealth = getCustomerBoxHealth(customer, deliveryLogs);
   const reusablePlans = (customer.activePlans || []).filter(p => p.reusableBoxType && p.reusableBoxType !== 'None');
   const hasReusableBoxes = reusablePlans.length > 0 || (customer.pastPlans || []).some(p => p.reusableBoxType && p.reusableBoxType !== 'None');
 
@@ -662,7 +663,13 @@ const CustomerExpansion = ({ customer, plans, onClose }: { customer: GlobalCusto
           recordedAt: new Date().toISOString()
         }
       };
+      const isClean = boxLogForm.status === 'returned_clean';
+      const isCollected = isClean || boxLogForm.status === 'unclean';
+      const prevCount = typeof customer.uncollectedBoxesCount === 'number' ? customer.uncollectedBoxesCount : 1;
+      const newCount = isCollected ? Math.max(0, prevCount - 1) : prevCount;
+
       await updateItem(currentUser.uid, 'customers', customer.id, {
+        uncollectedBoxesCount: newCount,
         boxCollections: updatedCollections
       });
       setIsLoggingBox(false);

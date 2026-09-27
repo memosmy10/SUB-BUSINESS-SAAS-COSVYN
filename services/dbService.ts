@@ -79,6 +79,19 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
   }
 };
 
+export const setItem = async (userId: string, collectionName: string, docId: string, data: any) => {
+  try {
+    const docRef = doc(db, 'businesses', userId, collectionName, docId);
+    await setDoc(docRef, {
+      ...data,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    console.error(`Error setting ${collectionName}/${docId}:`, error);
+    throw error;
+  }
+};
+
 export const deleteItem = async (userId: string, collectionName: string, docId: string) => {
   try {
     const docRef = doc(db, 'businesses', userId, collectionName, docId);

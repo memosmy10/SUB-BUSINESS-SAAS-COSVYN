@@ -17,6 +17,7 @@ interface RouteOptimizerModalProps {
   customersToday: any[];
   mealTime: 'Breakfast' | 'Lunch' | 'Dinner';
   branch: any;
+  dateStr?: string;
   onApplyNewOrder: (orderedCustomerIds: string[]) => Promise<void>;
   onUpdateHubLocation?: (branchId: string, hubAddress: string, hubLocationLink: string) => Promise<void>;
 }
@@ -28,6 +29,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   customersToday,
   mealTime,
   branch,
+  dateStr,
   onApplyNewOrder,
   onUpdateHubLocation
 }) => {
@@ -37,6 +39,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [hubAddressInput, setHubAddressInput] = useState('');
   const [hubLinkInput, setHubLinkInput] = useState('');
   const [isSavingHub, setIsSavingHub] = useState(false);
+  const [recalcCount, setRecalcCount] = useState(0);
 
   // Sync Hub Form when branch changes
   useEffect(() => {
@@ -56,9 +59,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Compute Optimized Route
   const routeResult: OptimizedRouteResult = useMemo(() => {
     return optimizeRouteOrder(currentHub, customersToday);
-  }, [currentHub, customersToday]);
+    // recalcCount triggers re-computation if user clicks recalculate
+  }, [currentHub, customersToday, recalcCount]);
 
-  const todayDateStr = new Date().toISOString().split('T')[0];
+  const todayDateStr = dateStr || new Date().toISOString().split('T')[0];
 
   const handleApplyOrder = async () => {
     if (routeResult.orderedStops.length === 0) return;
@@ -133,7 +137,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-medium mt-0.5">
-                Round-Trip Route: <strong className="text-white font-bold">{currentHub.name}</strong> ➔ {routeResult.orderedStops.length} Orders ➔ Return to Hub
+                Round-Trip Route: <strong className="text-white font-bold">{routeResult.hub.name}</strong> ➔ {routeResult.orderedStops.length} Orders ➔ Return to Hub
               </p>
             </div>
           </div>
@@ -193,16 +197,66 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   <label className="text-[10px] font-black uppercase text-slate-500 mb-1 block">Hub Address</label>
                   <input 
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-primary-500"
-                    placeholder="e.g. Shop 4, High Street, Mumbai"
+                    placeholder="e.g. #14, 100 Feet Road, Indiranagar, Bengaluru"
                     value={hubAddressInput}
                     onChange={e => setHubAddressInput(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase text-slate-500 mb-1 block">Google Maps Link or GPS Coordinates</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-black uppercase text-slate-500 block">Google Maps Link or GPS Coordinates</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (navigator.geolocation) {
+                            navigator.geolocation.getCurrentPosition(
+                              (pos) => {
+                                const latLng = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+                                setHubLinkInput(latLng);
+                                if (!hubAddressInput || hubAddressInput.includes('Mumbai')) {
+                                  setHubAddressInput(`Kitchen Hub (${latLng})`);
+                                }
+                              },
+                              (err) => alert("Could not fetch device location: " + err.message)
+                            );
+                          }
+                        }}
+                        className="text-[10px] font-bold text-primary-600 hover:text-primary-800 bg-primary-50 hover:bg-primary-100 px-2 py-0.5 rounded transition-colors"
+                      >
+                        📍 Use My Live GPS
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Find centroid from customers today
+                          const coordsList: { lat: number; lng: number }[] = [];
+                          customersToday.forEach(c => {
+                            const parsed = extractCoordinates(c.locationLink) || extractCoordinates(c.address);
+                            if (parsed) coordsList.push(parsed);
+                          });
+                          if (coordsList.length > 0) {
+                            const avgLat = coordsList.reduce((sum, c) => sum + c.lat, 0) / coordsList.length;
+                            const avgLng = coordsList.reduce((sum, c) => sum + c.lng, 0) / coordsList.length;
+                            const latLng = `${avgLat.toFixed(6)}, ${avgLng.toFixed(6)}`;
+                            setHubLinkInput(latLng);
+                            if (!hubAddressInput || hubAddressInput.includes('Mumbai')) {
+                              setHubAddressInput(`Bengaluru Kitchen Hub (${latLng})`);
+                            }
+                          } else {
+                            setHubLinkInput('12.9716, 77.5946');
+                            setHubAddressInput('Bengaluru Central Kitchen Hub');
+                          }
+                        }}
+                        className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded transition-colors"
+                      >
+                        📍 Align to Customer Orders
+                      </button>
+                    </div>
+                  </div>
                   <input 
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-primary-500"
-                    placeholder="Paste Google Maps URL or 19.0760, 72.8777"
+                    placeholder="Paste Google Maps URL or 12.9716, 77.5946"
                     value={hubLinkInput}
                     onChange={e => setHubLinkInput(e.target.value)}
                   />
@@ -226,9 +280,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             ) : (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-slate-50 p-3.5 rounded-xl border border-slate-100">
                 <div>
-                  <p className="font-bold text-slate-800">{currentHub.address}</p>
-                  <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate max-w-md">
-                    {currentHub.locationLink || 'No Google Maps link entered (Using City Center)'}
+                  <p className="font-bold text-slate-800">{routeResult.hub.address || currentHub.address}</p>
+                  <p className="text-[10px] text-slate-500 font-mono mt-0.5 truncate max-w-md">
+                    {currentHub.locationLink || (routeResult.hub.lat ? `Hub GPS Pin: ${routeResult.hub.lat.toFixed(5)}, ${routeResult.hub.lng.toFixed(5)}` : 'City Center Hub')}
                   </p>
                 </div>
                 {currentHub.locationLink && (
@@ -284,25 +338,36 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 </p>
               </div>
 
-              <button
-                onClick={handleApplyOrder}
-                disabled={isApplying || appliedSuccess}
-                className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
-                  appliedSuccess 
-                    ? 'bg-emerald-500 text-white' 
-                    : 'bg-white text-slate-900 hover:bg-slate-100 active:scale-95 shadow-md'
-                }`}
-              >
-                {appliedSuccess ? (
-                  <>
-                    <CheckCircle2 size={16} /> Sequence Saved!
-                  </>
-                ) : (
-                  <>
-                    <Save size={16} /> {isApplying ? 'Applying Sequence...' : 'Save Sequence as Default'}
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRecalcCount(prev => prev + 1)}
+                  className="px-3.5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  title="Re-run shortest route optimizer calculation"
+                >
+                  <RefreshCw size={14} className={recalcCount > 0 ? "animate-spin-once" : ""} /> Re-calculate
+                </button>
+
+                <button
+                  onClick={handleApplyOrder}
+                  disabled={isApplying || appliedSuccess}
+                  className={`px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    appliedSuccess 
+                      ? 'bg-emerald-500 text-white' 
+                      : 'bg-white text-slate-900 hover:bg-slate-100 active:scale-95 shadow-md'
+                  }`}
+                >
+                  {appliedSuccess ? (
+                    <>
+                      <CheckCircle2 size={16} /> Sequence Saved!
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} /> {isApplying ? 'Applying Sequence...' : 'Save Sequence as Default'}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/10">

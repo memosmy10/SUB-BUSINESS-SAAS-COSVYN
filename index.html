@@ -3,6 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Circular structure protection for AI Studio dev wrapper and Firestore events
+      (function() {
+        var origStringify = JSON.stringify;
+        JSON.stringify = function(value, replacer, space) {
+          try {
+            return origStringify(value, replacer, space);
+          } catch (err) {
+            if (err && (err.message || '').indexOf('circular') !== -1) {
+              var seen = new WeakSet();
+              return origStringify(value, function(k, v) {
+                if (typeof v === 'object' && v !== null) {
+                  if (seen.has(v)) return '[Circular]';
+                  seen.add(v);
+                }
+                if (typeof replacer === 'function') return replacer.call(this, k, v);
+                return v;
+              }, space);
+            }
+            throw err;
+          }
+        };
+      })();
+    </script>
     <title>ScaleKitchen – SaaS for Subscription Meal Businesses</title>
     <meta name="description" content="A smart SaaS platform built for meal subscription businesses to manage customers, deliveries, payments, expenses, and analytics effortlessly." />
     <meta property="og:title" content="ScaleKitchen – SaaS for Subscription Meal Businesses" />

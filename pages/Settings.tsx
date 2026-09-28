@@ -184,10 +184,22 @@ const Settings = () => {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const result = event.target?.result as string;
       if (result) {
         setLogoUrl(result);
+        if (currentUser) {
+          try {
+            await updateDoc(doc(db, 'businesses', currentUser.uid), {
+              logoUrl: result,
+              updatedAt: new Date().toISOString()
+            });
+            setBrandSavedSuccess(true);
+            setTimeout(() => setBrandSavedSuccess(false), 3500);
+          } catch (err) {
+            console.warn("Auto-syncing brand logo to business doc:", err);
+          }
+        }
       }
     };
     reader.readAsDataURL(file);

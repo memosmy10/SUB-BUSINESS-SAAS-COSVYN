@@ -5,7 +5,7 @@ import {
   Sparkles, Layers, RefreshCw, ChevronRight, Menu, X,
   LayoutDashboard, UtensilsCrossed, Truck, Users, FileText, 
   ShoppingBag, Archive, MessageSquare, DollarSign, Receipt, 
-  CreditCard, BarChart3, Settings as SettingsIcon, User, HelpCircle
+  CreditCard, BarChart3, Settings as SettingsIcon, User, HelpCircle, Zap
 } from 'lucide-react';
 import { db, auth } from '../services/firebase';
 import { 
@@ -583,6 +583,14 @@ export const ManagerPortal: React.FC = () => {
               </button>
             );
           })}
+
+          <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 px-2">
+            <div className="flex items-center gap-1.5 font-bold text-slate-700">
+              <Zap size={13} className="text-primary-600 fill-primary-600" />
+              <span>ScaleKitchen</span>
+            </div>
+            <span className="text-[10px] text-slate-400 font-medium">Ops Portal</span>
+          </div>
         </aside>
 
         {/* Mobile Navigation Drawer */}
@@ -629,7 +637,14 @@ export const ManagerPortal: React.FC = () => {
                 })}
               </div>
 
-              <div className="pt-3 border-t border-slate-100">
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                    <Zap size={13} className="text-primary-600 fill-primary-600" />
+                    <span>ScaleKitchen</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">Suite</span>
+                </div>
                 <button
                   onClick={handleManagerLogout}
                   className="w-full py-2 bg-rose-50 text-rose-600 rounded-xl text-xs font-bold flex items-center justify-center gap-2"

@@ -335,58 +335,80 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         {showExpiryWarning && (
-          <div className={`${isFreeTrial ? 'bg-emerald-600/95' : 'bg-red-600/95'} backdrop-blur-md text-white text-xs sm:text-sm font-semibold py-2 px-3 sm:px-4 z-40 flex flex-wrap items-center justify-center gap-2 sm:gap-3 shadow-sm animate-in slide-in-from-top-full duration-500`}>
-            {isFreeTrial ? <Zap size={15} /> : <AlertTriangle size={15} />}
-            <span className="text-center">{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days. Subscribe to keep full access.` : `Your subscription expires in ${daysToExpiry} days. Renew now to avoid interruption.`}</span>
-            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-3 py-1 rounded-full text-xs font-bold transition-transform active:scale-95 shadow-xs shrink-0">
+          <div className={`${isFreeTrial ? 'bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 border-emerald-900' : 'bg-gradient-to-r from-red-600 via-rose-600 to-red-700 border-red-800'} border-b text-white text-xs sm:text-sm font-semibold py-2.5 px-3 sm:px-4 z-40 flex flex-wrap items-center justify-center gap-2 sm:gap-3 shadow-md animate-in slide-in-from-top-full duration-300`}>
+            {isFreeTrial ? <Zap size={16} className="text-emerald-200 fill-emerald-200" /> : <AlertTriangle size={16} className="text-amber-200" />}
+            <span className="text-center drop-shadow-xs">{isFreeTrial ? `Your Free Trial ends in ${daysToExpiry} days. Subscribe to keep full access.` : `Your subscription expires in ${daysToExpiry} days. Renew now to avoid interruption.`}</span>
+            <button onClick={() => navigate('/app/profile')} className="bg-white text-slate-900 px-3.5 py-1 rounded-full text-xs font-bold transition-all hover:bg-slate-100 active:scale-95 shadow-sm shrink-0">
               {isFreeTrial ? 'Subscribe Now' : 'Renew Plan'}
             </button>
           </div>
         )}
         
-        <header className="h-12 bg-white/80 backdrop-blur-xl border-b border-white/80 shadow-xs flex items-center justify-between px-3.5 md:px-6 z-30 shrink-0">
-           <button 
-             onClick={() => setIsSidebarOpen(true)} 
-             className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-white/90 rounded-lg border border-transparent hover:border-slate-200/60 transition-all shadow-xs"
-             aria-label="Open navigation menu"
-           >
-             <Menu size={18} />
-           </button>
+        <header className="h-13 bg-white border-b border-slate-200 shadow-xs flex items-center justify-between px-3.5 md:px-6 z-30 shrink-0">
+           <div className="flex items-center gap-2 sm:gap-3">
+             <button 
+               onClick={() => setIsSidebarOpen(true)} 
+               className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-200 transition-all shadow-xs"
+               aria-label="Open navigation menu"
+             >
+               <Menu size={18} />
+             </button>
+
+             {/* ScaleKitchen Platform Identity Brand */}
+             <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+               <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-primary-600 via-primary-500 to-indigo-600 text-white flex items-center justify-center shadow-xs">
+                 <Zap size={14} fill="currentColor" />
+               </div>
+               <div className="flex flex-col text-left">
+                 <div className="flex items-center gap-1.5">
+                   <span className="text-xs sm:text-sm font-black tracking-tight text-slate-900 font-display leading-tight">ScaleKitchen</span>
+                   <span className="hidden sm:inline-block text-[9px] font-bold uppercase tracking-wider bg-primary-50 text-primary-700 border border-primary-200 px-1 py-0.2 rounded">OS</span>
+                 </div>
+                 <span className="hidden sm:block text-[9px] text-slate-400 font-medium leading-none">Meal Subscription Platform</span>
+               </div>
+             </div>
+           </div>
            
            <div className="flex items-center gap-2 md:gap-3 ml-auto">
               <div className="relative">
                 <button 
                   onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} 
-                  className="p-1.5 text-slate-600 hover:text-primary-600 hover:bg-white/80 rounded-lg border border-transparent hover:border-slate-200/60 relative transition-all"
+                  className={`p-2 text-slate-600 hover:text-primary-600 rounded-xl border transition-all ${isNotificationsOpen ? 'bg-primary-50 text-primary-600 border-primary-300' : 'bg-white hover:bg-slate-50 border-slate-200'}`}
                   aria-label="View notifications"
                 >
                    <Bell size={17} />
                    {expiringCustomers.length > 0 && (
-                     <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border-2 border-white ring-1 ring-red-400" />
+                     <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white ring-1 ring-red-400 animate-pulse" />
                    )}
                 </button>
                 {isNotificationsOpen && (
                    <>
-                    {/* Fixed Backdrop on mobile and click-outside for desktop */}
+                    {/* Dark Backdrop dimming background so notification is 100% focused and legible */}
                     <div 
-                      className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-xs sm:bg-transparent" 
+                      className="fixed inset-0 z-40 bg-slate-950/50 transition-opacity" 
                       onClick={() => setIsNotificationsOpen(false)} 
                     />
                     
-                    {/* Responsive Modal/Popup: fits perfectly on mobile view without overflowing */}
-                    <div className="fixed inset-x-2.5 top-14 sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 max-h-[82vh] sm:max-h-[500px] bg-white/98 backdrop-blur-2xl border border-slate-200/90 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                      <div className="p-3.5 sm:p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/90 shrink-0">
-                        <div>
-                          <h4 className="font-bold text-slate-900 text-sm font-display">Expiring Subscriptions</h4>
-                          <p className="text-[11px] text-slate-500">Upcoming renewals needed</p>
+                    {/* Solid Opaque Notification Popup - Zero transparent glassmorphism for crystal clarity */}
+                    <div className="fixed inset-x-3 top-16 sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[420px] max-h-[85vh] sm:max-h-[520px] bg-white border-2 border-slate-300 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden ring-1 ring-slate-900/15 animate-in fade-in zoom-in-95 duration-200">
+                      {/* High-Contrast Header */}
+                      <div className="p-4 bg-slate-900 text-white flex justify-between items-center border-b border-slate-800 shrink-0">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                            <Bell size={16} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-white text-sm font-display tracking-tight">Expiring & Concluded Plans</h4>
+                            <p className="text-[11px] text-slate-300">Customer subscription renewals</p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs bg-red-50 text-red-600 border border-red-200/60 px-2 py-0.5 rounded-full font-bold">
-                            {expiringCustomers.length} due
+                          <span className="text-xs bg-rose-600 text-white font-extrabold px-2.5 py-0.5 rounded-full shadow-xs">
+                            {expiringCustomers.length} Due
                           </span>
                           <button 
                             onClick={() => setIsNotificationsOpen(false)}
-                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition-colors"
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                             aria-label="Close notifications"
                           >
                             <X size={16} />
@@ -394,52 +416,65 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                         </div>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto divide-y divide-slate-100 no-scrollbar">
+                      {/* Content List with Pure Solid White Background */}
+                      <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white no-scrollbar">
                         {expiringCustomers.length === 0 ? (
-                          <div className="p-10 text-center text-slate-400 flex flex-col items-center">
-                            <CheckCircle size={36} className="mb-2 text-emerald-500/60" />
-                            <p className="text-xs font-semibold text-slate-600">All subscriptions are up to date</p>
-                            <p className="text-[11px] text-slate-400 mt-0.5">No renewals due in the next 10 days</p>
+                          <div className="p-10 text-center text-slate-400 flex flex-col items-center bg-white">
+                            <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center mb-3">
+                              <CheckCircle size={28} />
+                            </div>
+                            <p className="text-sm font-bold text-slate-800">All Subscriptions Active</p>
+                            <p className="text-xs text-slate-500 mt-1">No customer meal plans expiring in the next 10 days.</p>
                           </div>
                         ) : expiringCustomers.map((cust: any) => {
-                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Plan';
-                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${planName}) is scheduled to conclude on ${cust.endDate}. We'd love to continue serving you. Please let us know if you'd like to renew!`;
+                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Meal Plan';
+                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${planName}) is scheduled to conclude on ${cust.endDate}. We would love to continue delivering fresh meals to you! Please reply to renew your plan.`;
                           const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
                           
                           return (
-                            <div key={cust.id} className="p-3.5 sm:p-4 hover:bg-slate-50/70 transition-colors">
-                              <div className="flex justify-between items-start gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <h5 className="font-semibold text-slate-900 text-sm truncate">{cust.name}</h5>
-                                  <p className="text-slate-400 font-mono text-xs mt-0.5">{cust.mobile}</p>
+                            <div key={cust.id} className="p-4 bg-white hover:bg-slate-50 transition-colors">
+                              <div className="flex justify-between items-start gap-3">
+                                <div className="min-w-0 flex-1 text-left">
+                                  <h5 className="font-bold text-slate-900 text-sm truncate">{cust.name}</h5>
+                                  <p className="text-slate-600 font-mono text-xs mt-0.5">{cust.mobile || 'No contact'}</p>
                                 </div>
                                 <div className="flex flex-col items-end gap-1.5 shrink-0">
-                                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                                  <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-md shadow-xs ${
                                     cust.realDaysLeft <= 0 
-                                      ? 'bg-rose-50 text-rose-600 border border-rose-200' 
+                                      ? 'bg-rose-600 text-white' 
                                       : cust.realDaysLeft <= 3
-                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                        : 'bg-blue-50 text-blue-600 border border-blue-200/70'
+                                        ? 'bg-amber-500 text-white' 
+                                        : 'bg-indigo-600 text-white'
                                   }`}>
                                     {cust.realDaysLeft <= 0 ? 'Ending Today' : `${cust.realDaysLeft} days left`}
                                   </span>
                                   <div className="flex gap-1.5">
-                                    <a href={whatsappLink} target="_blank" rel="noreferrer" title="Chat on WhatsApp" className="w-7 h-7 sm:w-8 sm:h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center border border-emerald-200/60 hover:bg-emerald-100 transition-colors">
-                                      <MessageSquare size={13} />
+                                    <a 
+                                      href={whatsappLink} 
+                                      target="_blank" 
+                                      rel="noreferrer" 
+                                      title="Chat on WhatsApp" 
+                                      className="w-8 h-8 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center justify-center shadow-xs transition-colors"
+                                    >
+                                      <MessageSquare size={14} />
                                     </a>
-                                    <a href={`tel:${cust.mobile}`} title="Call customer" className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center border border-blue-200/60 hover:bg-blue-100 transition-colors">
-                                      <Phone size={13} />
+                                    <a 
+                                      href={`tel:${cust.mobile}`} 
+                                      title="Call customer" 
+                                      className="w-8 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center shadow-xs transition-colors"
+                                    >
+                                      <Phone size={14} />
                                     </a>
                                   </div>
                                 </div>
                               </div>
-                              <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-slate-100/60">
-                                <span className="text-xs font-medium text-slate-600 bg-slate-100/70 px-2 py-0.5 rounded-md truncate max-w-[160px]">
+                              <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-slate-100">
+                                <span className="text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md truncate max-w-[180px]">
                                   {planName}
                                 </span>
                                 <button 
                                   onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} 
-                                  className="text-primary-600 hover:text-primary-700 font-semibold text-xs flex items-center gap-1 transition-colors shrink-0"
+                                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs px-2.5 py-1 rounded-lg flex items-center gap-1 transition-colors shrink-0"
                                 >
                                   Renew Plan <ArrowRight size={13} />
                                 </button>
@@ -447,6 +482,17 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                             </div>
                           );
                         })}
+                      </div>
+
+                      {/* Solid Footer */}
+                      <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                        <span className="text-slate-500 text-[11px]">Powered by ScaleKitchen Notifications</span>
+                        <button 
+                          onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }}
+                          className="text-primary-700 hover:text-primary-800 font-bold hover:underline"
+                        >
+                          View All Customers →
+                        </button>
                       </div>
                     </div>
                    </>

@@ -2,14 +2,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
   User, Building, CreditCard, Shield, CheckCircle, AlertCircle, 
-  Globe, Rocket, Monitor, LayoutTemplate, ExternalLink, X, Zap, Loader2, Tag, Lock, Receipt, Calendar
+  Globe, Rocket, Monitor, LayoutTemplate, ExternalLink, X, Zap, Loader2, Tag, Lock, Receipt, Calendar, Upload
 } from 'lucide-react';
 import { 
   INITIAL_BUSINESS_PROFILE, INDIA_STATES, BusinessProfile, getDaysDifference 
 } from '../services/store';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { calculateEffectivePrice } from '../services/saasStore';
 import { useGlobalPricing, useStreamCollection, addItem } from '../services/dbService';
 import { handleRazorpayPayment } from '../services/razorpayService';
@@ -30,39 +30,60 @@ const Profile = () => {
     new Date(b.date).getTime() - new Date(a.date).getTime()
   );
 
-  // FETCH PROFILE
+  // FETCH PROFILE & REAL-TIME SYNC
   useEffect(() => {
-    const fetchProfile = async () => {
-      if (!currentUser) return;
-      try {
-        const docRef = doc(db, 'businesses', currentUser.uid);
-        const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-          const data = docSnap.data() as BusinessProfile;
-          setProfile(data);
-          Object.assign(INITIAL_BUSINESS_PROFILE, data);
-        } else {
-          const newProfile = {
-            ...INITIAL_BUSINESS_PROFILE,
-            email: currentUser.email || '',
-            ownerName: currentUser.displayName || '',
-          };
-          await setDoc(docRef, newProfile);
-          setProfile(newProfile);
-        }
-      } catch (err) {
-        console.error("Error fetching profile:", err);
-      } finally {
-        setLoading(false);
+    if (!currentUser) {
+      setLoading(false);
+      return;
+    }
+    const docRef = doc(db, 'businesses', currentUser.uid);
+    const unsub = onSnapshot(docRef, async (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as BusinessProfile;
+        setProfile(data);
+        setFormData(prev => ({
+          ...data,
+          // if currently editing, preserve form field changes unless uninitialized
+          ...(isEditing ? {} : data)
+        }));
+        Object.assign(INITIAL_BUSINESS_PROFILE, data);
+      } else {
+        const newProfile = {
+          ...INITIAL_BUSINESS_PROFILE,
+          email: currentUser.email || '',
+          ownerName: currentUser.displayName || '',
+        };
+        await setDoc(docRef, newProfile);
+        setProfile(newProfile);
+        setFormData(newProfile);
       }
-    };
+      setLoading(false);
+    }, (err) => {
+      console.error("Error fetching profile real-time:", err);
+      setLoading(false);
+    });
 
-    fetchProfile();
-  }, [currentUser]);
+    return () => unsub();
+  }, [currentUser, isEditing]);
 
   // Days left helper
   const daysToExpiry = getDaysDifference(new Date().toISOString().split('T')[0], profile.planExpiryDate);
+
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 1.5 * 1024 * 1024) {
+        alert("Please upload an image smaller than 1.5 MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        setFormData(prev => ({ ...prev, logoUrl: result }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSave = async () => {
     if (!currentUser) return;
@@ -78,6 +99,7 @@ const Profile = () => {
 
     const updatedProfile = {
       ...formData,
+      logoUrl: formData.logoUrl || profile.logoUrl || '',
       isProfileComplete: isComplete
     };
 
@@ -88,7 +110,7 @@ const Profile = () => {
       setProfile(updatedProfile);
       Object.assign(INITIAL_BUSINESS_PROFILE, updatedProfile);
       setIsEditing(false);
-      alert("Profile Updated!");
+      alert("Profile and brand logo updated successfully!");
     } catch (e) {
       console.error("Error saving profile:", e);
       alert("Failed to save changes.");
@@ -213,12 +235,38 @@ const Profile = () => {
             
             <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                <div className="md:col-span-2 flex items-center gap-4 mb-2">
-                  <div className="w-20 h-20 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold text-2xl border-4 border-white shadow-md uppercase">
-                     {profile.businessName ? profile.businessName.charAt(0) : 'B'}
+                  <div className="relative group shrink-0">
+                     {(formData.logoUrl || profile.logoUrl) ? (
+                       <img 
+                         src={formData.logoUrl || profile.logoUrl} 
+                         alt={profile.businessName || 'Business Logo'} 
+                         className="w-20 h-20 rounded-2xl object-contain bg-white border-4 border-slate-100 shadow-md p-1"
+                       />
+                     ) : (
+                       <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-primary-600 via-primary-500 to-indigo-600 flex items-center justify-center text-white font-bold text-2xl border-4 border-white shadow-md uppercase">
+                          {profile.businessName ? profile.businessName.charAt(0) : 'B'}
+                       </div>
+                     )}
+                     {isEditing && (
+                       <label className="absolute -bottom-1 -right-1 bg-slate-900 hover:bg-slate-800 text-white p-1.5 rounded-xl cursor-pointer shadow-md transition-all hover:scale-105" title="Change Business Logo">
+                         <Upload size={14} />
+                         <input type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
+                       </label>
+                     )}
                   </div>
-                  <div>
-                     <h2 className="text-xl font-bold text-slate-900">{profile.businessName || 'Your Business'}</h2>
-                     <p className="text-slate-500 text-sm">{profile.ownerName}</p>
+                  <div className="min-w-0 flex-1">
+                     <div className="flex items-center gap-2">
+                       <h2 className="text-xl font-bold text-slate-900 truncate">{profile.businessName || 'Your Business'}</h2>
+                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">Kitchen Owner</span>
+                     </div>
+                     <p className="text-slate-500 text-sm mt-0.5">{profile.ownerName || 'Account Administrator'}</p>
+                     {isEditing && (
+                       <label className="inline-flex items-center gap-1.5 mt-1.5 text-xs text-indigo-600 hover:text-indigo-700 font-semibold cursor-pointer">
+                         <Upload size={12} />
+                         <span>Upload new company logo</span>
+                         <input type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
+                       </label>
+                     )}
                   </div>
                </div>
 

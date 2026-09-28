@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { useStreamCollection, updateItem, addItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { handleRazorpayPayment } from '../services/razorpayService';
 
@@ -133,40 +133,42 @@ const Invoices = () => {
     signatoryName: ''
   });
 
-  // Fetch Business Credits Info
+  // Fetch Business Credits Info & Real-Time Logo/Profile Sync
   useEffect(() => {
-    if (currentUser) {
-      const fetchBusiness = async () => {
-        const docRef = doc(db, 'businesses', currentUser.uid);
-        const s = await getDoc(docRef);
-        if (s.exists()) {
-          const d = s.data();
-          const currentMonth = new Date().toISOString().slice(0, 7);
-          
-          if (d.lastInvoiceResetMonth !== currentMonth) {
-            await updateDoc(docRef, {
-              monthlyFreeUsed: 0,
-              lastInvoiceResetMonth: currentMonth
-            });
-            d.monthlyFreeUsed = 0;
-            d.lastInvoiceResetMonth = currentMonth;
-          }
-
-          setBusinessData(d);
-          setInvoiceData(prev => ({
-            ...prev,
-            from: {
-              company: d.businessName || '',
-              address: `${d.description || ''}${d.city ? ', ' + d.city : ''}${d.state ? ', ' + d.state : ''}`,
-              gstin: d.gstin || 'URD',
-              contact: d.mobile || d.email || ''
-            },
-            signatoryName: d.ownerName || ''
-          }));
+    if (!currentUser) return;
+    const docRef = doc(db, 'businesses', currentUser.uid);
+    const unsub = onSnapshot(docRef, async (s) => {
+      if (s.exists()) {
+        const d = s.data();
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        
+        if (d.lastInvoiceResetMonth !== currentMonth) {
+          await updateDoc(docRef, {
+            monthlyFreeUsed: 0,
+            lastInvoiceResetMonth: currentMonth
+          });
+          d.monthlyFreeUsed = 0;
+          d.lastInvoiceResetMonth = currentMonth;
         }
-      };
-      fetchBusiness();
-    }
+
+        setBusinessData(d);
+        if (d.logoUrl) {
+          setLogoUrl(d.logoUrl);
+        }
+        setInvoiceData(prev => ({
+          ...prev,
+          from: {
+            company: d.businessName || prev.from.company || '',
+            address: `${d.description || ''}${d.city ? ', ' + d.city : ''}${d.state ? ', ' + d.state : ''}`.trim(),
+            gstin: d.gstin || prev.from.gstin || 'URD',
+            contact: d.mobile || d.email || prev.from.contact || ''
+          },
+          signatoryName: d.ownerName || prev.signatoryName || ''
+        }));
+      }
+    }, (err) => console.warn("Error streaming business profile in invoices:", err));
+
+    return () => unsub();
   }, [currentUser]);
 
   useEffect(() => {
@@ -350,8 +352,25 @@ const Invoices = () => {
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 1.5 * 1024 * 1024) {
+        alert("Please upload an image smaller than 1.5 MB.");
+        return;
+      }
       const reader = new FileReader();
-      reader.onloadend = () => setLogoUrl(reader.result as string);
+      reader.onloadend = async () => {
+        const result = reader.result as string;
+        setLogoUrl(result);
+        if (currentUser) {
+          try {
+            await updateDoc(doc(db, 'businesses', currentUser.uid), {
+              logoUrl: result,
+              updatedAt: new Date().toISOString()
+            });
+          } catch (err) {
+            console.warn("Could not sync invoice logo to profile:", err);
+          }
+        }
+      };
       reader.readAsDataURL(file);
     }
   };
@@ -556,7 +575,18 @@ const Invoices = () => {
                </div>
             </div>
 
-            <div className="pt-12 border-t border-slate-50 text-center space-y-2"><div className="flex flex-col items-center justify-center gap-1 opacity-40"><div className="flex items-center gap-1"><div className="flex items-center gap-2"><Zap size={12} fill="currentColor" className="text-slate-900" /><span className="text-[9px] font-black uppercase tracking-widest">Powered by ScaleKitchen</span></div><span className="text-[9px] font-black uppercase tracking-widest">Crafted with ease using COSVYN Invoice</span></div><span className="text-[8px] font-bold text-slate-500 uppercase mt-1">Visit cosvyn.space/invoice to create truly professional invoices.</span></div></div>
+            <div className="pt-8 border-t border-slate-100 text-center">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-2 text-slate-500">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-primary-600 via-primary-500 to-indigo-600 text-white flex items-center justify-center shadow-xs">
+                    <Zap size={11} fill="currentColor" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-800">Powered by ScaleKitchen</span>
+                  <span className="text-[11px] text-slate-400">• Automated Meal Ops & Subscription OS</span>
+                </div>
+                <span className="text-[10px] font-medium text-slate-400">Computer generated invoice valid without physical signature</span>
+              </div>
+            </div>
           </div>
         </div>
 

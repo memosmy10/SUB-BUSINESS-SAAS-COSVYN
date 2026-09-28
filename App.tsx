@@ -46,10 +46,10 @@ import {
 } from 'lucide-react';
 import { getDaysDifference, calculateRemainingDeliveries } from './services/store';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ADMIN_EMAIL } from './services/adminStore';
+import { ADMIN_EMAIL, isAdminEmail } from './services/adminStore';
 import { doc, onSnapshot, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from './services/firebase';
-import { useStreamCollection } from './services/dbService';
+import { useStreamCollection, recordOwnerDailyLogin, syncBusinessLiveStats } from './services/dbService';
 
 // --- ERROR BOUNDARY ---
 interface ErrorBoundaryProps { children?: ReactNode; }
@@ -211,7 +211,11 @@ const ProtectedRoute = () => {
   const [hasActivePlan, setHasActivePlan] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (currentUser && currentUser.email !== ADMIN_EMAIL) {
+    if (currentUser && !isAdminEmail(currentUser.email)) {
+      // Record daily login & sync business aggregate statistics
+      recordOwnerDailyLogin(currentUser.uid);
+      syncBusinessLiveStats(currentUser.uid);
+
       const unsubscribe = onSnapshot(doc(db, 'businesses', currentUser.uid), (docSnap) => {
         if (docSnap.exists()) { 
           const data = docSnap.data();
@@ -249,7 +253,7 @@ const ProtectedRoute = () => {
     return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-primary-600" size={40} /></div>;
   }
   
-  if (currentUser?.email === ADMIN_EMAIL) return <Navigate to="/admin/dashboard" replace />;
+  if (currentUser?.email && isAdminEmail(currentUser.email)) return <Navigate to="/admin/dashboard" replace />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (hasActivePlan === false) return <Navigate to="/onboarding" replace />;
   
@@ -259,7 +263,7 @@ const ProtectedRoute = () => {
 const AdminRoute = () => {
   const { currentUser, loading } = useAuth();
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-slate-950"><Loader2 className="animate-spin text-white" size={40} /></div>;
-  if (currentUser && currentUser.email === ADMIN_EMAIL) return <AdminLayout />;
+  if (currentUser && isAdminEmail(currentUser.email)) return <AdminLayout />;
   return <Navigate to="/admin/login" replace />;
 };
 
@@ -377,20 +381,20 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                   aria-label="View notifications"
                 >
                    <Bell size={17} />
-                   {expiringCustomers.length > 0 && (
+                   {(expiringCustomers.length > 0 || showExpiryWarning) && (
                      <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white ring-1 ring-red-400 animate-pulse" />
                    )}
                 </button>
                 {isNotificationsOpen && (
                    <>
-                    {/* Dark Backdrop dimming background so notification is 100% focused and legible */}
+                    {/* Transparent Click-away layer: does not black out the screen */}
                     <div 
-                      className="fixed inset-0 z-40 bg-slate-950/50 transition-opacity" 
+                      className="fixed inset-0 z-40" 
                       onClick={() => setIsNotificationsOpen(false)} 
                     />
                     
-                    {/* Solid Opaque Notification Popup - Zero transparent glassmorphism for crystal clarity */}
-                    <div className="fixed inset-x-3 top-16 sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[420px] max-h-[85vh] sm:max-h-[520px] bg-white border-2 border-slate-300 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden ring-1 ring-slate-900/15 animate-in fade-in zoom-in-95 duration-200">
+                    {/* Solid Opaque Notification Popup - Absolutely anchored below button, 100% visible */}
+                    <div className="absolute right-0 top-full mt-2 w-[calc(100vw-28px)] sm:w-[440px] max-w-[440px] max-h-[85vh] sm:max-h-[560px] bg-white border-2 border-slate-300 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden ring-1 ring-slate-900/15 animate-in fade-in zoom-in-95 duration-200">
                       {/* High-Contrast Header */}
                       <div className="p-4 bg-slate-900 text-white flex justify-between items-center border-b border-slate-800 shrink-0">
                         <div className="flex items-center gap-2.5">
@@ -398,13 +402,13 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                             <Bell size={16} />
                           </div>
                           <div>
-                            <h4 className="font-bold text-white text-sm font-display tracking-tight">Expiring & Concluded Plans</h4>
-                            <p className="text-[11px] text-slate-300">Customer subscription renewals</p>
+                            <h4 className="font-bold text-white text-sm font-display tracking-tight">System & Meal Notifications</h4>
+                            <p className="text-[11px] text-slate-300">Live renewals & subscription alerts</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs bg-rose-600 text-white font-extrabold px-2.5 py-0.5 rounded-full shadow-xs">
-                            {expiringCustomers.length} Due
+                            {expiringCustomers.length + (showExpiryWarning ? 1 : 0)} Urgent
                           </span>
                           <button 
                             onClick={() => setIsNotificationsOpen(false)}
@@ -418,7 +422,40 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
 
                       {/* Content List with Pure Solid White Background */}
                       <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white no-scrollbar">
-                        {expiringCustomers.length === 0 ? (
+                        {/* 1. SaaS Platform Subscription Alert if near expiry */}
+                        {showExpiryWarning && (
+                          <div className={`p-4 ${isFreeTrial ? 'bg-emerald-50 border-b border-emerald-200' : 'bg-rose-50 border-b border-rose-200'}`}>
+                            <div className="flex items-start gap-3">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isFreeTrial ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+                                <AlertTriangle size={16} />
+                              </div>
+                              <div className="flex-1 text-left min-w-0">
+                                <div className="flex items-center justify-between gap-1">
+                                  <h5 className={`font-bold text-xs ${isFreeTrial ? 'text-emerald-900' : 'text-rose-900'}`}>
+                                    {isFreeTrial ? 'Free Trial Expiring Soon' : 'SaaS Plan Expiring'}
+                                  </h5>
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded ${isFreeTrial ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'}`}>
+                                    {daysToExpiry}d left
+                                  </span>
+                                </div>
+                                <p className={`text-xs mt-1 ${isFreeTrial ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                  {isFreeTrial 
+                                    ? `Your ScaleKitchen Free Trial ends in ${daysToExpiry} days. Subscribe to maintain active operations.` 
+                                    : `Your subscription concludes in ${daysToExpiry} days. Renew now to avoid disruption.`}
+                                </p>
+                                <button 
+                                  onClick={() => { navigate('/app/profile'); setIsNotificationsOpen(false); }}
+                                  className={`mt-2.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs transition-transform active:scale-95 ${isFreeTrial ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-rose-700 hover:bg-rose-800'}`}
+                                >
+                                  {isFreeTrial ? 'Subscribe to Full Plan' : 'Renew Subscription'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 2. Customer Subscriptions Expiring */}
+                        {expiringCustomers.length === 0 && !showExpiryWarning ? (
                           <div className="p-10 text-center text-slate-400 flex flex-col items-center bg-white">
                             <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center mb-3">
                               <CheckCircle size={28} />
@@ -427,8 +464,8 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                             <p className="text-xs text-slate-500 mt-1">No customer meal plans expiring in the next 10 days.</p>
                           </div>
                         ) : expiringCustomers.map((cust: any) => {
-                          const planName = plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Meal Plan';
-                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${planName}) is scheduled to conclude on ${cust.endDate}. We would love to continue delivering fresh meals to you! Please reply to renew your plan.`;
+                          const customerPlan = plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Meal Plan';
+                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${customerPlan}) is scheduled to conclude on ${cust.endDate}. We would love to continue delivering fresh meals to you! Please reply to renew your plan.`;
                           const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
                           
                           return (
@@ -470,7 +507,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                               </div>
                               <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-slate-100">
                                 <span className="text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md truncate max-w-[180px]">
-                                  {planName}
+                                  {customerPlan}
                                 </span>
                                 <button 
                                   onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }} 
@@ -486,7 +523,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
 
                       {/* Solid Footer */}
                       <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
-                        <span className="text-slate-500 text-[11px]">Powered by ScaleKitchen Notifications</span>
+                        <span className="text-slate-500 text-[11px]">ScaleKitchen Live Alerts</span>
                         <button 
                           onClick={() => { navigate('/app/customers'); setIsNotificationsOpen(false); }}
                           className="text-primary-700 hover:text-primary-800 font-bold hover:underline"

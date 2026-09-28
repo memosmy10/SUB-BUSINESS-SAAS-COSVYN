@@ -4,7 +4,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
 import { 
-  DollarSign, Activity, Users, TrendingUp, Loader2, Repeat, UserPlus, CreditCard, Receipt
+  DollarSign, Activity, Users, TrendingUp, Loader2, Repeat, UserPlus, CreditCard, Receipt,
+  Building2, Bike, IndianRupee, Sparkles, CheckCircle
 } from 'lucide-react';
 import { useAdminTenants, useAdminBillingHistory } from '../../services/dbService';
 
@@ -68,6 +69,14 @@ const AdminDashboard = () => {
       value: value as number 
     }));
 
+    const todayStr = new Date().toISOString().split('T')[0];
+    const loggedInTodayCount = tenants.filter(t => t.lastLoginDate === todayStr).length;
+    const totalBranches = tenants.reduce((acc, t) => acc + (Number(t.branchCount) || (t.planStatus === 'Active' ? 1 : 0)), 0);
+    const totalRiders = tenants.reduce((acc, t) => acc + (Number(t.deliveryBoysCount) || 0), 0);
+    const totalUniqueCust = tenants.reduce((acc, t) => acc + (Number(t.totalUniqueCustomers) || 0), 0);
+    const totalActiveCust = tenants.reduce((acc, t) => acc + (Number(t.totalActiveCustomers) || 0), 0);
+    const totalKitchenGMV = tenants.reduce((acc, t) => acc + (Number(t.kitchenRevenue) || 0), 0);
+
     return { 
         activeRevenue: activeRevenueSum,
         lifetimeRevenue: totalLifetimeCollected,
@@ -76,7 +85,13 @@ const AdminDashboard = () => {
         arpu, 
         churn: churn.toFixed(1), 
         signups,
-        planDistribution
+        planDistribution,
+        loggedInTodayCount,
+        totalBranches,
+        totalRiders,
+        totalUniqueCust,
+        totalActiveCust,
+        totalKitchenGMV
     };
   }, [tenants, history]);
 
@@ -113,14 +128,82 @@ const AdminDashboard = () => {
   return (
     <div className="space-y-8 pb-12">
       
-      {/* KPI GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-         <Widget title="Lifetime Rev" value={`₹${Math.round(metrics.lifetimeRevenue).toLocaleString()}`} icon={Receipt} colorClass="bg-emerald-500 text-emerald-400" subtext="Total Invoiced" />
-         <Widget title="Active MRR" value={`₹${Math.round(metrics.mrr).toLocaleString()}`} icon={Repeat} colorClass="bg-cyan-500 text-cyan-400" subtext={`ARPU: ₹${Math.round(metrics.arpu)}`} />
-         <Widget title="Live Owners" value={metrics.active} icon={Activity} colorClass="bg-violet-500 text-violet-400" subtext="Active SaaS Users" />
-         <Widget title="Active Rev" value={`₹${Math.round(metrics.activeRevenue).toLocaleString()}`} icon={DollarSign} colorClass="bg-blue-500 text-blue-400" subtext="Current Pool" />
-         <Widget title="Churn Rate" value={`${metrics.churn}%`} icon={Users} colorClass="bg-red-500 text-red-400" subtext="Retention Metric" />
-         <Widget title="Signups" value={metrics.signups} icon={UserPlus} colorClass="bg-amber-500 text-amber-400" subtext="Lifetime Leads" />
+      {/* 1. SAAS PLATFORM BILLING KPI GRID */}
+      <div>
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <Sparkles size={14} className="text-cyan-400" /> ScaleKitchen SaaS Financials
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <Widget title="Lifetime Rev" value={`₹${Math.round(metrics.lifetimeRevenue).toLocaleString()}`} icon={Receipt} colorClass="bg-emerald-500 text-emerald-400" subtext="Total Invoiced" />
+          <Widget title="Active MRR" value={`₹${Math.round(metrics.mrr).toLocaleString()}`} icon={Repeat} colorClass="bg-cyan-500 text-cyan-400" subtext={`ARPU: ₹${Math.round(metrics.arpu)}`} />
+          <Widget title="Live Owners" value={metrics.active} icon={Activity} colorClass="bg-violet-500 text-violet-400" subtext="Active SaaS Users" />
+          <Widget title="Active Rev" value={`₹${Math.round(metrics.activeRevenue).toLocaleString()}`} icon={DollarSign} colorClass="bg-blue-500 text-blue-400" subtext="Current Pool" />
+          <Widget title="Churn Rate" value={`${metrics.churn}%`} icon={Users} colorClass="bg-red-500 text-red-400" subtext="Retention Metric" />
+          <Widget title="Signups" value={metrics.signups} icon={UserPlus} colorClass="bg-amber-500 text-amber-400" subtext="Lifetime Leads" />
+        </div>
+      </div>
+
+      {/* 2. BUSINESSES & KITCHEN NETWORK INTELLIGENCE */}
+      <div>
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <Building2 size={14} className="text-indigo-400" /> Kitchens & Network Operations
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
+            <div>
+              <div className="text-slate-400 text-[10px] font-black uppercase tracking-wider">Logged In Today</div>
+              <div className="text-2xl font-black text-emerald-400 mt-1">{metrics.loggedInTodayCount} Owners</div>
+              <div className="text-[10px] text-slate-500">Daily SaaS usage</div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+              <Activity size={20} className="animate-pulse" />
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
+            <div>
+              <div className="text-slate-400 text-[10px] font-black uppercase tracking-wider">Operating Branches</div>
+              <div className="text-2xl font-black text-indigo-400 mt-1">{metrics.totalBranches} Locations</div>
+              <div className="text-[10px] text-slate-500">Kitchen facilities</div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+              <Building2 size={20} />
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
+            <div>
+              <div className="text-slate-400 text-[10px] font-black uppercase tracking-wider">Delivery Fleet</div>
+              <div className="text-2xl font-black text-amber-400 mt-1">{metrics.totalRiders} Riders</div>
+              <div className="text-[10px] text-slate-500">Delivery personnel</div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+              <Bike size={20} />
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
+            <div>
+              <div className="text-slate-400 text-[10px] font-black uppercase tracking-wider">Customer Reach</div>
+              <div className="text-2xl font-black text-blue-400 mt-1">{metrics.totalUniqueCust} Users</div>
+              <div className="text-[10px] text-emerald-400 font-bold">{metrics.totalActiveCust} currently active</div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+              <Users size={20} />
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between col-span-2 sm:col-span-1">
+            <div>
+              <div className="text-slate-400 text-[10px] font-black uppercase tracking-wider">Kitchen GMV Volume</div>
+              <div className="text-2xl font-black text-emerald-400 mt-1">₹{Math.round(metrics.totalKitchenGMV).toLocaleString('en-IN')}</div>
+              <div className="text-[10px] text-slate-500">Customer billings</div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+              <IndianRupee size={20} />
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

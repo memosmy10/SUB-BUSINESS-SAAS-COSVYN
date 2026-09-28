@@ -5,7 +5,8 @@ import { Zap, CheckCircle, Loader2, AlertCircle, ArrowLeft } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { ADMIN_EMAIL } from '../services/adminStore';
+import { ADMIN_EMAIL, isAdminEmail } from '../services/adminStore';
+import { recordOwnerDailyLogin } from '../services/dbService';
 
 const Login = () => {
   const { loginWithEmail, currentUser } = useAuth();
@@ -24,10 +25,13 @@ const Login = () => {
   }, []);
 
   const handleAuthSuccess = async (user: any) => {
-    if (user.email === ADMIN_EMAIL) {
+    if (isAdminEmail(user.email)) {
       navigate('/admin/dashboard');
       return;
     }
+
+    // Record owner's daily login activity in Firestore
+    recordOwnerDailyLogin(user.uid);
 
     try {
       const docRef = doc(db, 'businesses', user.uid);

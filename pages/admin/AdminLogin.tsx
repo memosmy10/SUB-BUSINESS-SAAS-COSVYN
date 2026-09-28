@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { ShieldCheck, Lock, Mail, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
-import { ADMIN_EMAIL } from '../../services/adminStore';
+import { ADMIN_EMAIL, isAdminEmail } from '../../services/adminStore';
 
 const AdminLogin = () => {
   const { loginWithEmail, logout } = useAuth();
@@ -22,7 +22,7 @@ const AdminLogin = () => {
       const user = await loginWithEmail(email, password);
       
       // Strict Admin Check
-      if (user.email !== ADMIN_EMAIL) {
+      if (!isAdminEmail(user.email)) {
         await logout();
         setError("Access Denied. You do not have admin privileges.");
         setLoading(false);

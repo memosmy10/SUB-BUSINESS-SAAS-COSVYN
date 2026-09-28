@@ -17,6 +17,18 @@ export interface TenantUser {
   subscriptionEndDate: string;
   isActive: boolean;
   consecutiveMonthsSubscribed: number;
+  // Daily login & activity info
+  lastLoginAt?: string;
+  lastLoginDate?: string;
+  loginCount?: number;
+  recentLoginDates?: string[];
+  // Business live stats
+  branchCount?: number;
+  deliveryBoysCount?: number;
+  totalUniqueCustomers?: number;
+  totalActiveCustomers?: number;
+  kitchenRevenue?: number;
+  lastStatsSyncAt?: string;
 }
 
 export interface Subscription {
@@ -68,3 +80,13 @@ export interface AdminUser {
 
 // --- CONFIGURATION ---
 export const ADMIN_EMAIL = 'cosvynsolutions@gmail.com';
+export const ADMIN_EMAILS = [
+  'cosvynsolutions@gmail.com',
+  'admin@scalekitchen.in',
+  'memosmy10@gmail.com'
+];
+
+export const isAdminEmail = (email?: string | null): boolean => {
+  if (!email) return false;
+  return ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email.toLowerCase().trim());
+};

@@ -251,6 +251,166 @@ export const saveGlobalPricing = async (plans: SaasPlan[], offer: SpecialOffer) 
   });
 };
 
+// --- OWNER DAILY LOGIN & BUSINESS AGGREGATION SERVICES ---
+/**
+ * Records daily login info for business owner in Firestore.
+ * Keeps lastLoginAt, lastLoginDate, loginCount, recentLoginDates, and an audit entry in login_logs.
+ */
+export const recordOwnerDailyLogin = async (businessId: string) => {
+  if (!businessId) return;
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const nowIso = new Date().toISOString();
+    const bizRef = doc(db, 'businesses', businessId);
+    const snap = await getDoc(bizRef);
+    if (!snap.exists()) return;
+
+    const data = snap.data();
+    const updates: any = {
+      lastLoginAt: nowIso,
+      lastLoginDate: today,
+      updatedAt: nowIso
+    };
+
+    if (data.lastLoginDate !== today) {
+      updates.loginCount = (Number(data.loginCount) || 0) + 1;
+      const recent = Array.isArray(data.recentLoginDates) ? [...data.recentLoginDates] : [];
+      if (!recent.includes(today)) {
+        recent.unshift(today);
+        updates.recentLoginDates = recent.slice(0, 30); // Store up to last 30 daily logins
+      }
+    }
+
+    await updateDoc(bizRef, updates);
+
+    // Also persist an audit entry in the subcollection
+    await setDoc(doc(db, 'businesses', businessId, 'login_logs', today), {
+      date: today,
+      lastSeenAt: nowIso,
+      updatedAt: nowIso
+    }, { merge: true }).catch(() => {});
+  } catch (err) {
+    console.warn("Error recording owner daily login:", err);
+  }
+};
+
+/**
+ * Live queries subcollections (branches, staff, customers, payments, single_orders)
+ * and calculates live metrics: branchCount, deliveryBoysCount, totalUniqueCustomers, totalActiveCustomers, kitchenRevenue.
+ * Persists the aggregate directly into businesses/{businessId} for instantaneous query in Admin Panel.
+ */
+export const syncBusinessLiveStats = async (businessId: string) => {
+  if (!businessId) return null;
+  try {
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const [branchesSnap, staffSnap, customersSnap, singlesSnap, paymentsSnap] = await Promise.all([
+      getDocs(collection(db, 'businesses', businessId, 'branches')).catch(() => ({ docs: [] })),
+      getDocs(collection(db, 'businesses', businessId, 'staff')).catch(() => ({ docs: [] })),
+      getDocs(collection(db, 'businesses', businessId, 'customers')).catch(() => ({ docs: [] })),
+      getDocs(collection(db, 'businesses', businessId, 'single_orders')).catch(() => ({ docs: [] })),
+      getDocs(collection(db, 'businesses', businessId, 'payments')).catch(() => ({ docs: [] }))
+    ]);
+
+    const branchCount = branchesSnap.docs.length;
+
+    // Delivery riders / staff
+    const deliveryBoys = staffSnap.docs.filter((d: any) => {
+      const data = d.data();
+      const role = (data.role || '').toLowerCase();
+      return role === 'rider' || role === 'driver' || role === 'delivery' || !role;
+    });
+    const deliveryBoysCount = deliveryBoys.length;
+
+    // Unique & active customers
+    const totalUniqueCustomers = customersSnap.docs.length;
+    let totalActiveCustomers = 0;
+    let customersRevenue = 0;
+
+    customersSnap.docs.forEach((d: any) => {
+      const c = d.data();
+      const isActive = c.isActive !== false && (!c.endDate || c.endDate >= todayStr);
+      if (isActive) totalActiveCustomers++;
+      customersRevenue += (Number(c.planPrice) || 0) + (Number(c.deliveryCharges) || 0);
+    });
+
+    // Single meal orders revenue
+    singlesSnap.docs.forEach((d: any) => {
+      const o = d.data();
+      customersRevenue += (Number(o.totalAmount) || Number(o.price) || Number(o.amount) || 0);
+    });
+
+    // Direct payments collection
+    let recordedPayments = 0;
+    paymentsSnap.docs.forEach((d: any) => {
+      const p = d.data();
+      recordedPayments += (Number(p.amount) || 0);
+    });
+
+    const kitchenRevenue = Math.max(customersRevenue, recordedPayments);
+
+    const stats = {
+      branchCount,
+      deliveryBoysCount,
+      totalUniqueCustomers,
+      totalActiveCustomers,
+      kitchenRevenue,
+      lastStatsSyncAt: new Date().toISOString()
+    };
+
+    await updateDoc(doc(db, 'businesses', businessId), stats).catch(() => {});
+    return stats;
+  } catch (err) {
+    console.error("Error syncing business live stats:", err);
+    return null;
+  }
+};
+
+/**
+ * Fetches deep dossier for a single business (all branches, delivery boys, recent customers, login history).
+ */
+export const fetchBusinessDetailedDossier = async (businessId: string) => {
+  if (!businessId) return null;
+  try {
+    const [bizSnap, branchesSnap, staffSnap, customersSnap, loginLogsSnap] = await Promise.all([
+      getDoc(doc(db, 'businesses', businessId)).catch(() => null),
+      getDocs(collection(db, 'businesses', businessId, 'branches')).catch(() => ({ docs: [] })),
+      getDocs(collection(db, 'businesses', businessId, 'staff')).catch(() => ({ docs: [] })),
+      getDocs(collection(db, 'businesses', businessId, 'customers')).catch(() => ({ docs: [] })),
+      getDocs(query(collection(db, 'businesses', businessId, 'login_logs'), orderBy('date', 'desc'))).catch(() => ({ docs: [] }))
+    ]);
+
+    const business = bizSnap && bizSnap.exists() ? { id: bizSnap.id, ...bizSnap.data() } : null;
+    const branches = branchesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const staff = staffSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const customers = customersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const loginLogs = loginLogsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    return {
+      business,
+      branches,
+      staff,
+      customers,
+      loginLogs
+    };
+  } catch (err) {
+    console.error("Error fetching business dossier:", err);
+    return null;
+  }
+};
+
+/**
+ * Syncs stats for an entire batch of businesses in parallel.
+ */
+export const syncAllBusinessesLiveStats = async (businessIds: string[]) => {
+  const results: Record<string, any> = {};
+  await Promise.all(businessIds.map(async (id) => {
+    const stats = await syncBusinessLiveStats(id);
+    if (stats) results[id] = stats;
+  }));
+  return results;
+};
+
 // --- ADMIN SERVICES ---
 export const useAdminTenants = () => {
   const [tenants, setTenants] = useState<any[]>([]);

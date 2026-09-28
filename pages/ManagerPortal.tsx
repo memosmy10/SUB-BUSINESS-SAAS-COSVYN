@@ -121,7 +121,17 @@ export const ManagerPortal: React.FC = () => {
 
     const branchesRef = collection(db, 'businesses', bizId, 'branches');
     const unsubBranches = onSnapshot(branchesRef, (snap) => {
-      setBranches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      let bList: any[] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const savedManager = localStorage.getItem('manager_data');
+      if (savedManager) {
+        try {
+          const parsed = JSON.parse(savedManager);
+          if (parsed.branchId && parsed.branchId !== 'All') {
+            bList = bList.filter((b: any) => b.id === parsed.branchId || b.name === parsed.branchId);
+          }
+        } catch (e) {}
+      }
+      setBranches(bList);
     }, (err) => console.warn("Branches fetch error:", err));
 
     return () => {
@@ -140,6 +150,10 @@ export const ManagerPortal: React.FC = () => {
       try {
         const parsed = JSON.parse(savedManager);
         setLoggedInManager(parsed);
+        localStorage.setItem('active_portal', 'manager');
+        if (parsed.branchId) {
+          localStorage.setItem('manager_branch_id', parsed.branchId);
+        }
         if (savedLogId) setSessionLogId(savedLogId);
         if (parsed.allowedPages && parsed.allowedPages.length > 0) {
           setActiveTab(parsed.allowedPages[0]);
@@ -219,7 +233,14 @@ export const ManagerPortal: React.FC = () => {
       setActiveTab(allowedPages[0]);
       localStorage.setItem('manager_biz_id', bizId);
       localStorage.setItem('manager_data', JSON.stringify(matched));
+      localStorage.setItem('manager_branch_id', matched.branchId || '');
+      localStorage.setItem('active_portal', 'manager');
       localStorage.setItem('manager_session_log_id', logId);
+
+      // Re-filter branches in state to manager's assigned branch
+      if (matched.branchId && matched.branchId !== 'All') {
+        setBranches(prev => prev.filter(b => b.id === matched.branchId || b.name === matched.branchId));
+      }
 
     } catch (err: any) {
       console.error("Manager Login Error:", err);
@@ -248,6 +269,8 @@ export const ManagerPortal: React.FC = () => {
     }
 
     localStorage.removeItem('manager_data');
+    localStorage.removeItem('manager_branch_id');
+    localStorage.removeItem('active_portal');
     localStorage.removeItem('manager_session_log_id');
     setLoggedInManager(null);
     setSessionLogId(null);

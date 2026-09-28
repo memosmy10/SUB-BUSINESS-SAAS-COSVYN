@@ -83,6 +83,13 @@ const Customers = () => {
     starred: 'All' 
   });
 
+  // Auto-lock branch filter to single branch (e.g. for branch manager)
+  useEffect(() => {
+    if (branches.length === 1 && filters.branchId !== branches[0].id) {
+      setFilters(prev => ({ ...prev, branchId: branches[0].id }));
+    }
+  }, [branches, filters.branchId]);
+
   // REAL-TIME DATA ENRICHMENT: Calculate daysLeft dynamically based on current date
   const enrichedCustomers = useMemo(() => {
     return customers.map(c => {
@@ -605,10 +612,10 @@ const BranchFilter = ({ branches, value, onChange }: { branches: any[], value: s
         value={value}
         onChange={e => onChange(e.target.value)}
       >
-        <option value="All">All Branches</option>
+        {branches.length > 1 && <option value="All">All Branches</option>}
         {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
       </select>
-      <ChevronDown size={10} className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300" />
+      {branches.length > 1 && <ChevronDown size={10} className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300" />}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Truck, Package, MapPin, ChevronDown, ChevronUp, 
   Loader2, ArrowUp, ArrowDown, Phone,
@@ -46,6 +46,13 @@ const Deliveries = () => {
   const [mainTab, setMainTab] = useState<'routes' | 'boxes' | 'fleet'>('routes');
   const [activeMealTab, setActiveMealTab] = useState<'Breakfast' | 'Lunch' | 'Dinner'>('Lunch');
   const [selectedBranch, setSelectedBranch] = useState('All');
+
+  // Auto-lock to single branch if manager or user has only 1 branch assigned
+  useEffect(() => {
+    if (branches.length === 1 && selectedBranch !== branches[0].id) {
+      setSelectedBranch(branches[0].id);
+    }
+  }, [branches, selectedBranch]);
   const [expandedBoyId, setExpandedBoyId] = useState<string | null>(null);
   const [expandedMatrixBoyId, setExpandedMatrixBoyId] = useState<string | null>(null);
   const [optimizerModalData, setOptimizerModalData] = useState<{ boy: any; customers: any[]; branch: any } | null>(null);
@@ -365,7 +372,7 @@ const Deliveries = () => {
               value={selectedBranch}
               onChange={(e) => setSelectedBranch(e.target.value)}
             >
-              <option value="All">All Kitchen Branches</option>
+              {branches.length > 1 && <option value="All">All Kitchen Branches</option>}
               {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
             <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={15} />

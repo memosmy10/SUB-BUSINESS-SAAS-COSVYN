@@ -27,6 +27,13 @@ const Expenses = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<GlobalExpense | null>(null);
 
+  // Auto-lock branch filter to single branch (e.g. for branch manager)
+  React.useEffect(() => {
+    if (branches.length === 1 && selectedBranch !== branches[0].id) {
+      setSelectedBranch(branches[0].id);
+    }
+  }, [branches, selectedBranch]);
+
   // Derived available years
   const yearOptions = useMemo(() => {
     const years = new Set<string>();
@@ -165,7 +172,7 @@ const Expenses = () => {
                 value={selectedBranch} 
                 onChange={e => setSelectedBranch(e.target.value)}
               >
-                <option value="All">All Branches</option>
+                {branches.length > 1 && <option value="All">All Branches</option>}
                 {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />

@@ -4,7 +4,7 @@ import {
   Plus, Search, Loader2, Edit, Trash2, X, StickyNote, Calendar, ChevronDown, CheckCircle2, Circle, Pin, PinOff, Palette
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
+import { useStreamCollection, addItem, updateItem, deleteItem, getManagerBranchId } from '../services/dbService';
 
 const NOTE_COLORS = [
   { id: 'slate', bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-900', accent: 'bg-slate-200' },
@@ -87,7 +87,17 @@ const Notes = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<any>(null);
-  const [filters, setFilters] = useState({ branchId: 'All', search: '', status: 'All' });
+  const [filters, setFilters] = useState({ branchId: getManagerBranchId() || 'All', search: '', status: 'All' });
+
+  // Auto-lock branch filter when manager is assigned to a specific branch or single branch
+  React.useEffect(() => {
+    const mgrBranch = getManagerBranchId();
+    if (mgrBranch && filters.branchId !== mgrBranch) {
+      setFilters(prev => ({ ...prev, branchId: mgrBranch }));
+    } else if (branches.length === 1 && filters.branchId !== branches[0].id) {
+      setFilters(prev => ({ ...prev, branchId: branches[0].id }));
+    }
+  }, [branches, filters.branchId]);
 
   const isLoading = l1 || l2;
 
@@ -179,7 +189,7 @@ const Notes = () => {
             value={filters.branchId}
             onChange={(e) => setFilters({...filters, branchId: e.target.value})}
           >
-            <option value="All">All Branches</option>
+            {(!getManagerBranchId() && branches.length > 1) && <option value="All">All Branches</option>}
             {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />

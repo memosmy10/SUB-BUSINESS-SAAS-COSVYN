@@ -17,6 +17,13 @@ const Prep = () => {
 
   const [selectedBranch, setSelectedBranch] = useState('All');
 
+  // Auto-lock branch if single branch is available (e.g. for branch manager)
+  React.useEffect(() => {
+    if (branches.length === 1 && selectedBranch !== branches[0].id) {
+      setSelectedBranch(branches[0].id);
+    }
+  }, [branches, selectedBranch]);
+
   const todayStr = getTodayStr();
   const now = new Date();
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
@@ -150,7 +157,7 @@ const Prep = () => {
             value={selectedBranch}
             onChange={(e) => setSelectedBranch(e.target.value)}
           >
-            <option value="All">All Branches</option>
+            {branches.length > 1 && <option value="All">All Branches</option>}
             {branches.map((b: any) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}

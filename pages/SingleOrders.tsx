@@ -4,7 +4,7 @@ import {
   ShoppingBag, Plus, Search, Loader2, Edit, Trash2, X, ChevronRight, ChevronDown, Calendar, Store, CreditCard, DollarSign, Activity
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
+import { useStreamCollection, addItem, updateItem, deleteItem, getManagerBranchId } from '../services/dbService';
 
 const StatCard = ({ title, value, textColor = "text-slate-900" }: any) => (
   <div className="bg-white p-4 sm:p-6 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center h-28 sm:h-32 hover:shadow-md transition-shadow">
@@ -26,7 +26,17 @@ const SingleOrders = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<any>(null);
-  const [filters, setFilters] = useState({ branchId: 'All', month: 'All', search: '' });
+  const [filters, setFilters] = useState({ branchId: getManagerBranchId() || 'All', month: 'All', search: '' });
+
+  // Auto-lock branch filter when manager is assigned to a specific branch or single branch
+  React.useEffect(() => {
+    const mgrBranch = getManagerBranchId();
+    if (mgrBranch && filters.branchId !== mgrBranch) {
+      setFilters(prev => ({ ...prev, branchId: mgrBranch }));
+    } else if (branches.length === 1 && filters.branchId !== branches[0].id) {
+      setFilters(prev => ({ ...prev, branchId: branches[0].id }));
+    }
+  }, [branches, filters.branchId]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
@@ -78,7 +88,7 @@ const SingleOrders = () => {
             value={filters.branchId} 
             onChange={(e) => setFilters({...filters, branchId: e.target.value})}
           >
-            <option value="All">All Branches</option>
+            {(!getManagerBranchId() && branches.length > 1) && <option value="All">All Branches</option>}
             {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />

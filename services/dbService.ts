@@ -20,12 +20,65 @@ import { SHARED_SAAS_PLANS, SHARED_OFFER, SaasPlan, SpecialOffer } from './saasS
 import { normalizePhone, normalizeEmail } from './store';
 
 // Hook to subscribe to a sub-collection of the current user or manager-connected business
+import { auth } from './firebase';
+
+/**
+ * Resolves the branch assigned to the currently logged in manager (if any).
+ * Returns null if the user is the SaaS business owner or if manager has 'All' branches.
+ */
+export const getManagerBranchId = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const isManagerUrl = window.location.hash.includes('manager') || 
+                         window.location.pathname.includes('manager') || 
+                         window.location.search.includes('manager') ||
+                         localStorage.getItem('active_portal') === 'manager';
+    
+    if (isManagerUrl) {
+      const explicitBranch = localStorage.getItem('manager_branch_id');
+      if (explicitBranch && explicitBranch !== 'All') {
+        return explicitBranch;
+      }
+      const raw = localStorage.getItem('manager_data');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.branchId && parsed.branchId !== 'All') {
+          return parsed.branchId;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Error reading manager branch:", e);
+  }
+  return null;
+};
+
+/**
+ * Resolves the target business ID for CRUD operations.
+ * If in manager portal, targets manager_biz_id.
+ * If in driver portal, targets driver_biz_id.
+ * Otherwise uses the provided userId or auth.currentUser.uid.
+ */
+export const getTargetBusinessId = (fallbackUserId?: string): string => {
+  if (typeof window !== 'undefined') {
+    if (window.location.hash.includes('manager') || window.location.pathname.includes('manager') || localStorage.getItem('active_portal') === 'manager') {
+      const mgrBiz = localStorage.getItem('manager_biz_id');
+      if (mgrBiz) return mgrBiz;
+    }
+    if (window.location.hash.includes('driver') || window.location.pathname.includes('driver')) {
+      const drvBiz = localStorage.getItem('driver_biz_id');
+      if (drvBiz) return drvBiz;
+    }
+  }
+  return fallbackUserId || auth.currentUser?.uid || '';
+};
+
 export const useStreamCollection = <T>(collectionName: string, customBizId?: string) => {
   const { currentUser } = useAuth();
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const effectiveUid = customBizId || (window.location.hash.includes('/manager') ? localStorage.getItem('manager_biz_id') : null) || currentUser?.uid;
+  const effectiveUid = customBizId || getTargetBusinessId(currentUser?.uid);
 
   useEffect(() => {
     if (!effectiveUid) {
@@ -37,11 +90,49 @@ export const useStreamCollection = <T>(collectionName: string, customBizId?: str
     const q = query(collection(db, 'businesses', effectiveUid, collectionName));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
+      let items = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      })) as T[];
-      setData(items);
+      })) as any[];
+
+      // STRICT BRANCH ACCESS ENFORCEMENT FOR MANAGERS:
+      // If the manager is granted access to a specific branch only, strictly filter every collection
+      const managerBranchId = getManagerBranchId();
+      if (managerBranchId) {
+        if (collectionName === 'branches') {
+          // Only return the manager's assigned branch
+          items = items.filter(b => b.id === managerBranchId || b.name === managerBranchId);
+        } else if (collectionName === 'customers') {
+          // Only return customers belonging to this branch
+          items = items.filter(c => c.branchId === managerBranchId);
+        } else if (collectionName === 'staff') {
+          // Only return delivery riders assigned to this branch
+          items = items.filter(s => s.branchId === managerBranchId);
+        } else if (collectionName === 'plans') {
+          // Only return plans available to this branch
+          items = items.filter(p => !p.branchId || p.branchId === 'All' || p.branchId === managerBranchId);
+        } else if (collectionName === 'single_orders') {
+          // Only return single meal orders for this branch
+          items = items.filter(o => o.branchId === managerBranchId);
+        } else if (collectionName === 'expenses') {
+          // Only return expenses for this branch
+          items = items.filter(e => e.branchId === managerBranchId);
+        } else if (collectionName === 'inventory') {
+          // Only return kitchen stock inventory for this branch
+          items = items.filter(i => i.branchId === managerBranchId);
+        } else if (collectionName === 'notes') {
+          // Only return notes for this branch
+          items = items.filter(n => !n.branchId || n.branchId === managerBranchId);
+        } else if (collectionName === 'delivery_logs') {
+          // Only return delivery logs for this branch
+          items = items.filter(l => !l.branchId || l.branchId === managerBranchId);
+        } else if (collectionName === 'payments') {
+          // Only return payments matching this branch
+          items = items.filter(p => !p.branchId || p.branchId === managerBranchId);
+        }
+      }
+
+      setData(items as T[]);
       setLoading(false);
     }, (error) => {
       if (error.code !== 'permission-denied') {
@@ -58,9 +149,18 @@ export const useStreamCollection = <T>(collectionName: string, customBizId?: str
 
 export const addItem = async (userId: string, collectionName: string, data: any) => {
   try {
-    const colRef = collection(db, 'businesses', userId, collectionName);
+    const targetUid = getTargetBusinessId(userId);
+    let enrichedData = { ...data };
+
+    // Auto-enforce branch restriction for branch managers
+    const managerBranchId = getManagerBranchId();
+    if (managerBranchId && ['customers', 'single_orders', 'expenses', 'inventory', 'staff'].includes(collectionName)) {
+      enrichedData.branchId = managerBranchId;
+    }
+
+    const colRef = collection(db, 'businesses', targetUid, collectionName);
     const docRef = await addDoc(colRef, {
-      ...data,
+      ...enrichedData,
       createdAt: new Date().toISOString()
     });
     return docRef.id;
@@ -72,9 +172,17 @@ export const addItem = async (userId: string, collectionName: string, data: any)
 
 export const updateItem = async (userId: string, collectionName: string, docId: string, data: any) => {
   try {
-    const docRef = doc(db, 'businesses', userId, collectionName, docId);
+    const targetUid = getTargetBusinessId(userId);
+    let enrichedData = { ...data };
+
+    const managerBranchId = getManagerBranchId();
+    if (managerBranchId && ['customers', 'single_orders', 'expenses', 'inventory', 'staff'].includes(collectionName)) {
+      enrichedData.branchId = managerBranchId;
+    }
+
+    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     await updateDoc(docRef, {
-      ...data,
+      ...enrichedData,
       updatedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -85,7 +193,8 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
 
 export const setItem = async (userId: string, collectionName: string, docId: string, data: any) => {
   try {
-    const docRef = doc(db, 'businesses', userId, collectionName, docId);
+    const targetUid = getTargetBusinessId(userId);
+    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     await setDoc(docRef, {
       ...data,
       updatedAt: new Date().toISOString()
@@ -98,7 +207,8 @@ export const setItem = async (userId: string, collectionName: string, docId: str
 
 export const deleteItem = async (userId: string, collectionName: string, docId: string) => {
   try {
-    const docRef = doc(db, 'businesses', userId, collectionName, docId);
+    const targetUid = getTargetBusinessId(userId);
+    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     await deleteDoc(docRef);
   } catch (error) {
     console.error(`Error deleting ${collectionName}/${docId}:`, error);

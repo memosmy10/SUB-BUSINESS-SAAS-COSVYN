@@ -52,6 +52,14 @@ const Payments = () => {
   const [listMonth, setListMonth] = useState('All');
   const [listSearch, setListSearch] = useState('');
 
+  // Auto-lock branch filter to single branch (e.g. for branch manager)
+  React.useEffect(() => {
+    if (branches.length === 1) {
+      if (selectedBranch !== branches[0].id) setSelectedBranch(branches[0].id);
+      if (listBranch !== branches[0].id) setListBranch(branches[0].id);
+    }
+  }, [branches, selectedBranch, listBranch]);
+
   const yearOptions = useMemo(() => {
     const years = new Set<string>();
     years.add(new Date().getFullYear().toString());

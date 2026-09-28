@@ -25,9 +25,10 @@ import {
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  businessData?: any;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, businessData }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout, currentUser } = useAuth();
@@ -90,11 +91,21 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       `}>
         <div className="p-5 border-b border-slate-100/80 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-tr from-primary-600 via-primary-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-primary-500/25">
-              <Zap size={18} fill="currentColor" />
-            </div>
-            <div>
-              <span className="text-base font-bold text-slate-900 tracking-tight font-display">ScaleKitchen</span>
+            {businessData?.logoUrl ? (
+              <img 
+                src={businessData.logoUrl} 
+                alt="Brand Logo" 
+                className="w-9 h-9 rounded-xl object-contain bg-white border border-slate-200 p-0.5 shadow-xs shrink-0" 
+              />
+            ) : (
+              <div className="w-9 h-9 bg-gradient-to-tr from-primary-600 via-primary-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-primary-500/25 shrink-0">
+                <Zap size={18} fill="currentColor" />
+              </div>
+            )}
+            <div className="overflow-hidden">
+              <span className="text-base font-bold text-slate-900 tracking-tight font-display truncate block max-w-[160px]">
+                {businessData?.businessName || 'ScaleKitchen'}
+              </span>
               <span className="block text-[11px] font-medium text-slate-400">Meal Ops Suite</span>
             </div>
           </div>

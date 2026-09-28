@@ -331,7 +331,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
         <div className="absolute -bottom-28 right-1/4 w-[450px] h-[450px] bg-sky-200/20 rounded-full blur-3xl" />
       </div>
 
-      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} businessData={businessData} />
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         {showExpiryWarning && (
@@ -454,12 +454,28 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
               </div>
               <button 
                 onClick={() => navigate('/app/profile')} 
-                className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur-md border border-slate-200/80 hover:border-primary-400/60 shadow-xs transition-all hover:bg-white"
+                className="flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 hover:border-primary-400 shadow-xs transition-all hover:bg-white max-w-[190px] sm:max-w-xs group active:scale-95"
+                title={`${businessData?.businessName || currentUser?.displayName || 'My Kitchen'} Profile & Brand Identity`}
               >
-                <div className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center font-bold text-xs shadow-xs">
-                  {currentUser?.displayName?.charAt(0) || 'U'}
+                {businessData?.logoUrl ? (
+                  <img 
+                    src={businessData.logoUrl} 
+                    alt={businessData.businessName || 'Brand Logo'} 
+                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-contain bg-white border border-slate-200/80 p-0.5 shadow-xs shrink-0 group-hover:scale-105 transition-transform"
+                  />
+                ) : (
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0 group-hover:scale-105 transition-transform">
+                    {(businessData?.businessName || currentUser?.displayName || 'K').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex flex-col text-left min-w-0 pr-0.5">
+                  <span className="text-[11px] sm:text-xs font-bold text-slate-900 truncate block leading-tight max-w-[85px] sm:max-w-[150px]">
+                    {businessData?.businessName || currentUser?.displayName || 'My Kitchen'}
+                  </span>
+                  <span className="text-[9px] text-slate-400 font-medium truncate block leading-tight">
+                    Kitchen Owner
+                  </span>
                 </div>
-                <span className="hidden sm:block text-xs font-semibold text-slate-700">{currentUser?.displayName || 'My Kitchen'}</span>
               </button>
            </div>
         </header>

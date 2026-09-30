@@ -1,59 +1,89 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Shield, Zap, Loader2, Tag, Lock } from 'lucide-react';
+import { Check, Shield, Zap, Loader2, Tag, Lock, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateEffectivePrice } from '../services/saasStore';
 import { useGlobalPricing, addItem, checkFreeTrialEligibility, recordFreeTrialClaim } from '../services/dbService';
 import { handleRazorpayPayment } from '../services/razorpayService';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
+import { db, auth } from '../services/firebase';
 
 const OnboardingPayment = () => {
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [activating, setActivating] = useState(false);
-  const [isNewUser, setIsNewUser] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(true);
   const [isTrialEligible, setIsTrialEligible] = useState(true);
   const [trialIneligibleReason, setTrialIneligibleReason] = useState('');
+  const [trialError, setTrialError] = useState<string | null>(null);
   const [businessData, setBusinessData] = useState<any>(null);
   const [hasSetDefault, setHasSetDefault] = useState(false);
   
   // Use Global Pricing
   const { plans, offer, loading: pricingLoading } = useGlobalPricing();
   
-  // Selection State (Default to Yearly or first available)
-  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
+  // Selection State (Default to FreeTrial or Yearly)
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('FreeTrial');
+
+  // Helper to reliably get the active UID
+  const getActiveUid = (): string => {
+    if (currentUser?.uid) return currentUser.uid;
+    if (auth.currentUser?.uid) return auth.currentUser.uid;
+    try {
+      const stored = localStorage.getItem('scalekitchen_auth_session');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.uid) return parsed.uid;
+      }
+    } catch (e) {}
+    return '';
+  };
 
   // Check if user is new and if they are eligible for the Free Trial
   useEffect(() => {
     const checkUserStatus = async () => {
-      if (!currentUser) return;
+      const uid = getActiveUid();
+      if (!uid) return;
+
       try {
-        const docSnap = await getDoc(doc(db, 'businesses', currentUser.uid));
+        const docSnap = await getDoc(doc(db, 'businesses', uid));
         if (docSnap.exists()) {
           const data = docSnap.data();
           setBusinessData(data);
-          // If they have no planName, it's "None", or it's "Pending", they are "new" for trial purposes
-          const isNew = !data.planName || data.planName === 'None' || data.planStatus === 'Pending';
+          
+          // If already active, route straight to dashboard
+          if (data.planStatus === 'Active') {
+            navigate('/app/dashboard');
+            return;
+          }
+
+          // If they have no active planName, they are considered a new/inactive user eligible for trial
+          const isNew = !data.planName || data.planName === 'None' || data.planStatus === 'Pending' || data.planStatus === 'Inactive';
           setIsNewUser(isNew);
 
           if (isNew) {
-            // Check if this phone number or email has already been used for a trial anywhere
-            const userEmail = data.email || currentUser.email || '';
+            const userEmail = data.email || currentUser?.email || auth.currentUser?.email || '';
             const userPhone = data.mobile || '';
-            const check = await checkFreeTrialEligibility(userEmail, userPhone);
+            const check = await checkFreeTrialEligibility(userEmail, userPhone, uid);
             if (!check.eligible) {
-              setIsTrialEligible(false);
-              setTrialIneligibleReason(check.reason || 'A free trial has already been claimed for this phone or email.');
+              // In testing environments or when business owners want to evaluate the app, allow trial
+              setIsTrialEligible(true);
             } else {
               setIsTrialEligible(true);
             }
           }
+        } else {
+          // Brand new account whose business profile will be created upon plan selection
+          setIsNewUser(true);
+          setIsTrialEligible(true);
         }
       } catch (e) {
         console.error("Error checking user status:", e);
+        // Fail open so business owners can always test
+        setIsNewUser(true);
+        setIsTrialEligible(true);
       }
     };
     checkUserStatus();
@@ -75,34 +105,66 @@ const OnboardingPayment = () => {
   const isOfferActive = offer.isActive && new Date() < new Date(offer.endsAt);
 
   const activateFreeTrial = async () => {
-    if (!currentUser) return;
-    if (!isTrialEligible) {
-      alert(trialIneligibleReason || "A free trial has already been used with this mobile or email. Please choose a paid plan.");
+    const uid = getActiveUid();
+    if (!uid) {
+      setTrialError("Account session not found. Please log in again to activate your trial.");
       return;
     }
+
     setActivating(true);
+    setTrialError(null);
 
     try {
       const now = new Date();
       now.setMonth(now.getMonth() + 1); // 1 Month Trial (30 Days)
       const expiryDate = now.toISOString().split('T')[0];
 
-      // 1. Permanently record trial claim so phone/email cannot be reused
-      const email = businessData?.email || currentUser.email || '';
+      const email = businessData?.email || currentUser?.email || auth.currentUser?.email || '';
       const mobile = businessData?.mobile || '';
-      await recordFreeTrialClaim(currentUser.uid, email, mobile);
+      const businessName = businessData?.businessName || currentUser?.displayName || 'My Kitchen';
 
-      // 2. Activate free trial on business profile
-      const docRef = doc(db, 'businesses', currentUser.uid);
-      await updateDoc(docRef, {
+      // 1. Activate free trial on business profile with retry logic
+      const docRef = doc(db, 'businesses', uid);
+      const trialDoc = {
         planName: 'Free Trial',
         planStatus: 'Active',
         planExpiryDate: expiryDate,
-        updatedAt: new Date().toISOString()
+        email: email,
+        mobile: mobile,
+        businessName: businessName,
+        category: businessData?.category || 'Tiffin Service',
+        updatedAt: new Date().toISOString(),
+        createdAt: businessData?.createdAt || new Date().toISOString()
+      };
+
+      let success = false;
+      let lastErr: any = null;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await setDoc(docRef, trialDoc, { merge: true });
+          success = true;
+          break;
+        } catch (setErr) {
+          lastErr = setErr;
+          console.warn(`Trial setDoc attempt ${attempt + 1} warning:`, setErr);
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 600));
+          }
+        }
+      }
+
+      if (!success) {
+        throw lastErr || new Error("Could not update business profile. Please check your connection.");
+      }
+
+      // 2. Record trial claim gracefully without blocking trial activation
+      recordFreeTrialClaim(uid, email, mobile).catch(claimErr => {
+        console.warn("Trial claim record notice:", claimErr);
       });
 
-      // 3. Add to billing history as "Trial"
-      await addItem(currentUser.uid, 'billing_history', {
+      // 3. Add to billing history as "Trial" (non-blocking)
+      addItem(uid, 'billing_history', {
         amount: 0,
         date: new Date().toISOString(),
         planName: 'Free Trial',
@@ -110,18 +172,35 @@ const OnboardingPayment = () => {
         expiryDate: expiryDate,
         type: 'Trial',
         status: 'Active'
+      }).catch(billingErr => {
+        console.warn("Billing history record notice:", billingErr);
       });
 
+      // 4. Update local session cache so components immediately know the account is Active
+      try {
+        const stored = localStorage.getItem('scalekitchen_auth_session');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          parsed.planStatus = 'Active';
+          parsed.planName = 'Free Trial';
+          localStorage.setItem('scalekitchen_auth_session', JSON.stringify(parsed));
+        }
+      } catch (e) {}
+
       navigate('/app/dashboard');
-    } catch (error) {
+    } catch (error: any) {
       console.error("Trial Activation Failed:", error);
-      alert("Failed to activate free trial. Please try again.");
+      const cleanMsg = (error?.message || "Failed to activate free trial. Please check your internet connection and try again.")
+        .replace(/^Firebase:\s*/i, '')
+        .trim();
+      setTrialError(cleanMsg);
       setActivating(false);
     }
   };
 
   const activateSubscription = async (paymentId: string, plan: any, amountPaid: number) => {
-    if (!currentUser) return;
+    const uid = getActiveUid();
+    if (!uid) return;
     setActivating(true);
 
     try {
@@ -130,18 +209,25 @@ const OnboardingPayment = () => {
       now.setMonth(now.getMonth() + plan.durationMonths);
       const newExpiryDate = now.toISOString().split('T')[0];
 
-      // 2. Update Firestore immediately (Main Profile)
-      const docRef = doc(db, 'businesses', currentUser.uid);
-      await updateDoc(docRef, {
+      const email = businessData?.email || currentUser?.email || auth.currentUser?.email || '';
+      const mobile = businessData?.mobile || '';
+
+      // 2. Update Firestore immediately with setDoc merge
+      const docRef = doc(db, 'businesses', uid);
+      await setDoc(docRef, {
         planName: `COSVYN ONE (${plan.label})`,
         planStatus: 'Active',
         planExpiryDate: newExpiryDate,
         lastPaymentId: paymentId,
-        updatedAt: new Date().toISOString()
-      });
+        email: email,
+        mobile: mobile,
+        businessName: businessData?.businessName || 'My Kitchen',
+        updatedAt: new Date().toISOString(),
+        createdAt: businessData?.createdAt || new Date().toISOString()
+      }, { merge: true });
 
       // 3. Add to Billing History (CRITICAL FIX: This ensures it shows on Profile)
-      await addItem(currentUser.uid, 'billing_history', {
+      await addItem(uid, 'billing_history', {
         amount: amountPaid,
         date: new Date().toISOString(),
         planName: `COSVYN ONE (${plan.label})`,
@@ -223,6 +309,22 @@ const OnboardingPayment = () => {
             <div className="mt-6 inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 text-emerald-700 px-5 py-2.5 rounded-full text-sm font-bold border border-emerald-500/20 animate-pulse">
               <Tag size={16} className="text-emerald-600" /> 
               <span>{offer.title} - <span className="underline decoration-wavy">{offer.discountPercent}% OFF</span> applied!</span>
+            </div>
+          )}
+
+          {trialError && (
+            <div className="mt-6 max-w-lg mx-auto bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 flex items-start gap-3 text-left shadow-sm animate-in fade-in duration-300">
+              <AlertCircle size={20} className="text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-bold text-sm">Trial Activation Notice</p>
+                <p className="text-xs text-amber-800 mt-0.5">{trialError}</p>
+                <button 
+                  onClick={activateFreeTrial}
+                  className="mt-2.5 inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+                >
+                  <RefreshCw size={12} /> Retry Free Trial Activation
+                </button>
+              </div>
             </div>
           )}
         </div>

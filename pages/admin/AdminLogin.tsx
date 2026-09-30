@@ -39,11 +39,18 @@ const AdminLogin = () => {
         errorCode === 'auth/invalid-credential' || 
         errorCode === 'auth/user-not-found' || 
         errorCode === 'auth/wrong-password' ||
-        errorMessage.includes('invalid-credential')
+        errorMessage.includes('invalid-credential') ||
+        errorMessage.includes('user-not-found')
       ) {
          setError("Invalid email or password. Please verify your credentials and try again.");
+      } else if (errorCode === 'auth/network-request-failed') {
+         setError("Network connection issue communicating with auth servers. Please retry in a moment.");
       } else {
-         setError("Login failed: " + (err.message || "Unknown error"));
+         const cleanMsg = (err.message || "Login failed. Please verify your details.")
+           .replace(/^Firebase:\s*/i, '')
+           .replace(/\(auth\/[^)]+\)/g, '')
+           .trim();
+         setError(cleanMsg);
       }
       setLoading(false);
     }

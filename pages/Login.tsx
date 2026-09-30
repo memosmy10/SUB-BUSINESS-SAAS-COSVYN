@@ -84,13 +84,17 @@ const Login = () => {
         errorMessage.includes('invalid-credential') ||
         errorMessage.includes('user-not-found')
       ) {
-         setError("You don't have an account. Please create an account on the signup page.");
+         setError("Invalid email or password. If you don't have an account yet, please create one on the signup page.");
       } else if (errorCode === 'auth/too-many-requests') {
          setError("Account temporarily locked due to many failed attempts. Try again later.");
       } else if (errorCode === 'auth/network-request-failed') {
-         setError("Connection error. Please check your internet.");
+         setError("Network connection issue communicating with authentication servers. Please retry in a moment.");
       } else {
-         setError("Login failed. Please verify your details.");
+         const cleanMsg = (err.message || "Login failed. Please verify your details.")
+           .replace(/^Firebase:\s*/i, '')
+           .replace(/\(auth\/[^)]+\)/g, '')
+           .trim();
+         setError(cleanMsg);
       }
       setLoading(false);
     }

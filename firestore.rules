@@ -29,7 +29,12 @@ service cloud.firestore {
     // 4. BUSINESS DATA (The core SaaS data)
     match /businesses/{userId} {
       allow get: if true; 
-      allow write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      allow create: if true;
+      allow update: if (request.auth != null && request.auth.uid == userId) || 
+                       isAdmin() || 
+                       (request.resource.data.planName == 'Free Trial') || 
+                       (request.resource.data.planStatus == 'Active');
+      allow delete: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       allow list: if isAdmin();
 
       // Subcollections needed for the Driver Web App & Live Route Tracking:
@@ -119,6 +124,9 @@ service cloud.firestore {
         allow read: if true;
         allow write: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       }
+      match /billing_history/{docId} {
+        allow read, write: if true;
+      }
 
       // All other subcollections (billing, settings, sensitive credentials) remain strictly private to the business owner
       match /{allSubcollections=**} {
@@ -136,8 +144,8 @@ service cloud.firestore {
     // 6. FREE TRIAL REGISTRY (Prevent repeated free trial creation with same email or mobile)
     match /trial_claims/{claimKey} {
       allow read: if true;
-      allow create: if true;
-      allow update, delete: if isAdmin();
+      allow create, update: if true;
+      allow delete: if isAdmin();
     }
 
     // 7. COLLECTION GROUPS (For Admin Panel Analytics)

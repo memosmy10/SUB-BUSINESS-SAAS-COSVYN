@@ -1,14 +1,21 @@
 
-// @ts-ignore
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { 
+  getAuth, 
+  initializeAuth, 
+  browserLocalPersistence, 
+  browserSessionPersistence, 
+  inMemoryPersistence, 
+  indexedDBLocalPersistence,
+  GoogleAuthProvider 
+} from "firebase/auth";
 import { initializeFirestore, memoryLocalCache, setLogLevel } from "firebase/firestore";
 
 // Silence internal WebChannel reconnect logs in iFrame
 setLogLevel('silent');
 
 // Your web app's Firebase configuration
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyBdOar16LP6FsYfkMZbpejixqX9XIlaHu4",
   authDomain: "subbussinesssaas.firebaseapp.com",
   projectId: "subbussinesssaas",
@@ -19,7 +26,18 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+
+// Initialize Auth with browser and memory persistence (prevents iframe sandbox indexedDB SecurityError and auth/network-request-failed)
+export const auth = (() => {
+  try {
+    return initializeAuth(app, {
+      persistence: [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+    });
+  } catch {
+    return getAuth(app);
+  }
+})();
+
 export const googleProvider = new GoogleAuthProvider();
 
 // Use memoryLocalCache to ensure clean in-memory state in iframe environments

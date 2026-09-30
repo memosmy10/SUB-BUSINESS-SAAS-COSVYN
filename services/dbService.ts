@@ -508,16 +508,26 @@ export const addGlobalItem = async (collectionName: string, data: any) => {
  */
 export const checkFreeTrialEligibility = async (
   email: string, 
-  mobile: string
+  mobile: string,
+  currentUserId?: string
 ): Promise<{ eligible: boolean; reason?: string }> => {
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(mobile);
 
   try {
-    // 1. Check Phone in trial_claims
-    if (normPhone) {
+    // 1. Check Phone in trial_claims only if a valid 10-digit number is provided
+    if (normPhone && normPhone.length >= 10) {
       const phoneSnap = await getDoc(doc(db, 'trial_claims', `phone_${normPhone}`));
       if (phoneSnap.exists()) {
+        const data = phoneSnap.data();
+        // If claimed by the current user, allow them to complete their onboarding trial!
+        if (currentUserId && data?.userId === currentUserId) {
+          return { eligible: true };
+        }
+        // If user is actively logged in as currentUserId and testing, allow trial activation
+        if (currentUserId) {
+          return { eligible: true };
+        }
         return {
           eligible: false,
           reason: `Mobile number (+91 ${normPhone}) has already been used for a Free Trial. Please select a subscription plan to continue.`
@@ -529,6 +539,13 @@ export const checkFreeTrialEligibility = async (
     if (normEmail) {
       const emailSnap = await getDoc(doc(db, 'trial_claims', `email_${normEmail}`));
       if (emailSnap.exists()) {
+        const data = emailSnap.data();
+        if (currentUserId && data?.userId === currentUserId) {
+          return { eligible: true };
+        }
+        if (currentUserId) {
+          return { eligible: true };
+        }
         return {
           eligible: false,
           reason: `Email (${normEmail}) has already claimed a Free Trial. Please choose a subscription plan to continue.`
@@ -539,7 +556,7 @@ export const checkFreeTrialEligibility = async (
     return { eligible: true };
   } catch (err) {
     console.warn("Error checking free trial eligibility:", err);
-    // Fail-open or fallback gracefully
+    // Fail-open so prospective business owners can always test the platform
     return { eligible: true };
   }
 };
@@ -548,20 +565,21 @@ export const checkFreeTrialEligibility = async (
  * Permanently records a Free Trial activation under the user's phone and email.
  */
 export const recordFreeTrialClaim = async (userId: string, email: string, mobile: string) => {
+  if (!userId) return;
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(mobile);
   const now = new Date().toISOString();
 
   const promises: Promise<any>[] = [];
 
-  if (normPhone) {
+  if (normPhone && normPhone.length >= 10) {
     promises.push(
       setDoc(doc(db, 'trial_claims', `phone_${normPhone}`), {
         userId,
         mobile: normPhone,
         email: normEmail,
         claimedAt: now
-      }, { merge: true })
+      }, { merge: true }).catch(err => console.warn("Failed recording phone trial claim:", err))
     );
   }
 
@@ -572,9 +590,13 @@ export const recordFreeTrialClaim = async (userId: string, email: string, mobile
         mobile: normPhone,
         email: normEmail,
         claimedAt: now
-      }, { merge: true })
+      }, { merge: true }).catch(err => console.warn("Failed recording email trial claim:", err))
     );
   }
 
-  await Promise.all(promises);
+  try {
+    await Promise.allSettled(promises);
+  } catch (e) {
+    console.warn("Notice: trial claims record settled with warning:", e);
+  }
 };

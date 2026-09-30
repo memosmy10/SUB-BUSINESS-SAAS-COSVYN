@@ -49,33 +49,43 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      // 1. Check if phone number was already used for a free trial
-      const trialCheck = await checkFreeTrialEligibility(formData.email.trim(), formData.mobile);
-      if (!trialCheck.eligible) {
-        // We still allow account creation if they want to subscribe to a paid plan, but notify them
-        sessionStorage.setItem('trial_already_claimed', 'true');
+      // 1. Optional trial check (non-blocking)
+      try {
+        const trialCheck = await checkFreeTrialEligibility(formData.email.trim(), formData.mobile.trim());
+        if (!trialCheck.eligible) {
+          sessionStorage.setItem('trial_already_claimed', 'true');
+        }
+      } catch (tErr) {
+        console.warn("Trial eligibility check note:", tErr);
       }
 
       // 2. Create Authentication User
       const user = await signupWithEmail(formData.email.trim(), formData.password);
 
-      // 3. Create Inactive Profile in Firestore
-      await setDoc(doc(db, 'businesses', user.uid), {
-        ownerName: '', // To be filled later in profile
+      // 3. Create Initial Profile in Firestore
+      const initProfile = {
+        ownerName: '',
         email: formData.email.trim(),
-        mobile: formData.mobile,
-        businessName: formData.businessName,
+        mobile: formData.mobile.trim(),
+        businessName: formData.businessName.trim(),
         state: '',
         city: '',
         country: 'India',
         description: '',
         category: 'Tiffin Service',
-        isProfileComplete: false, // Mark as incomplete since we removed fields
+        isProfileComplete: false,
         planName: 'None',
         planExpiryDate: new Date().toISOString().split('T')[0],
         planStatus: 'Inactive',
-        createdAt: new Date().toISOString()
-      });
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      try {
+        await setDoc(doc(db, 'businesses', user.uid), initProfile, { merge: true });
+      } catch (dbErr) {
+        console.warn("Initial profile write note:", dbErr);
+      }
 
       navigate('/onboarding');
     } catch (err: any) {
@@ -85,9 +95,15 @@ const Signup = () => {
       } else if (err.code === 'auth/invalid-email') {
         setError("Invalid email address format.");
       } else if (err.code === 'auth/weak-password') {
-        setError("Password is too weak.");
+        setError("Password should be at least 6 characters.");
+      } else if (err.code === 'auth/network-request-failed') {
+        setError("Network connection issue communicating with auth service. Please check your internet connection and retry.");
       } else {
-        setError(err.message || "Failed to create account. Please check your details and try again.");
+        const cleanMsg = (err.message || "Failed to create account. Please check your details and try again.")
+          .replace(/^Firebase:\s*/i, '')
+          .replace(/\(auth\/[^)]+\)/g, '')
+          .trim();
+        setError(cleanMsg);
       }
     } finally {
       setLoading(false);

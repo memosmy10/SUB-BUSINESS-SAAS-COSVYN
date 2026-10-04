@@ -46,20 +46,22 @@ const Profile = () => {
           // if currently editing, preserve form field changes unless uninitialized
           ...(isEditing ? {} : data)
         }));
-        Object.assign(INITIAL_BUSINESS_PROFILE, data);
       } else {
+        // Document has not yet been provisioned; create safe default profile without overwriting
         const newProfile = {
           ...INITIAL_BUSINESS_PROFILE,
           email: currentUser.email || '',
           ownerName: currentUser.displayName || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
-        await setDoc(docRef, newProfile);
+        await setDoc(docRef, newProfile, { merge: true }).catch(console.warn);
         setProfile(newProfile);
         setFormData(newProfile);
       }
       setLoading(false);
     }, (err) => {
-      console.error("Error fetching profile real-time:", err);
+      console.warn("Profile snapshot notice:", err?.message);
       setLoading(false);
     });
 
@@ -97,18 +99,28 @@ const Profile = () => {
       formData.city?.trim()
     );
 
-    const updatedProfile = {
-      ...formData,
+    // SECURITY FIX: Strictly isolate profile fields from subscription & trial lifecycle fields
+    // This prevents profile updates from ever resetting planExpiryDate or planStatus
+    const profileFieldsToUpdate = {
+      ownerName: formData.ownerName?.trim() || '',
+      email: formData.email?.trim() || currentUser.email || '',
+      mobile: formData.mobile?.trim() || '',
+      businessName: formData.businessName?.trim() || '',
       logoUrl: formData.logoUrl || profile.logoUrl || '',
-      isProfileComplete: isComplete
+      description: formData.description?.trim() || '',
+      category: formData.category || 'Cloud Kitchen',
+      country: formData.country || 'India',
+      state: formData.state || '',
+      city: formData.city || '',
+      isProfileComplete: isComplete,
+      updatedAt: new Date().toISOString()
     };
 
     try {
       const docRef = doc(db, 'businesses', currentUser.uid);
-      await updateDoc(docRef, updatedProfile);
+      await updateDoc(docRef, profileFieldsToUpdate);
       
-      setProfile(updatedProfile);
-      Object.assign(INITIAL_BUSINESS_PROFILE, updatedProfile);
+      setProfile(prev => ({ ...prev, ...profileFieldsToUpdate }));
       setIsEditing(false);
       alert("Profile and brand logo updated successfully!");
     } catch (e) {

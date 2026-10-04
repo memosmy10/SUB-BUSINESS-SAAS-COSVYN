@@ -29,11 +29,42 @@ service cloud.firestore {
     // 4. BUSINESS DATA (The core SaaS data)
     match /businesses/{userId} {
       allow get: if true; 
-      allow create: if true;
-      allow update: if (request.auth != null && request.auth.uid == userId) || 
-                       isAdmin() || 
-                       (request.resource.data.planName == 'Free Trial') || 
-                       (request.resource.data.planStatus == 'Active');
+      allow create: if (request.auth != null && request.auth.uid == userId) || isAdmin();
+      allow update: if 
+        isAdmin() || 
+        (
+          request.auth != null && request.auth.uid == userId && (
+            // A. First-time Free Trial activation (strictly blocked if trial was ever claimed or started before)
+            (
+              request.resource.data.planName == 'Free Trial' &&
+              (!('trialClaimed' in resource.data) || resource.data.trialClaimed != true) &&
+              (!('trialStartDate' in resource.data) || resource.data.trialStartDate == null) &&
+              request.resource.data.trialClaimed == true
+            ) ||
+            // B. Paid subscription activation/renewal with payment ID
+            (
+              'lastPaymentId' in request.resource.data && 
+              request.resource.data.lastPaymentId != null &&
+              request.resource.data.lastPaymentId != ''
+            ) ||
+            // C. Auto-marking expired when trial or subscription period has elapsed
+            (
+              request.resource.data.planStatus == 'Expired'
+            ) ||
+            // D. General profile, branding, stats sync, or daily login updates:
+            // STRICTLY FORBIDDEN from extending planExpiryDate to a later date, and FORBIDDEN from resetting trialClaimed
+            (
+              (!('trialClaimed' in request.resource.data) || request.resource.data.trialClaimed == resource.data.trialClaimed || resource.data.trialClaimed != true) &&
+              (!('trialStartDate' in request.resource.data) || request.resource.data.trialStartDate == resource.data.trialStartDate || !('trialStartDate' in resource.data)) &&
+              (
+                !('planExpiryDate' in request.resource.data) || 
+                request.resource.data.planExpiryDate == resource.data.planExpiryDate ||
+                // Allow fixing/repairing to an EARLIER date (anti-tamper repair)
+                request.resource.data.planExpiryDate <= resource.data.planExpiryDate
+              )
+            )
+          )
+        );
       allow delete: if (request.auth != null && request.auth.uid == userId) || isAdmin();
       allow list: if isAdmin();
 
@@ -144,8 +175,8 @@ service cloud.firestore {
     // 6. FREE TRIAL REGISTRY (Prevent repeated free trial creation with same email or mobile)
     match /trial_claims/{claimKey} {
       allow read: if true;
-      allow create, update: if true;
-      allow delete: if isAdmin();
+      allow create: if true; // Allows recording trial on first activation
+      allow update, delete: if isAdmin(); // Strictly immutable once claimed; only Super Admin can modify
     }
 
     // 7. COLLECTION GROUPS (For Admin Panel Analytics)

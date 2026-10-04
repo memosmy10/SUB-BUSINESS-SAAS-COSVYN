@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, Download, Loader2, UserCheck, UserX, Clock, MapPin, Calendar,
   Building2, Bike, Users, IndianRupee, RefreshCw, Eye, Phone, MessageSquare, 
-  Mail, Activity, CheckCircle, AlertCircle, X, ShieldAlert, Sparkles, TrendingUp
+  Mail, Activity, CheckCircle, AlertCircle, X, ShieldAlert, Sparkles, TrendingUp, Shield
 } from 'lucide-react';
 import { 
   useAdminTenants, 
@@ -38,13 +38,40 @@ const AdminUsers = () => {
      state: ''
   });
 
-  // Auto-sync initial stats in background if any tenant is missing aggregate counts
+  // Auto-sync initial stats and auto-audit out-of-sync trial expiry dates in background
   useEffect(() => {
     if (tenants.length > 0) {
-      const missingStats = tenants.filter(t => t.branchCount === undefined || t.kitchenRevenue === undefined);
-      if (missingStats.length > 0) {
-        // Sync up to first 5 missing stats silently
-        const idsToSync = missingStats.slice(0, 5).map(t => t.id);
+      const today = new Date().toISOString().split('T')[0];
+      const needsAudit = tenants.filter(t => {
+        // Missing live aggregate counts
+        if (t.branchCount === undefined || t.kitchenRevenue === undefined) return true;
+        // Check if tenant is on Free Trial but dates need alignment
+        if ((t.planName || '').toLowerCase().includes('trial')) {
+          const historicalDates: string[] = [];
+          if (t.createdAt) historicalDates.push(t.createdAt.split('T')[0]);
+          if (t.trialOriginalStartDate) historicalDates.push(t.trialOriginalStartDate.split('T')[0]);
+          if (t.trialStartDate) historicalDates.push(t.trialStartDate.split('T')[0]);
+          if (Array.isArray(t.recentLoginDates)) {
+            t.recentLoginDates.forEach((d: string) => {
+              if (typeof d === 'string' && d.match(/^\d{4}-\d{2}-\d{2}$/)) historicalDates.push(d);
+            });
+          }
+          historicalDates.sort();
+          if (historicalDates.length > 0) {
+            const earliestOrigin = historicalDates[0];
+            const expObj = new Date(earliestOrigin);
+            expObj.setDate(expObj.getDate() + 30);
+            const correctExp = expObj.toISOString().split('T')[0];
+            if (t.planExpiryDate > correctExp || t.trialStartDate !== earliestOrigin || !t.trialClaimed) {
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+
+      if (needsAudit.length > 0) {
+        const idsToSync = needsAudit.slice(0, 10).map(t => t.id);
         syncAllBusinessesLiveStats(idsToSync).catch(console.warn);
       }
     }
@@ -682,6 +709,53 @@ const AdminUsers = () => {
                   </span>
                 </div>
               </div>
+
+              {/* FREE TRIAL LIFECYCLE & TAMPER AUDIT */}
+              {(loginHistoryBiz.planName || '').toLowerCase().includes('trial') && (
+                <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Shield size={13} className="text-emerald-400" />
+                      Free Trial Lifecycle & Anti-Tamper
+                    </h4>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      Locked & Enforced
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block mb-0.5">Account / Trial Origin:</span>
+                      <span className="font-mono font-bold text-slate-200">
+                        {loginHistoryBiz.trialStartDate || loginHistoryBiz.createdAt?.split('T')[0] || (Array.isArray(loginHistoryBiz.recentLoginDates) ? [...loginHistoryBiz.recentLoginDates].sort()[0] : 'N/A')}
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block mb-0.5">Trial Expiry Date:</span>
+                      <span className="font-mono font-bold text-cyan-400">
+                        {loginHistoryBiz.planExpiryDate || 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-800/80">
+                    <span className="text-slate-400">Days Remaining:</span>
+                    <span className="font-bold text-emerald-400">
+                      {loginHistoryBiz.planExpiryDate ? `${getDaysDifference(todayStr, loginHistoryBiz.planExpiryDate)} days` : '0 days'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!loginHistoryBiz.id) return;
+                      await syncBusinessLiveStats(loginHistoryBiz.id);
+                      const freshBiz = tenants.find(t => t.id === loginHistoryBiz.id);
+                      if (freshBiz) setLoginHistoryBiz(freshBiz);
+                    }}
+                    className="w-full mt-2 py-1.5 px-3 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <RefreshCw size={12} />
+                    Re-align & Enforce Trial Dates From Origin
+                  </button>
+                </div>
+              )}
 
               <div>
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">

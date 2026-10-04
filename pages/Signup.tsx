@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Zap, CheckCircle, ArrowRight, Loader2, Building, Mail, Lock, Phone, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Zap, CheckCircle, ArrowRight, Loader2, Building, Mail, Lock, Phone, ArrowLeft, AlertCircle, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
@@ -21,6 +21,7 @@ const Signup = () => {
   }, []);
 
   const [formData, setFormData] = useState({
+    ownerName: '',
     businessName: '',
     email: '',
     mobile: '',
@@ -64,7 +65,7 @@ const Signup = () => {
 
       // 3. Create Initial Profile in Firestore
       const initProfile = {
-        ownerName: '',
+        ownerName: formData.ownerName.trim(),
         email: formData.email.trim(),
         mobile: formData.mobile.trim(),
         businessName: formData.businessName.trim(),
@@ -73,7 +74,7 @@ const Signup = () => {
         country: 'India',
         description: '',
         category: 'Tiffin Service',
-        isProfileComplete: false,
+        isProfileComplete: Boolean(formData.ownerName.trim() && formData.businessName.trim() && formData.mobile.trim()),
         planName: 'None',
         planExpiryDate: new Date().toISOString().split('T')[0],
         planStatus: 'Inactive',
@@ -183,6 +184,10 @@ const Signup = () => {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4">
+                <div className="relative">
+                  <User className="absolute left-3 top-3.5 text-slate-400" size={18} />
+                  <input required name="ownerName" type="text" placeholder="Owner / Full Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />
+                </div>
                 <div className="relative">
                   <Building className="absolute left-3 top-3.5 text-slate-400" size={18} />
                   <input required name="businessName" type="text" placeholder="Business Name" className="w-full pl-10 p-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none text-slate-900" onChange={handleChange} />

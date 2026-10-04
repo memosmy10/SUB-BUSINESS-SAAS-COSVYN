@@ -304,7 +304,8 @@ export const syncBusinessLiveStats = async (businessId: string) => {
   try {
     const todayStr = new Date().toISOString().split('T')[0];
 
-    const [branchesSnap, staffSnap, customersSnap, singlesSnap, paymentsSnap] = await Promise.all([
+    const [bizSnap, branchesSnap, staffSnap, customersSnap, singlesSnap, paymentsSnap] = await Promise.all([
+      getDoc(doc(db, 'businesses', businessId)).catch(() => null),
       getDocs(collection(db, 'businesses', businessId, 'branches')).catch(() => ({ docs: [] })),
       getDocs(collection(db, 'businesses', businessId, 'staff')).catch(() => ({ docs: [] })),
       getDocs(collection(db, 'businesses', businessId, 'customers')).catch(() => ({ docs: [] })),
@@ -349,7 +350,7 @@ export const syncBusinessLiveStats = async (businessId: string) => {
 
     const kitchenRevenue = Math.max(customersRevenue, recordedPayments);
 
-    const stats = {
+    const stats: any = {
       branchCount,
       deliveryBoysCount,
       totalUniqueCustomers,
@@ -358,7 +359,78 @@ export const syncBusinessLiveStats = async (businessId: string) => {
       lastStatsSyncAt: new Date().toISOString()
     };
 
-    await updateDoc(doc(db, 'businesses', businessId), stats).catch(() => {});
+    // SECURITY & AUDIT: Detect and permanently repair artificially extended or reset Free Trial dates
+    if (bizSnap && bizSnap.exists()) {
+      const bData = bizSnap.data();
+      const isFreeTrial = (bData.planName || '').toLowerCase().includes('trial');
+      
+      if (isFreeTrial) {
+        // Collect ALL candidate timestamps from historical footprints
+        const historicalDates: string[] = [];
+
+        if (bData.createdAt && typeof bData.createdAt === 'string') {
+          const cDate = bData.createdAt.split('T')[0];
+          if (cDate.match(/^\d{4}-\d{2}-\d{2}$/)) historicalDates.push(cDate);
+        }
+        if (bData.trialOriginalStartDate && typeof bData.trialOriginalStartDate === 'string') {
+          const sDate = bData.trialOriginalStartDate.split('T')[0];
+          if (sDate.match(/^\d{4}-\d{2}-\d{2}$/)) historicalDates.push(sDate);
+        }
+        if (bData.trialStartDate && typeof bData.trialStartDate === 'string') {
+          const sDate = bData.trialStartDate.split('T')[0];
+          if (sDate.match(/^\d{4}-\d{2}-\d{2}$/)) historicalDates.push(sDate);
+        }
+        if (Array.isArray(bData.recentLoginDates) && bData.recentLoginDates.length > 0) {
+          bData.recentLoginDates.forEach((d: string) => {
+            if (typeof d === 'string' && d.match(/^\d{4}-\d{2}-\d{2}$/)) {
+              historicalDates.push(d);
+            }
+          });
+        }
+        if (bData.firstLoginDate && typeof bData.firstLoginDate === 'string') {
+          historicalDates.push(bData.firstLoginDate);
+        }
+
+        // Sort chronologically ascending to strictly find the absolute earliest footprint
+        historicalDates.sort();
+        const earliestFootprint = historicalDates.length > 0 ? historicalDates[0] : todayStr;
+
+        const originObj = new Date(earliestFootprint);
+        const correctTrialExpiryObj = new Date(originObj);
+        correctTrialExpiryObj.setDate(correctTrialExpiryObj.getDate() + 30);
+        const correctTrialExpiry = correctTrialExpiryObj.toISOString().split('T')[0];
+
+        // If planExpiryDate is set beyond correctTrialExpiry or trial dates are out of sync:
+        if (
+          bData.planExpiryDate > correctTrialExpiry || 
+          !bData.trialClaimed || 
+          bData.trialStartDate !== earliestFootprint ||
+          bData.trialExpiryDate !== correctTrialExpiry
+        ) {
+          stats.trialClaimed = true;
+          stats.trialStartDate = earliestFootprint;
+          stats.trialOriginalStartDate = earliestFootprint;
+          stats.trialExpiryDate = correctTrialExpiry;
+          stats.trialOriginalExpiryDate = correctTrialExpiry;
+          stats.planExpiryDate = correctTrialExpiry;
+          stats.tamperResetDetected = bData.planExpiryDate > correctTrialExpiry;
+          stats.originalFootprintDate = earliestFootprint;
+
+          if (correctTrialExpiry < todayStr) {
+            stats.planStatus = 'Expired';
+          }
+        }
+      }
+
+      // Restore owner details if they were cleared during a previous trial reset
+      if (!bData.ownerName && bData.displayName) {
+        stats.ownerName = bData.displayName;
+      }
+    }
+
+    await updateDoc(doc(db, 'businesses', businessId), stats).catch((err) => {
+      console.warn("Notice: Live stats sync update:", err?.message);
+    });
     return stats;
   } catch (err) {
     console.error("Error syncing business live stats:", err);
@@ -503,8 +575,8 @@ export const addGlobalItem = async (collectionName: string, data: any) => {
 };
 
 /**
- * Checks if a given email or mobile number has already consumed a Free Trial.
- * Prevents users from abusing the 30-day trial with duplicate numbers or emails.
+ * Checks if a given email, mobile number, or user ID has already consumed a Free Trial.
+ * Prevents users from abusing or resetting the 30-day trial.
  */
 export const checkFreeTrialEligibility = async (
   email: string, 
@@ -515,19 +587,36 @@ export const checkFreeTrialEligibility = async (
   const normPhone = normalizePhone(mobile);
 
   try {
-    // 1. Check Phone in trial_claims only if a valid 10-digit number is provided
+    // 1. Check if the current user ID already has a recorded trial claim or business trial
+    if (currentUserId) {
+      const userClaimSnap = await getDoc(doc(db, 'trial_claims', `user_${currentUserId}`)).catch(() => null);
+      if (userClaimSnap && userClaimSnap.exists()) {
+        const claimData = userClaimSnap.data();
+        const claimDate = claimData?.claimedAt ? claimData.claimedAt.split('T')[0] : 'an earlier date';
+        return {
+          eligible: false,
+          reason: `Your 30-day Free Trial was already activated on ${claimDate}. Free trial is strictly 1 time per business.`
+        };
+      }
+
+      // Also check existing business doc
+      const bizSnap = await getDoc(doc(db, 'businesses', currentUserId)).catch(() => null);
+      if (bizSnap && bizSnap.exists()) {
+        const bData = bizSnap.data();
+        if (bData.trialClaimed === true || bData.trialStartDate || (bData.planName === 'Free Trial' && bData.createdAt)) {
+          const startDate = bData.trialStartDate ? bData.trialStartDate.split('T')[0] : (bData.createdAt ? bData.createdAt.split('T')[0] : '');
+          return {
+            eligible: false,
+            reason: `Your 30-day Free Trial was already activated${startDate ? ` on ${startDate}` : ''}. Free trial is strictly 1 time per business.`
+          };
+        }
+      }
+    }
+
+    // 2. Check Phone in trial_claims only if a valid 10-digit number is provided
     if (normPhone && normPhone.length >= 10) {
-      const phoneSnap = await getDoc(doc(db, 'trial_claims', `phone_${normPhone}`));
-      if (phoneSnap.exists()) {
-        const data = phoneSnap.data();
-        // If claimed by the current user, allow them to complete their onboarding trial!
-        if (currentUserId && data?.userId === currentUserId) {
-          return { eligible: true };
-        }
-        // If user is actively logged in as currentUserId and testing, allow trial activation
-        if (currentUserId) {
-          return { eligible: true };
-        }
+      const phoneSnap = await getDoc(doc(db, 'trial_claims', `phone_${normPhone}`)).catch(() => null);
+      if (phoneSnap && phoneSnap.exists()) {
         return {
           eligible: false,
           reason: `Mobile number (+91 ${normPhone}) has already been used for a Free Trial. Please select a subscription plan to continue.`
@@ -535,17 +624,10 @@ export const checkFreeTrialEligibility = async (
       }
     }
 
-    // 2. Check Email in trial_claims
+    // 3. Check Email in trial_claims
     if (normEmail) {
-      const emailSnap = await getDoc(doc(db, 'trial_claims', `email_${normEmail}`));
-      if (emailSnap.exists()) {
-        const data = emailSnap.data();
-        if (currentUserId && data?.userId === currentUserId) {
-          return { eligible: true };
-        }
-        if (currentUserId) {
-          return { eligible: true };
-        }
+      const emailSnap = await getDoc(doc(db, 'trial_claims', `email_${normEmail}`)).catch(() => null);
+      if (emailSnap && emailSnap.exists()) {
         return {
           eligible: false,
           reason: `Email (${normEmail}) has already claimed a Free Trial. Please choose a subscription plan to continue.`
@@ -556,41 +638,53 @@ export const checkFreeTrialEligibility = async (
     return { eligible: true };
   } catch (err) {
     console.warn("Error checking free trial eligibility:", err);
-    // Fail-open so prospective business owners can always test the platform
     return { eligible: true };
   }
 };
 
 /**
- * Permanently records a Free Trial activation under the user's phone and email.
+ * Permanently records a Free Trial activation under the user's ID, phone, and email.
  */
-export const recordFreeTrialClaim = async (userId: string, email: string, mobile: string) => {
+export const recordFreeTrialClaim = async (userId: string, email: string, mobile: string, originStartDate?: string) => {
   if (!userId) return;
   const normEmail = normalizeEmail(email);
   const normPhone = normalizePhone(mobile);
   const now = new Date().toISOString();
+  const trialStart = originStartDate || now;
 
-  const promises: Promise<any>[] = [];
+  const startObj = new Date(trialStart);
+  const expiryObj = new Date(startObj);
+  expiryObj.setDate(expiryObj.getDate() + 30);
+  const expiryDate = expiryObj.toISOString().split('T')[0];
 
+  const claimData = {
+    userId,
+    mobile: normPhone,
+    email: normEmail,
+    claimedAt: now,
+    trialStartDate: trialStart,
+    trialExpiryDate: expiryDate
+  };
+
+  const promises: Promise<any>[] = [
+    // 1. By User UID
+    setDoc(doc(db, 'trial_claims', `user_${userId}`), claimData, { merge: true })
+      .catch(err => console.warn("Failed recording user trial claim:", err))
+  ];
+
+  // 2. By Phone
   if (normPhone && normPhone.length >= 10) {
     promises.push(
-      setDoc(doc(db, 'trial_claims', `phone_${normPhone}`), {
-        userId,
-        mobile: normPhone,
-        email: normEmail,
-        claimedAt: now
-      }, { merge: true }).catch(err => console.warn("Failed recording phone trial claim:", err))
+      setDoc(doc(db, 'trial_claims', `phone_${normPhone}`), claimData, { merge: true })
+        .catch(err => console.warn("Failed recording phone trial claim:", err))
     );
   }
 
+  // 3. By Email
   if (normEmail) {
     promises.push(
-      setDoc(doc(db, 'trial_claims', `email_${normEmail}`), {
-        userId,
-        mobile: normPhone,
-        email: normEmail,
-        claimedAt: now
-      }, { merge: true }).catch(err => console.warn("Failed recording email trial claim:", err))
+      setDoc(doc(db, 'trial_claims', `email_${normEmail}`), claimData, { merge: true })
+        .catch(err => console.warn("Failed recording email trial claim:", err))
     );
   }
 

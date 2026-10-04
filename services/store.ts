@@ -557,11 +557,15 @@ export interface BusinessProfile {
   planName: string;
   planExpiryDate: string; 
   planStatus: 'Active' | 'Expired' | 'Inactive';
+  trialClaimed?: boolean;
+  trialStartDate?: string;
+  trialExpiryDate?: string;
+  trialOriginalExpiryDate?: string;
 }
 
 export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
   ownerName: "", email: "", mobile: "", businessName: "", logoUrl: "", description: "",
   category: "Cloud Kitchen", country: "India", state: "", city: "",
   isProfileComplete: false, planName: "None", planExpiryDate: new Date().toISOString().split('T')[0],
-  planStatus: 'Inactive'
+  planStatus: 'Inactive', trialClaimed: false
 };

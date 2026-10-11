@@ -1,6 +1,7 @@
 import React, { useState, useEffect, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, Outlet, NavLink, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
+import { FeatureAnnouncementModal } from './components/FeatureAnnouncementModal';
 import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -336,6 +337,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
       </div>
 
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} businessData={businessData} />
+      <FeatureAnnouncementModal businessData={businessData} />
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         {showExpiryWarning && (

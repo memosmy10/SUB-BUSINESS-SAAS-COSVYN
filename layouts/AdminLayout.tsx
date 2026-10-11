@@ -52,7 +52,7 @@ const AdminLayout = () => {
     { icon: LayoutDashboard, label: 'Dashboard', path: '/admin/dashboard' },
     { icon: Users, label: 'Owners', path: '/admin/users' },
     { icon: FileStack, label: 'Invoice Credits', path: '/admin/invoice-credits' },
-    { icon: Send, label: 'Broadcast', path: '/admin/messages' },
+    { icon: Send, label: 'Broadcast & Outreach', path: '/admin/messages' },
     { icon: CreditCard, label: 'Payments', path: '/admin/payments' },
     { icon: Tag, label: 'Plans & Offers', path: '/admin/plans' },
     { icon: BarChart3, label: 'Analytics', path: '/admin/analytics' },

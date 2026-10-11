@@ -28,6 +28,7 @@ const Messages = () => {
     if (!currentUser || !profile) return [];
     
     return adminMessages.filter((msg: any) => {
+      if (msg.channel === 'whatsapp' || msg.channel === 'email' || msg.isExternalCampaign) return false;
       const isGlobal = msg.targetType === 'ALL';
       const isActiveOnly = msg.targetType === 'ACTIVE' && profile.planStatus === 'Active';
       const isInactiveOnly = msg.targetType === 'INACTIVE' && profile.planStatus !== 'Active';

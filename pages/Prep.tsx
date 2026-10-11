@@ -5,7 +5,7 @@ import {
   Info, Star, Users, Package, CheckCircle2, Clock, ChevronDown, Store
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
-import { GlobalCustomer, GlobalPlan, getTodayStr } from '../services/store';
+import { GlobalCustomer, GlobalPlan, getTodayStr, isPlanActiveOnDate, shiftDateStr } from '../services/store';
 
 const Prep = () => {
   const { data: customers = [], loading: l1 } = useStreamCollection<GlobalCustomer>('customers');
@@ -25,9 +25,7 @@ const Prep = () => {
   }, [branches, selectedBranch]);
 
   const todayStr = getTodayStr();
-  const now = new Date();
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+  const tomorrowStr = shiftDateStr(todayStr, 1);
 
   const getPrepData = (targetDate: string) => {
     const [y, m, d] = targetDate.split('-').map(Number);
@@ -54,23 +52,18 @@ const Prep = () => {
 
       (c.activePlans || []).forEach(ap => {
         const planConfig = plansArr.find(p => p.id === ap.planId);
-        // Fallback weekdays if planConfig not found (e.g. custom plans)
-        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
 
-        const isPaused = ap.pauses?.some(p => targetDate >= p.start && targetDate <= p.end);
-        const isValidDay = weekdays.includes(dayOfWeek);
-        const isWithinRange = targetDate >= ap.startDate && targetDate <= ap.endDate;
-
-        if (isWithinRange && isValidDay && !isPaused) {
+        if (isPlanActiveOnDate(ap, targetDate, planConfig)) {
           const time = ap.mealTime;
-          const isStarred = ap.isStarred || (c.highlightMark && c.highlightMark !== 'None');
+          const isStarred = Boolean(ap.isStarred || (c.highlightMark && c.highlightMark !== 'None'));
+          const qty = Number(ap.quantity) || 1;
           
-          sessionTotals[time] = (sessionTotals[time] || 0) + 1;
+          sessionTotals[time] = (sessionTotals[time] || 0) + qty;
           customerHasMealOnThisDate = true;
 
           if (isStarred) {
-            totalStarredBoxes++;
-            starredSummary[time][ap.planName] = (starredSummary[time][ap.planName] || 0) + 1;
+            totalStarredBoxes += qty;
+            starredSummary[time][ap.planName] = (starredSummary[time][ap.planName] || 0) + qty;
             specialRequests.push({
               id: `${c.id}-${time}-${ap.planId}`,
               name: c.name,
@@ -82,8 +75,8 @@ const Prep = () => {
               isStarred: true
             });
           } else {
-            totalNormalBoxes++;
-            normalSummary[time][ap.planName] = (normalSummary[time][ap.planName] || 0) + 1;
+            totalNormalBoxes += qty;
+            normalSummary[time][ap.planName] = (normalSummary[time][ap.planName] || 0) + qty;
           }
         }
       });

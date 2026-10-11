@@ -7,9 +7,12 @@ import {
   Compass, Navigation, Sparkles, Zap, RotateCcw, Share2, Smartphone, Activity,
   Calendar, X
 } from 'lucide-react';
-import { useStreamCollection, updateItem } from '../services/dbService';
+import { useStreamCollection, updateItem, getTargetBusinessId } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
-import { calculateRemainingDeliveries, getTodayStr, getPlanDeliveryDayNumber, getCustomerUncollectedBoxesCount } from '../services/store';
+import { 
+  calculateRemainingDeliveries, getTodayStr, getPlanDeliveryDayNumber, 
+  getCustomerUncollectedBoxesCount, getCustomerScheduledPlansForSession, isPlanActiveOnDate 
+} from '../services/store';
 import { writeBatch, doc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { RouteOptimizerModal } from '../components/RouteOptimizerModal';
@@ -117,25 +120,20 @@ const Deliveries = () => {
       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
       return true;
     }).forEach(c => {
-      (c.activePlans || []).forEach((ap: any) => {
-        const planConfig = plans.find(p => p.id === ap.planId);
-        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
-        
-        const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
-        const isValidDay = weekdays.includes(targetDayOfWeek);
-        const isWithinRange = selectedDate >= ap.startDate && selectedDate <= ap.endDate;
-        
-        if (isWithinRange && isValidDay && !isPaused) {
-          if (ap.mealTime === 'Breakfast') stats.Breakfast++;
-          if (ap.mealTime === 'Lunch') stats.Lunch++;
-          if (ap.mealTime === 'Dinner') stats.Dinner++;
-          stats.GrandTotal++;
-        }
+      ['Breakfast', 'Lunch', 'Dinner'].forEach((session: any) => {
+        const scheduled = getCustomerScheduledPlansForSession(c, session, selectedDate, plans);
+        scheduled.forEach((ap: any) => {
+          const qty = Number(ap.quantity) || 1;
+          if (session === 'Breakfast') stats.Breakfast += qty;
+          if (session === 'Lunch') stats.Lunch += qty;
+          if (session === 'Dinner') stats.Dinner += qty;
+          stats.GrandTotal += qty;
+        });
       });
     });
 
     return stats;
-  }, [customers, plans, selectedBranch, selectedDate, targetDayOfWeek]);
+  }, [customers, plans, selectedBranch, selectedDate]);
 
   // --- DELIVERY BOY WISE WORKLOAD MATRIX FOR SELECTED DATE ---
   const deliveryBoyMatrix = useMemo(() => {
@@ -150,84 +148,85 @@ const Deliveries = () => {
         Dinner: 0, 
         Total: 0,
         breakdown: {
-          Breakfast: {} as Record<string, { count: number, isStarred: boolean }>,
-          Lunch: {} as Record<string, { count: number, isStarred: boolean }>,
-          Dinner: {} as Record<string, { count: number, isStarred: boolean }>
+          Breakfast: {} as Record<string, { count: number, isStarred: boolean, name: string }>,
+          Lunch: {} as Record<string, { count: number, isStarred: boolean, name: string }>,
+          Dinner: {} as Record<string, { count: number, isStarred: boolean, name: string }>
         }
       };
       
       customers.filter(c => c.deliveryBoyId === boy.id).forEach(c => {
-        (c.activePlans || []).forEach((ap: any) => {
-          const planConfig = plans.find(p => p.id === ap.planId);
-          const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
-          
-          const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
-          const isValidDay = weekdays.includes(targetDayOfWeek);
-          const isWithinRange = selectedDate >= ap.startDate && selectedDate <= ap.endDate;
-          
-          if (isWithinRange && isValidDay && !isPaused) {
-            const session = ap.mealTime as 'Breakfast' | 'Lunch' | 'Dinner';
-            boyWork[session]++;
-            boyWork.Total++;
-            
-            // Handle breakdown grouping
-            const planKey = `${ap.planName}-${ap.isStarred || false}`;
+        ['Breakfast', 'Lunch', 'Dinner'].forEach((session: any) => {
+          const scheduled = getCustomerScheduledPlansForSession(c, session, selectedDate, plans);
+          scheduled.forEach((ap: any) => {
+            const qty = Number(ap.quantity) || 1;
+            boyWork[session] += qty;
+            boyWork.Total += qty;
+
+            const isStarred = Boolean(ap.isStarred || (c.highlightMark && c.highlightMark !== 'None'));
+            const planKey = `${ap.planName}-${isStarred}`;
             if (!boyWork.breakdown[session][planKey]) {
-              boyWork.breakdown[session][planKey] = { count: 0, isStarred: ap.isStarred || (c.highlightMark && c.highlightMark !== 'None'), name: ap.planName };
+              boyWork.breakdown[session][planKey] = { count: 0, isStarred, name: ap.planName };
             }
-            boyWork.breakdown[session][planKey].count++;
-          }
+            boyWork.breakdown[session][planKey].count += qty;
+          });
         });
       });
       
       return boyWork;
     }).sort((a, b) => b.Total - a.Total);
-  }, [customers, plans, staff, selectedBranch, selectedDate, targetDayOfWeek]);
+  }, [customers, plans, staff, selectedBranch, selectedDate]);
 
   // 1. Filter customers scheduled for SELECTED DATE and current Meal Session
   const deliveriesToday = useMemo(() => {
     return customers.filter(c => {
       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
-      
-      const mealPlansToday = (c.activePlans || []).filter((ap: any) => {
-        const planConfig = plans.find(p => p.id === ap.planId);
-        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
-        
-        const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
-        const isValidDay = weekdays.includes(targetDayOfWeek);
-        const isWithinRange = selectedDate >= ap.startDate && selectedDate <= ap.endDate;
-        const matchesMeal = ap.mealTime === activeMealTab;
-        
-        return isWithinRange && isValidDay && !isPaused && matchesMeal;
-      });
-
-      return mealPlansToday.length > 0;
+      const scheduled = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
+      return scheduled.length > 0;
     });
-  }, [customers, plans, activeMealTab, selectedBranch, selectedDate, targetDayOfWeek]);
+  }, [customers, plans, activeMealTab, selectedBranch, selectedDate]);
 
   // Session metrics for selected date
   const sessionMetrics = useMemo(() => {
     let totalBoxes = 0;
     let totalStarBoxes = 0;
     deliveriesToday.forEach(c => {
-      const sessionPlans = (c.activePlans || []).filter((ap: any) => {
-        const planConfig = plans.find(p => p.id === ap.planId);
-        const weekdays = planConfig?.weekdays || ap.weekdays || [1,2,3,4,5,6];
-        const isPaused = ap.pauses?.some((p: any) => selectedDate >= p.start && selectedDate <= p.end);
-        return ap.mealTime === activeMealTab && weekdays.includes(targetDayOfWeek) && selectedDate >= ap.startDate && selectedDate <= ap.endDate && !isPaused;
+      const sessionPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
+      sessionPlans.forEach((ap: any) => {
+        const qty = Number(ap.quantity) || 1;
+        totalBoxes += qty;
+        if (ap.isStarred || (c.highlightMark && c.highlightMark !== 'None')) {
+          totalStarBoxes += qty;
+        }
       });
-      totalBoxes += sessionPlans.length;
-      totalStarBoxes += sessionPlans.filter((p: any) => p.isStarred || (c.highlightMark && c.highlightMark !== 'None')).length;
     });
     return { customers: deliveriesToday.length, plans: totalBoxes, starPlans: totalStarBoxes };
-  }, [deliveriesToday, activeMealTab, plans, selectedDate, targetDayOfWeek]);
+  }, [deliveriesToday, activeMealTab, plans, selectedDate]);
 
-  const handleMoveOrder = async (customerId: string, direction: 'up' | 'down') => {
-    if (!currentUser) return;
-    const cust = customers.find(c => c.id === customerId);
-    if (!cust) return;
-    const newOrder = direction === 'up' ? (cust.routeOrder || 0) - 1 : (cust.routeOrder || 0) + 1;
-    await updateItem(currentUser.uid, 'customers', customerId, { routeOrder: Math.max(0, newOrder) });
+  // Stable swap-based reordering for stops in active route
+  const handleMoveOrder = async (boyId: string, customerId: string, direction: 'up' | 'down') => {
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz) return;
+
+    const boyCustomers = deliveriesToday
+      .filter(c => c.deliveryBoyId === boyId)
+      .sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999));
+
+    const currentIndex = boyCustomers.findIndex(c => c.id === customerId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= boyCustomers.length) return;
+
+    const reordered = [...boyCustomers];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+
+    const batch = writeBatch(db);
+    reordered.forEach((c, idx) => {
+      const custRef = doc(db, 'businesses', effectiveBiz, 'customers', c.id);
+      batch.update(custRef, { routeOrder: idx + 1 });
+    });
+    await batch.commit();
   };
 
   const handleOpenOptimizer = (boy: any, boyCustomers: any[]) => {
@@ -244,10 +243,11 @@ const Deliveries = () => {
   };
 
   const handleApplyOptimizedOrder = async (orderedCustomerIds: string[]) => {
-    if (!currentUser || orderedCustomerIds.length === 0) return;
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz || orderedCustomerIds.length === 0) return;
     const batch = writeBatch(db);
     orderedCustomerIds.forEach((id, index) => {
-      const custRef = doc(db, 'businesses', currentUser.uid, 'customers', id);
+      const custRef = doc(db, 'businesses', effectiveBiz, 'customers', id);
       batch.update(custRef, { routeOrder: index + 1 });
     });
     await batch.commit();
@@ -255,8 +255,10 @@ const Deliveries = () => {
 
   // 1-Click Auto-Sort All Partner Routes to Shortest Order
   const handleOptimizeAllRoutes = async () => {
-    if (!currentUser || deliveriesToday.length === 0) {
-      alert("No active deliveries to optimize for this date & session.");
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz || deliveriesToday.length === 0) {
+      setOptimizeAllSuccess("⚠️ No active deliveries scheduled for this date & session.");
+      setTimeout(() => setOptimizeAllSuccess(null), 4000);
       return;
     }
     setIsOptimizingAll(true);
@@ -282,7 +284,7 @@ const Deliveries = () => {
 
           const routeResult = optimizeRouteOrder(hub, boyStops);
           routeResult.orderedStops.forEach((stop, index) => {
-            const custRef = doc(db, 'businesses', currentUser.uid, 'customers', stop.id);
+            const custRef = doc(db, 'businesses', effectiveBiz, 'customers', stop.id);
             batch.update(custRef, { routeOrder: index + 1 });
             updatedTotalStops++;
           });
@@ -294,19 +296,22 @@ const Deliveries = () => {
         setOptimizeAllSuccess(`✅ Sorted & saved ${updatedTotalStops} stops into shortest route sequence! Delivery apps updated.`);
         setTimeout(() => setOptimizeAllSuccess(null), 5000);
       } else {
-        alert("No assigned deliveries found to optimize. Please assign delivery partners first.");
+        setOptimizeAllSuccess("ℹ️ No assigned deliveries found to optimize. Please assign delivery partners first.");
+        setTimeout(() => setOptimizeAllSuccess(null), 4000);
       }
     } catch (err) {
       console.error("Error optimizing all routes:", err);
-      alert("Failed to auto-sort routes. Please try again.");
+      setOptimizeAllSuccess("❌ Failed to auto-sort routes. Check database permissions.");
+      setTimeout(() => setOptimizeAllSuccess(null), 4000);
     } finally {
       setIsOptimizingAll(false);
     }
   };
 
   const handleUpdateHubLocation = async (branchId: string, hubAddress: string, hubLocationLink: string) => {
-    if (!currentUser || !branchId) return;
-    await updateItem(currentUser.uid, 'branches', branchId, {
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz || !branchId) return;
+    await updateItem(effectiveBiz, 'branches', branchId, {
       hubAddress,
       hubLocationLink
     });
@@ -329,7 +334,8 @@ const Deliveries = () => {
       activeMealTab,
       selectedDate,
       boy,
-      routeResult
+      routeResult,
+      plans
     );
 
     window.open(`https://wa.me/${(boy.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
@@ -742,9 +748,14 @@ const Deliveries = () => {
             let boyTotalBoxes = 0;
             let boyStarBoxes = 0;
             boyCustomers.forEach(c => {
-              const cPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
-              boyTotalBoxes += cPlans.length;
-              boyStarBoxes += cPlans.filter((p: any) => p.isStarred || (c.highlightMark && c.highlightMark !== 'None')).length;
+              const cPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
+              cPlans.forEach((p: any) => {
+                const qty = Number(p.quantity) || 1;
+                boyTotalBoxes += qty;
+                if (p.isStarred || (c.highlightMark && c.highlightMark !== 'None')) {
+                  boyStarBoxes += qty;
+                }
+              });
             });
 
             return (
@@ -824,7 +835,7 @@ const Deliveries = () => {
                     {/* MOBILE CARD VIEW: Visible on small screens (< 768px) */}
                     <div className="block md:hidden p-3 space-y-3 bg-slate-50/50 divide-y divide-slate-200/70">
                       {boyCustomers.sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999)).map((c, idx) => {
-                        const sessionPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
+                        const sessionPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
                         const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
                         const logKey = `${c.id}_${activeMealTab}`;
                         const logRecord = dateLogsMap[logKey];
@@ -851,8 +862,8 @@ const Deliveries = () => {
                               </div>
 
                               <div className="flex items-center gap-1">
-                                <button onClick={() => handleMoveOrder(c.id, 'up')} className="p-1 hover:bg-slate-200 rounded text-slate-600" title="Move Up"><ArrowUp size={13}/></button>
-                                <button onClick={() => handleMoveOrder(c.id, 'down')} className="p-1 hover:bg-slate-200 rounded text-slate-600" title="Move Down"><ArrowDown size={13}/></button>
+                                <button onClick={() => handleMoveOrder(boy.id, c.id, 'up')} className="p-1 hover:bg-slate-200 rounded text-slate-600" title="Move Up"><ArrowUp size={13}/></button>
+                                <button onClick={() => handleMoveOrder(boy.id, c.id, 'down')} className="p-1 hover:bg-slate-200 rounded text-slate-600" title="Move Down"><ArrowDown size={13}/></button>
                               </div>
                             </div>
 
@@ -929,10 +940,10 @@ const Deliveries = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {boyCustomers.sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999)).map((c, idx) => {
-                              const sessionPlans = (c.activePlans || []).filter((ap: any) => ap.mealTime === activeMealTab);
+                              const sessionPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
                               const groupedPlans = sessionPlans.reduce((acc: any, p: any) => {
-                                 acc[p.planName] = acc[p.planName] || { name: p.planName, count: 0, isStarred: p.isStarred, pConfig: plans.find(pc => pc.id === p.planId), endDate: p.endDate, pauses: p.pauses };
-                                 acc[p.planName].count++;
+                                 acc[p.planName] = acc[p.planName] || { name: p.planName, count: 0, isStarred: p.isStarred, pConfig: plans.find((pc: any) => pc.id === p.planId), endDate: p.endDate, pauses: p.pauses };
+                                 acc[p.planName].count += (Number(p.quantity) || 1);
                                  if (p.isStarred) acc[p.planName].isStarred = true;
                                  return acc;
                               }, {});
@@ -948,8 +959,8 @@ const Deliveries = () => {
                                   <td className="py-3 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
                                   <td className="py-3 px-3">
                                     <div className="flex items-center justify-center gap-0.5">
-                                      <button onClick={() => handleMoveOrder(c.id, 'up')} className="p-1 hover:bg-slate-200/70 rounded text-slate-500" title="Move Up"><ArrowUp size={13}/></button>
-                                      <button onClick={() => handleMoveOrder(c.id, 'down')} className="p-1 hover:bg-slate-200/70 rounded text-slate-500" title="Move Down"><ArrowDown size={13}/></button>
+                                      <button onClick={() => handleMoveOrder(boy.id, c.id, 'up')} className="p-1 hover:bg-slate-200/70 rounded text-slate-500" title="Move Up"><ArrowUp size={13}/></button>
+                                      <button onClick={() => handleMoveOrder(boy.id, c.id, 'down')} className="p-1 hover:bg-slate-200/70 rounded text-slate-500" title="Move Down"><ArrowDown size={13}/></button>
                                     </div>
                                   </td>
                                   <td className="py-3 px-4">
@@ -1073,7 +1084,7 @@ const Deliveries = () => {
       <ShareDriverLinkModal
         isOpen={shareModalOpen}
         onClose={() => setShareModalOpen(false)}
-        bizId={currentUser?.uid || ''}
+        bizId={getTargetBusinessId(currentUser?.uid) || branches[0]?.businessId || localStorage.getItem('last_active_business_id') || localStorage.getItem('manager_biz_id') || currentUser?.uid || ''}
         staff={staff}
         selectedBoy={selectedShareBoy}
       />

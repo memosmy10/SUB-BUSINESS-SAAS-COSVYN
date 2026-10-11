@@ -8,7 +8,7 @@ import {
   optimizeRouteOrder, formatWhatsAppOptimizedRoute, 
   OptimizedRouteResult, HubLocation, extractCoordinates 
 } from '../services/routeOptimizer';
-import { getPlanDeliveryDayNumber } from '../services/store';
+import { getPlanDeliveryDayNumber, getCustomerScheduledPlansForSession } from '../services/store';
 
 interface RouteOptimizerModalProps {
   isOpen: boolean;
@@ -112,8 +112,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   if (!isOpen) return null;
 
   const totalBoxes = customersToday.reduce((acc, c) => {
-    const plans = (c.activePlans || []).filter((p: any) => p.mealTime === mealTime);
-    return acc + (plans.length || 1);
+    const plans = getCustomerScheduledPlansForSession(c, mealTime, dateStr || new Date().toISOString().split('T')[0]);
+    const count = plans.reduce((s: number, p: any) => s + (Number(p.quantity) || 1), 0);
+    return acc + (count || 1);
   }, 0);
 
   const hasCoordsOnHub = Boolean(extractCoordinates(currentHub.locationLink));
@@ -442,7 +443,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
               {/* Customer Stops */}
               {routeResult.orderedStops.map((stop) => {
-                const sessionPlans = (stop.activePlans || []).filter((p: any) => p.mealTime === mealTime);
+                const sessionPlans = getCustomerScheduledPlansForSession(stop, mealTime, dateStr || new Date().toISOString().split('T')[0]);
                 const isStarred = sessionPlans.some((p: any) => p.isStarred) || (stop.highlightMark && stop.highlightMark !== 'None');
 
                 return (

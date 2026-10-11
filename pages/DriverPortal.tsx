@@ -12,7 +12,8 @@ import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../services/firebase';
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
-  BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan 
+  BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
+  getCustomerScheduledPlansForSession, isPlanActiveOnDate
 } from '../services/store';
 
 // Sample demo data for instant preview or offline testing
@@ -174,7 +175,11 @@ export const DriverPortal: React.FC = () => {
     return hashParams.get(key) || searchParams.get(key) || '';
   };
 
-  const paramBiz = getParam('biz') || localStorage.getItem('driver_biz_id') || auth.currentUser?.uid || '';
+  const paramBiz = getParam('biz') || 
+                   localStorage.getItem('driver_biz_id') || 
+                   localStorage.getItem('last_active_business_id') || 
+                   localStorage.getItem('manager_biz_id') || 
+                   (!auth.currentUser?.isAnonymous ? auth.currentUser?.uid : '') || '';
   const paramBoy = getParam('boy') || localStorage.getItem('driver_boy_id') || '';
   const paramPhone = getParam('phone') || '';
 
@@ -182,6 +187,8 @@ export const DriverPortal: React.FC = () => {
   const [bizInput, setBizInput] = useState<string>('');
   const [selectedBoyId, setSelectedBoyId] = useState<string>(paramBoy);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(paramBiz === 'demo');
+  const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(Boolean(auth.currentUser && !auth.currentUser.isAnonymous));
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [selectedMeal, setSelectedMeal] = useState<'Breakfast' | 'Lunch' | 'Dinner'>(() => {
     const hr = new Date().getHours();
     if (hr < 11) return 'Breakfast';
@@ -224,17 +231,18 @@ export const DriverPortal: React.FC = () => {
   const dayOfWeek = new Date().getDay();
   const watchIdRef = useRef<number | null>(null);
 
-  // Auto-connect anonymous auth if not authenticated
+  // Robust auth synchronization: Wait for auth session restoration before signing in anonymously
   useEffect(() => {
-    if (!auth.currentUser) {
-      signInAnonymously(auth).catch((err) => {
-        console.warn("Driver anonymous auth initialization:", err);
-      });
-    }
-
     const unsub = onAuthStateChanged(auth, (user) => {
-      if (user && !bizId && !isDemoMode) {
-        setBizId(user.uid);
+      if (user && !user.isAnonymous) {
+        setIsKitchenOwnerUser(true);
+        if (!bizId && !isDemoMode) {
+          setBizId(user.uid);
+        }
+      } else if (!user) {
+        signInAnonymously(auth).catch((err) => {
+          console.warn("Driver anonymous auth initialization:", err);
+        });
       }
     });
 
@@ -278,22 +286,48 @@ export const DriverPortal: React.FC = () => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DeliveryBoyStaff[];
       setAllStaff(list);
       
-      // Auto-select boy if matching phone or boy ID
-      if (selectedBoyId) {
-        const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
-        if (found) {
-          setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
-          setPunchInTime(found.attendanceMarkedAt || null);
-        }
-      } else if (paramPhone) {
-        const digits = paramPhone.replace(/\D/g, '');
-        const found = list.find(s => s.mobile?.replace(/\D/g, '').endsWith(digits.slice(-10)));
+      // Auto-select boy if matching boy ID or phone from URL
+      if (paramBoy) {
+        const found = list.find(s => 
+          s.id === paramBoy || 
+          s.name?.toLowerCase() === paramBoy.toLowerCase() ||
+          (s.mobile && s.mobile.replace(/\D/g, '').endsWith(paramBoy.replace(/\D/g, '').slice(-10)))
+        );
         if (found) {
           setSelectedBoyId(found.id);
           setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
           setPunchInTime(found.attendanceMarkedAt || null);
           setLoginModalOpen(false);
+        } else {
+          // If specified rider from link not found, open modal to let rider tap their name
+          setLoginModalOpen(true);
         }
+      } else if (paramPhone) {
+        const digits = paramPhone.replace(/\D/g, '');
+        const found = list.find(s => {
+          const m = (s.mobile || '').replace(/\D/g, '');
+          return m && (m.endsWith(digits.slice(-10)) || digits.endsWith(m.slice(-10)));
+        });
+        if (found) {
+          setSelectedBoyId(found.id);
+          setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
+          setPunchInTime(found.attendanceMarkedAt || null);
+          setLoginModalOpen(false);
+        } else {
+          setLoginModalOpen(true);
+        }
+      } else if (selectedBoyId) {
+        const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
+        if (found) {
+          setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
+          setPunchInTime(found.attendanceMarkedAt || null);
+        } else if (list.length > 0) {
+          // Auto-select first rider for owner preview
+          setSelectedBoyId(list[0].id);
+        }
+      } else if (list.length > 0) {
+        // Default to first rider for preview
+        setSelectedBoyId(list[0].id);
       }
       setLoading(false);
     }, (err) => {
@@ -423,28 +457,13 @@ export const DriverPortal: React.FC = () => {
       })
       .forEach(c => {
         // Collect all scheduled plans for this customer for today in the selected meal session
-        const scheduledPlans: any[] = [];
-        let stopTotalBoxes = 0;
-
-        (c.activePlans || []).forEach((ap: SubscribedPlan) => {
-          if (ap.mealTime !== selectedMeal) return;
-
-          const planConfig = plans.find(p => p.id === ap.planId);
-          const weekdays = planConfig?.weekdays || ap.weekdays || [1, 2, 3, 4, 5, 6];
-          const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-          const isValidDay = weekdays.includes(dayOfWeek);
-          const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
-
-          if (isWithinRange && isValidDay && !isPaused) {
-            const qty = Number(ap.quantity) || 1;
-            stopTotalBoxes += qty;
-            scheduledPlans.push({
-              ...ap,
-              planConfig,
-              quantity: qty
-            });
-          }
-        });
+        const rawPlans = getCustomerScheduledPlansForSession(c, selectedMeal, todayStr, plans);
+        const scheduledPlans = rawPlans.map(ap => ({
+          ...ap,
+          planConfig: plans.find(p => p.id === ap.planId),
+          quantity: Number(ap.quantity) || 1
+        }));
+        const stopTotalBoxes = scheduledPlans.reduce((sum: number, p: any) => sum + p.quantity, 0);
 
         // Only include customer if they actually have a scheduled meal today in this session!
         if (scheduledPlans.length > 0) {
@@ -1023,6 +1042,30 @@ export const DriverPortal: React.FC = () => {
           )}
         </div>
       </header>
+
+      {/* Kitchen Owner Preview Header Banner */}
+      {isKitchenOwnerUser && (
+        <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-b border-amber-500/30 px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-amber-300 font-semibold">
+            <span className="text-sm">👑</span>
+            <span>Kitchen Owner Preview: Viewing Partner <strong>{currentBoy?.name || 'Selected Rider'}</strong></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setLoginModalOpen(true)}
+              className="text-[11px] font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-1 rounded-lg transition-all"
+            >
+              Switch Rider
+            </button>
+            <a
+              href="#/app/deliveries"
+              className="text-[11px] font-bold text-white bg-slate-800 hover:bg-slate-700 border border-white/20 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1"
+            >
+              Back to Hub
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-xl w-full mx-auto p-4 space-y-4">
@@ -1610,22 +1653,39 @@ export const DriverPortal: React.FC = () => {
               Enter your mobile number or tap your profile to load today's route.
             </p>
 
+            {/* In-Modal Alert / Error Banner */}
+            {loginError && (
+              <div className="p-3 bg-rose-500/20 border border-rose-500/40 text-rose-200 rounded-xl text-xs flex items-start gap-2">
+                <AlertCircle size={15} className="shrink-0 text-rose-400 mt-0.5" />
+                <div className="flex-1">
+                  <span>{loginError}</span>
+                </div>
+                <button onClick={() => setLoginError(null)} className="text-rose-300 hover:text-white">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
             {/* Mobile Number Login Input */}
             <div className="space-y-1.5 pt-1">
-              <label className="text-[11px] font-semibold text-slate-300">Rider Mobile Number</label>
+              <label className="text-[11px] font-semibold text-slate-300">Rider Mobile Number or Name</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                   <input
                     type="tel"
-                    placeholder="Enter 10-digit number"
+                    placeholder="Enter phone or name"
                     value={phoneInput}
                     onChange={(e) => {
                       const val = e.target.value;
                       setPhoneInput(val);
+                      setLoginError(null);
                       const digits = val.replace(/\D/g, '');
-                      if (digits.length >= 10) {
-                        const matched = allStaff.find(s => s.mobile?.replace(/\D/g, '').endsWith(digits.slice(-10)));
+                      if (digits.length >= 10 && allStaff.length > 0) {
+                        const matched = allStaff.find(s => {
+                          const m = (s.mobile || '').replace(/\D/g, '');
+                          return m && (m.endsWith(digits.slice(-10)) || digits.endsWith(m.slice(-10)));
+                        });
                         if (matched) {
                           setSelectedBoyId(matched.id);
                           setLoginModalOpen(false);
@@ -1637,19 +1697,33 @@ export const DriverPortal: React.FC = () => {
                 </div>
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => {
+                    if (loading) return;
+                    setLoginError(null);
                     const digits = phoneInput.replace(/\D/g, '');
-                    const matched = allStaff.find(s => s.mobile?.replace(/\D/g, '').endsWith(digits.slice(-10)));
+                    const queryStr = phoneInput.trim().toLowerCase();
+                    const matched = allStaff.find(s => {
+                      const m = (s.mobile || '').replace(/\D/g, '');
+                      if (digits.length >= 5 && m) {
+                        if (m.endsWith(digits.slice(-10)) || digits.endsWith(m.slice(-10))) return true;
+                      }
+                      if (s.name && queryStr && s.name.toLowerCase().includes(queryStr)) return true;
+                      return false;
+                    });
                     if (matched) {
                       setSelectedBoyId(matched.id);
                       setLoginModalOpen(false);
+                    } else if (allStaff.length === 0) {
+                      setLoginError('Connecting to kitchen... please wait a moment or tap your name below once loaded.');
                     } else {
-                      alert('No rider found with this phone number. Please choose your name from the list below or check with kitchen manager.');
+                      setLoginError('No rider found matching "' + phoneInput + '". Please tap your name from the list below, or verify with your kitchen manager.');
                     }
                   }}
-                  className="px-3 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95"
+                  className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center gap-1"
                 >
-                  Login
+                  {loading ? <RefreshCw size={12} className="animate-spin" /> : null}
+                  <span>Login</span>
                 </button>
               </div>
             </div>
@@ -1661,7 +1735,13 @@ export const DriverPortal: React.FC = () => {
             </div>
 
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-              {allStaff.map(boy => (
+              {loading && (
+                <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                  <RefreshCw size={14} className="animate-spin text-amber-400" />
+                  <span>Loading riders from kitchen...</span>
+                </div>
+              )}
+              {!loading && allStaff.map(boy => (
                 <button
                   key={boy.id}
                   onClick={() => {
@@ -1676,15 +1756,16 @@ export const DriverPortal: React.FC = () => {
                 >
                   <div>
                     <div className="font-bold text-xs text-white">{boy.name}</div>
-                    <div className="text-[11px] text-slate-400 font-mono">{boy.mobile}</div>
+                    <div className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No contact number'}</div>
                   </div>
                   <ChevronRight size={16} className="text-slate-400" />
                 </button>
               ))}
-              {allStaff.length === 0 && (
-                <p className="text-xs text-slate-500 text-center py-4 italic">
-                  No delivery partners found in this kitchen branch.
-                </p>
+              {!loading && allStaff.length === 0 && (
+                <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-center space-y-1">
+                  <p className="text-xs text-slate-300 font-medium">No riders registered in this kitchen.</p>
+                  <p className="text-[10px] text-slate-400">Please ask the kitchen owner to add delivery staff in Settings &gt; Staff.</p>
+                </div>
               )}
             </div>
           </div>

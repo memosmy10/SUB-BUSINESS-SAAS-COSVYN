@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell, Legend, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
-import { calculateRemainingDeliveries, getTodayStr } from '../services/store';
+import { calculateRemainingDeliveries, getTodayStr, isPlanActiveOnDate } from '../services/store';
 import { GlassmorphicDonutChart } from '../components/GlassmorphicDonutChart';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#6366f1'];
@@ -99,11 +99,9 @@ const Dashboard = () => {
     customers.filter(c => c.isActive && (selectedBranch === 'All' || c.branchId === selectedBranch)).forEach(c => {
       (c.activePlans || []).forEach((ap: any) => {
         const planConfig = plans.find(p => p.id === ap.planId);
-        if (!planConfig) return;
-        const isPaused = ap.pauses?.some((p: any) => todayStr >= p.start && todayStr <= p.end);
-        const isValidDay = planConfig.weekdays.includes(dayOfWeek);
-        const isWithinRange = todayStr >= ap.startDate && todayStr <= ap.endDate;
-        if (isWithinRange && isValidDay && !isPaused) plansToday++;
+        if (isPlanActiveOnDate(ap, todayStr, planConfig)) {
+          plansToday += (Number(ap.quantity) || 1);
+        }
       });
     });
 

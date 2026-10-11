@@ -192,23 +192,155 @@ export interface InventoryItem {
 
 // --- HELPER LOGIC ---
 
-export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number, allowedWeekdays: number[], pauses: PauseEvent[] = []): string => {
+/**
+ * Shifts a YYYY-MM-DD date string by deltaDays safely without timezone jumping or UTC distortion.
+ */
+export const shiftDateStr = (dateStr: string, deltaDays: number): string => {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + deltaDays, 12, 0, 0); // Noon prevents DST/UTC shifts
+  const yStr = dt.getFullYear();
+  const mStr = String(dt.getMonth() + 1).padStart(2, '0');
+  const dStr = String(dt.getDate()).padStart(2, '0');
+  return `${yStr}-${mStr}-${dStr}`;
+};
+
+export const normalizeWeekday = (w: any): number => {
+  if (typeof w === 'number') return w;
+  const s = String(w).toLowerCase().trim();
+  const map: Record<string, number> = {
+    sun: 0, sunday: 0, '0': 0,
+    mon: 1, monday: 1, '1': 1,
+    tue: 2, tuesday: 2, '2': 2,
+    wed: 3, wednesday: 3, '3': 3,
+    thu: 4, thursday: 4, '4': 4,
+    fri: 5, friday: 5, '5': 5,
+    sat: 6, saturday: 6, '6': 6,
+  };
+  return map[s] !== undefined ? map[s] : (Number(s) || 0);
+};
+
+/**
+ * Checks if a specific subscribed plan is scheduled to be delivered on targetDateStr.
+ * Validates:
+ * 1. Customer active status (must not be deactivated)
+ * 2. Plan active range (startDate <= targetDateStr <= endDate with customer fallback)
+ * 3. Pauses (targetDateStr does NOT fall inside plan or customer pause windows)
+ * 4. Delivery weekdays (normalized 0-6 day of week matches plan configuration)
+ */
+export const isPlanActiveOnDate = (
+  ap: SubscribedPlan | any,
+  targetDateStr: string,
+  planConfig?: any,
+  customer?: any
+): boolean => {
+  if (!ap || !targetDateStr) return false;
+  if (customer && customer.isActive === false) return false;
+
+  const cleanTarget = targetDateStr.split('T')[0].trim();
+
+  // 1. Check Date Range (with customer-level fallback if not on plan)
+  const cleanStart = (ap.startDate || customer?.startDate || '').split('T')[0].trim();
+  const cleanEnd = (ap.endDate || customer?.endDate || '').split('T')[0].trim();
+
+  if (cleanStart && cleanTarget < cleanStart) return false;
+  if (cleanEnd && cleanTarget > cleanEnd) return false;
+
+  // 2. Check Pauses across plan and customer
+  const allPauses = [
+    ...(Array.isArray(ap.pauses) ? ap.pauses : []),
+    ...(Array.isArray(customer?.pauses) ? customer.pauses : [])
+  ];
+  if (allPauses.length > 0) {
+    const isPaused = allPauses.some((p: any) => {
+      if (!p) return false;
+      const ps = (p.start || p.startDate || '').split('T')[0].trim();
+      const pe = (p.end || p.endDate || '').split('T')[0].trim();
+      return ps && pe && cleanTarget >= ps && cleanTarget <= pe;
+    });
+    if (isPaused) return false;
+  }
+
+  // 3. Check Allowed Weekdays (normalized: 0 = Sun, 1 = Mon, ..., 6 = Sat)
+  const rawWeekdays: any[] = planConfig?.weekdays ?? ap.weekdays ?? customer?.weekdays ?? [1, 2, 3, 4, 5, 6];
+  const allowedWeekdays = Array.isArray(rawWeekdays) && rawWeekdays.length > 0
+    ? rawWeekdays.map(normalizeWeekday)
+    : [1, 2, 3, 4, 5, 6];
+
+  const parts = cleanTarget.split('-').map(Number);
+  if (parts.length === 3) {
+    const targetDay = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0).getDay();
+    if (!allowedWeekdays.includes(targetDay)) return false;
+  }
+
+  return true;
+};
+
+/**
+ * Retrieves all active, scheduled plans for a customer on a given date and meal session.
+ * Guaranteed to match between Kitchen Prep, Workload Matrix, Route Management, WhatsApp, and Driver Portal.
+ */
+export const getCustomerScheduledPlansForSession = (
+  customer: GlobalCustomer | any,
+  mealTime: 'Breakfast' | 'Lunch' | 'Dinner' | 'All' | string,
+  targetDateStr: string,
+  plansConfig: any[] = []
+): SubscribedPlan[] => {
+  if (!customer) return [];
+  if (customer.isActive === false) return [];
+
+  // If customer has activePlans array, use it; otherwise synthesize from flat customer properties
+  const plansList = Array.isArray(customer.activePlans) && customer.activePlans.length > 0 
+    ? customer.activePlans 
+    : (customer.planId || customer.planName ? [{
+        planId: customer.planId,
+        planName: customer.planName || 'Standard Meal',
+        mealTime: Array.isArray(customer.mealTime) ? customer.mealTime[0] : (customer.mealTime || 'Lunch'),
+        startDate: customer.startDate,
+        endDate: customer.endDate,
+        quantity: 1,
+        pauses: customer.pauses || [],
+        weekdays: customer.weekdays || [1, 2, 3, 4, 5, 6],
+        isStarred: Boolean(customer.isStarred),
+        reusableBoxType: customer.reusableBoxType || 'None'
+      }] : []);
+
+  return plansList.filter((ap: any) => {
+    if (!ap) return false;
+    // Meal time filter
+    if (mealTime && mealTime !== 'All') {
+      const planMeal = ap.mealTime || (Array.isArray(customer.mealTime) ? customer.mealTime[0] : customer.mealTime);
+      if (planMeal && planMeal !== mealTime) return false;
+    }
+    const pConfig = plansConfig.find((p: any) => p.id === ap.planId);
+    return isPlanActiveOnDate(ap, targetDateStr, pConfig, customer);
+  });
+};
+
+export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number, allowedWeekdays: number[] | any[], pauses: PauseEvent[] = []): string => {
   if (!startDateStr || totalDeliveryDays <= 0 || !allowedWeekdays || allowedWeekdays.length === 0) return startDateStr;
   
-  const [y, m, d] = startDateStr.split('-').map(Number);
-  let currentDate = new Date(y, m - 1, d);
+  const normalizedAllowed = allowedWeekdays.map(normalizeWeekday);
+  const cleanStart = startDateStr.split('T')[0].trim();
+  const [y, m, d] = cleanStart.split('-').map(Number);
+  let currentDate = new Date(y, m - 1, d, 12, 0, 0); // Noon prevents any DST/midnight issues
   let deliveriesCounted = 0;
   
   const isPaused = (dateStr: string) => {
-    return pauses.some(p => dateStr >= p.start && dateStr <= p.end);
+    return pauses.some((p: any) => {
+      if (!p) return false;
+      const ps = (p.start || p.startDate || '').split('T')[0].trim();
+      const pe = (p.end || p.endDate || '').split('T')[0].trim();
+      return ps && pe && dateStr >= ps && dateStr <= pe;
+    });
   };
 
   let safetyLoop = 0; 
-  while (deliveriesCounted < totalDeliveryDays && safetyLoop < 1000) {
+  while (deliveriesCounted < totalDeliveryDays && safetyLoop < 1500) {
     const dStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
     const dayOfWeek = currentDate.getDay();
     
-    if (allowedWeekdays.includes(dayOfWeek) && !isPaused(dStr)) {
+    if (normalizedAllowed.includes(dayOfWeek) && !isPaused(dStr)) {
       deliveriesCounted++;
     }
     
@@ -220,14 +352,16 @@ export const calculateEndDate = (startDateStr: string, totalDeliveryDays: number
   return `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
 };
 
-export const calculateRemainingDeliveries = (endDateStr: string, allowedWeekdays: number[], pauses: PauseEvent[] = []): number => {
+export const calculateRemainingDeliveries = (endDateStr: string, allowedWeekdays: number[] | any[], pauses: PauseEvent[] = []): number => {
   if (!endDateStr || !allowedWeekdays || allowedWeekdays.length === 0) return 0;
   
+  const normalizedAllowed = allowedWeekdays.map(normalizeWeekday);
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
   
-  const [ey, em, ed] = endDateStr.split('-').map(Number);
-  const end = new Date(ey, em - 1, ed);
+  const cleanEnd = endDateStr.split('T')[0].trim();
+  const [ey, em, ed] = cleanEnd.split('-').map(Number);
+  const end = new Date(ey, em - 1, ed, 12, 0, 0);
   
   if (today > end) return 0;
   
@@ -236,11 +370,11 @@ export const calculateRemainingDeliveries = (endDateStr: string, allowedWeekdays
   current.setDate(current.getDate() + 1); // Count remaining deliveries starting from tomorrow
   
   const isPaused = (dateStr: string) => {
-    return pauses.some(p => dateStr >= p.start && dateStr <= p.end);
+    return pauses.some(p => p && dateStr >= p.start && dateStr <= p.end);
   };
 
   let safetyLoop = 0;
-  while (current <= end && safetyLoop < 366) {
+  while (current <= end && safetyLoop < 1000) {
     const dStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
     if (allowedWeekdays.includes(current.getDay()) && !isPaused(dStr)) {
       count++;

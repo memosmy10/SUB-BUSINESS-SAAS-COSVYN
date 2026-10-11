@@ -10,7 +10,7 @@
  * - Formats WhatsApp dispatch route messages for delivery staff
  */
 
-import { getPlanDeliveryDayNumber } from './store';
+import { getPlanDeliveryDayNumber, isPlanActiveOnDate } from './store';
 
 export interface LatLng {
   lat: number;
@@ -749,7 +749,8 @@ export const formatWhatsAppOptimizedRoute = (
   mealTime: string,
   dateStr: string,
   deliveryBoy: { name: string; mobile?: string },
-  routeResult: OptimizedRouteResult
+  routeResult: OptimizedRouteResult,
+  allPlans: any[] = []
 ): string => {
   const { hub, orderedStops, totalDistanceKm, totalEstMinutes, masterGoogleMapsUrl, googleMapsLegsUrls } = routeResult;
 
@@ -758,7 +759,12 @@ export const formatWhatsAppOptimizedRoute = (
   let totalDay1NewBoxes = 0;
 
   orderedStops.forEach((stop) => {
-    const sessionPlans = stop.activePlans?.filter((p: any) => p.mealTime === mealTime) || [];
+    const sessionPlans = stop.activePlans?.filter((p: any) => {
+      if (p.mealTime !== mealTime) return false;
+      const pConfig = allPlans.find((pc: any) => pc.id === p.planId);
+      return isPlanActiveOnDate(p, dateStr, pConfig);
+    }) || [];
+
     sessionPlans.forEach((p: any) => {
       if (p.reusableBoxType && p.reusableBoxType !== 'None') {
         const dayNum = getPlanDeliveryDayNumber(p.startDate, dateStr, p.weekdays || [1, 2, 3, 4, 5, 6], p.pauses || []);
@@ -798,8 +804,13 @@ export const formatWhatsAppOptimizedRoute = (
   msg += `📋 *OPTIMIZED DELIVERY SEQUENCE:*\n\n`;
 
   orderedStops.forEach((stop, i) => {
-    const sessionPlans = stop.activePlans?.filter((p: any) => p.mealTime === mealTime) || [];
-    const plansCount = sessionPlans.length || 1;
+    const sessionPlans = stop.activePlans?.filter((p: any) => {
+      if (p.mealTime !== mealTime) return false;
+      const pConfig = allPlans.find((pc: any) => pc.id === p.planId);
+      return isPlanActiveOnDate(p, dateStr, pConfig);
+    }) || [];
+
+    const plansCount = sessionPlans.reduce((sum: number, p: any) => sum + (Number(p.quantity) || 1), 0) || 1;
     const planNames = sessionPlans
       .map((p: any) => `${p.planName}${p.isStarred ? ' ⭐' : ''}`)
       .join(', ') || 'Tiffin Box';

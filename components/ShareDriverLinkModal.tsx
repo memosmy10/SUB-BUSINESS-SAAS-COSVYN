@@ -24,8 +24,12 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
   if (!isOpen) return null;
 
   const origin = window.location.origin;
-  const hashPrefix = window.location.hash ? window.location.hash.split('?')[0] : '';
   const baseUrl = `${origin}/#/driver?biz=${bizId}`;
+
+  const getBoyUrl = (boy: any) => {
+    const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
+    return `${baseUrl}&boy=${boy?.id || ''}${cleanMobile ? `&phone=${cleanMobile}` : ''}`;
+  };
 
   const handleCopy = (url: string, id: string) => {
     navigator.clipboard.writeText(url);
@@ -34,9 +38,10 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
   };
 
   const handleWhatsApp = (boy: any) => {
-    const boyUrl = `${baseUrl}&boy=${boy.id}&phone=${encodeURIComponent(boy.mobile || '')}`;
+    const boyUrl = getBoyUrl(boy);
     const msg = `Hello ${boy.name}! 🚀\n\nHere is your Delivery Partner App link for today's deliveries:\n${boyUrl}\n\n📱 *Steps:*\n1. Open link on your phone\n2. Punch In to start GPS tracking\n3. View your stop sequence and navigation\n4. Tap "Delivered" and log "Box Collected" status in real-time.\n\nHave a safe delivery ride!`;
-    window.open(`https://wa.me/${(boy.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const cleanDigits = (boy.mobile || '').replace(/\D/g, '');
+    window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   return (
@@ -65,6 +70,51 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
             <X size={18} />
           </button>
         </div>
+
+        {/* Selected Boy Highlight if opened for a specific driver */}
+        {selectedBoy && (
+          <div className="p-3.5 bg-amber-50 border-2 border-amber-300 rounded-2xl text-xs space-y-2.5 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                <span className="font-bold text-amber-950 text-sm">{selectedBoy.name}'s App Link</span>
+              </div>
+              <span className="text-[11px] font-mono text-amber-800 font-semibold">{selectedBoy.mobile || 'No contact'}</span>
+            </div>
+
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                readOnly 
+                value={getBoyUrl(selectedBoy)} 
+                className="flex-1 px-3 py-2 bg-white border border-amber-200 rounded-xl text-xs font-mono text-slate-700 outline-none select-all shadow-xs"
+              />
+              <button
+                onClick={() => handleCopy(getBoyUrl(selectedBoy), 'selected')}
+                className="px-3 py-2 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm active:scale-95 transition-all shrink-0"
+              >
+                {copiedId === 'selected' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                <span>{copiedId === 'selected' ? 'Copied' : 'Copy'}</span>
+              </button>
+              <button
+                onClick={() => handleWhatsApp(selectedBoy)}
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm active:scale-95 transition-all shrink-0"
+              >
+                <MessageSquare size={14} fill="currentColor" />
+                <span>WhatsApp</span>
+              </button>
+              <a
+                href={getBoyUrl(selectedBoy)}
+                target="_blank"
+                rel="noreferrer"
+                className="p-2 bg-white hover:bg-amber-100 border border-amber-200 text-slate-700 rounded-xl flex items-center justify-center transition-colors"
+                title="Test Driver App in New Tab"
+              >
+                <ExternalLink size={15} />
+              </a>
+            </div>
+          </div>
+        )}
 
         {/* Feature Explainer */}
         <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-2xl text-xs space-y-1 text-slate-700">
@@ -117,7 +167,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
           <div className="max-h-56 overflow-y-auto space-y-2 pr-1 no-scrollbar">
             {staff.map(boy => {
-              const boyUrl = `${baseUrl}&boy=${boy.id}&phone=${encodeURIComponent(boy.mobile || '')}`;
+              const boyUrl = getBoyUrl(boy);
               const isCopied = copiedId === boy.id;
 
               return (
@@ -152,6 +202,15 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
                       <MessageSquare size={13} fill="currentColor" />
                       <span>WhatsApp</span>
                     </button>
+                    <a
+                      href={boyUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center transition-colors"
+                      title="Open Driver App"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
                   </div>
                 </div>
               );

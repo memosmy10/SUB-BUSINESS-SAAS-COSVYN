@@ -5,9 +5,9 @@ import {
   Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem } from '../services/dbService';
+import { useStreamCollection, addItem, updateItem, getTargetBusinessId } from '../services/dbService';
 import { 
-  calculateEndDate, calculateRemainingDeliveries,
+  calculateEndDate, calculateRemainingDeliveries, shiftDateStr, isPlanActiveOnDate,
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
   REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber
 } from '../services/store';
@@ -112,13 +112,14 @@ const Customers = () => {
   };
 
   const handleSaveCustomer = async (data: any) => {
-    if (!currentUser) return;
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz) return;
     if (activeCustomer) {
-      await updateItem(currentUser.uid, 'customers', activeCustomer.id, data);
+      await updateItem(effectiveBiz, 'customers', activeCustomer.id, data);
     } else {
-      const newId = await addItem(currentUser.uid, 'customers', data);
+      const newId = await addItem(effectiveBiz, 'customers', data);
       if (data.amountPaid > 0) {
-        await addItem(currentUser.uid, 'payments', {
+        await addItem(effectiveBiz, 'payments', {
           amount: data.amountPaid, customerId: newId, customerName: data.name,
           date: new Date().toISOString(), type: 'Income'
         });
@@ -130,17 +131,19 @@ const Customers = () => {
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    if (currentUser && window.confirm('Delete customer and history?')) {
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (effectiveBiz && window.confirm('Delete customer and history?')) {
       const batch = writeBatch(db);
-      batch.delete(doc(db, 'businesses', currentUser.uid, 'customers', id));
-      const paySnap = await getDocs(query(collection(db, 'businesses', currentUser.uid, 'payments'), where('customerId', '==', id)));
+      batch.delete(doc(db, 'businesses', effectiveBiz, 'customers', id));
+      const paySnap = await getDocs(query(collection(db, 'businesses', effectiveBiz, 'payments'), where('customerId', '==', id)));
       paySnap.forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
   };
 
   const handlePausePlans = async (customerId: string, selectedPlanIndices: number[], pauseEvent: PauseEvent) => {
-    if (!currentUser) return;
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz) return;
     const cust = customers.find(c => c.id === customerId);
     if (!cust) return;
 
@@ -163,7 +166,7 @@ const Customers = () => {
       return left > max ? left : max;
     }, 0);
 
-    await updateItem(currentUser.uid, 'customers', customerId, { 
+    await updateItem(effectiveBiz, 'customers', customerId, { 
       activePlans: updatedPlans, 
       endDate: maxEndDate,
       daysLeft: maxDaysLeft
@@ -172,7 +175,8 @@ const Customers = () => {
   };
 
   const handlePauseBranch = async (branchId: string, timings: string[], pauseEvent: PauseEvent) => {
-    if (!currentUser) return;
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz) return;
     
     const affectedCustomers = customers.filter(c => c.branchId === branchId);
     let updatedCount = 0;
@@ -201,7 +205,7 @@ const Customers = () => {
           return left > max ? left : max;
         }, 0);
 
-        await updateItem(currentUser.uid, 'customers', cust.id, { 
+        await updateItem(effectiveBiz, 'customers', cust.id, { 
           activePlans: updatedPlans, 
           endDate: maxEndDate,
           daysLeft: maxDaysLeft
@@ -210,7 +214,6 @@ const Customers = () => {
       }
     }
     
-    alert(`Successfully applied branch-wide pause to ${updatedCount} customers.`);
     setIsPauseBranchModalOpen(false);
   };
 
@@ -675,10 +678,13 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
       const prevCount = typeof customer.uncollectedBoxesCount === 'number' ? customer.uncollectedBoxesCount : 1;
       const newCount = isCollected ? Math.max(0, prevCount - 1) : prevCount;
 
-      await updateItem(currentUser.uid, 'customers', customer.id, {
-        uncollectedBoxesCount: newCount,
-        boxCollections: updatedCollections
-      });
+      const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+      if (effectiveBiz) {
+        await updateItem(effectiveBiz, 'customers', customer.id, {
+          uncollectedBoxesCount: newCount,
+          boxCollections: updatedCollections
+        });
+      }
       setIsLoggingBox(false);
       setBoxLogForm(prev => ({
         ...prev,
@@ -987,24 +993,14 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
       updatedPauses.splice(pauseIdx, 1);
     } else if (pause.start === dateStr) {
       // Start of pause, move start to next day
-      const nextDay = new Date(dateStr);
-      nextDay.setDate(nextDay.getDate() + 1);
-      updatedPauses[pauseIdx] = { ...pause, start: nextDay.toISOString().split('T')[0] };
+      updatedPauses[pauseIdx] = { ...pause, start: shiftDateStr(dateStr, 1) };
     } else if (pause.end === dateStr) {
       // End of pause, move end to previous day
-      const prevDay = new Date(dateStr);
-      prevDay.setDate(prevDay.getDate() - 1);
-      updatedPauses[pauseIdx] = { ...pause, end: prevDay.toISOString().split('T')[0] };
+      updatedPauses[pauseIdx] = { ...pause, end: shiftDateStr(dateStr, -1) };
     } else {
       // Middle of pause, split it
-      const prevDay = new Date(dateStr);
-      prevDay.setDate(prevDay.getDate() - 1);
-      const nextDay = new Date(dateStr);
-      nextDay.setDate(nextDay.getDate() + 1);
-      
-      const p1 = { ...pause, end: prevDay.toISOString().split('T')[0] };
-      const p2 = { ...pause, start: nextDay.toISOString().split('T')[0] };
-      
+      const p1 = { ...pause, end: shiftDateStr(dateStr, -1) };
+      const p2 = { ...pause, start: shiftDateStr(dateStr, 1) };
       updatedPauses.splice(pauseIdx, 1, p1, p2);
     }
     
@@ -1026,15 +1022,17 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
     }, 0);
     
     try {
-      await updateItem(currentUser.uid, 'customers', customer.id, {
-        activePlans: updatedActivePlans,
-        endDate: maxEndDate,
-        daysLeft: maxDaysLeft
-      });
+      const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+      if (effectiveBiz) {
+        await updateItem(effectiveBiz, 'customers', customer.id, {
+          activePlans: updatedActivePlans,
+          endDate: maxEndDate,
+          daysLeft: maxDaysLeft
+        });
+      }
       setSelectedDateToCount(null);
     } catch (err) {
       console.error("Error counting date:", err);
-      alert("Failed to update. Please try again.");
     }
   };
   

@@ -193,6 +193,48 @@ export interface InventoryItem {
 // --- HELPER LOGIC ---
 
 /**
+ * Formats any date string (YYYY-MM-DD or ISO timestamp) or Date into DD/MM/YYYY format.
+ * E.g. '2026-10-12' -> '12/10/2026'
+ * E.g. '2026-09-04T08:00:00.000Z' -> '04/09/2026'
+ */
+export const formatDateDDMMYYYY = (dateInput?: string | number | Date | null): string => {
+  if (!dateInput && dateInput !== 0) return '';
+  if (typeof dateInput === 'number') {
+    const dt = new Date(dateInput);
+    if (isNaN(dt.getTime())) return '';
+    const d = String(dt.getDate()).padStart(2, '0');
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const y = dt.getFullYear();
+    return `${d}/${m}/${y}`;
+  }
+  if (dateInput instanceof Date) {
+    if (isNaN(dateInput.getTime())) return '';
+    const d = String(dateInput.getDate()).padStart(2, '0');
+    const m = String(dateInput.getMonth() + 1).padStart(2, '0');
+    const y = dateInput.getFullYear();
+    return `${d}/${m}/${y}`;
+  }
+  const s = String(dateInput).trim();
+  if (!s) return '';
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+  if (/^\d{2}-\d{2}-\d{4}$/.test(s)) return s.replace(/-/g, '/');
+  
+  const isoMatch = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    const [, y, m, d] = isoMatch;
+    return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    const d = String(parsed.getDate()).padStart(2, '0');
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const y = parsed.getFullYear();
+    return `${d}/${m}/${y}`;
+  }
+  return s;
+};
+
+/**
  * Shifts a YYYY-MM-DD date string by deltaDays safely without timezone jumping or UTC distortion.
  */
 export const shiftDateStr = (dateStr: string, deltaDays: number): string => {

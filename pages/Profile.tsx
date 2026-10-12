@@ -5,7 +5,8 @@ import {
   Globe, Rocket, Monitor, LayoutTemplate, ExternalLink, X, Zap, Loader2, Tag, Lock, Receipt, Calendar, Upload
 } from 'lucide-react';
 import { 
-  INITIAL_BUSINESS_PROFILE, INDIA_STATES, BusinessProfile, getDaysDifference 
+  INITIAL_BUSINESS_PROFILE, INDIA_STATES, BusinessProfile, getDaysDifference,
+  formatDateDDMMYYYY 
 } from '../services/store';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -400,7 +401,7 @@ const Profile = () => {
                    <div className="flex justify-between items-center text-sm">
                      <span className="text-slate-300">Expires On</span>
                      <span className={`font-bold ${daysToExpiry <= 7 ? 'text-red-400' : 'text-white'}`}>
-                        {profile.planExpiryDate}
+                        {formatDateDDMMYYYY(profile.planExpiryDate)}
                      </span>
                    </div>
                    {daysToExpiry <= 7 && (
@@ -446,7 +447,7 @@ const Profile = () => {
                                <td className="px-4 py-3 text-slate-600">
                                   <div className="font-bold text-slate-900 text-sm">{item.planName}</div>
                                   <div className="text-xs text-slate-500 mt-0.5">
-                                     {new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                     {formatDateDDMMYYYY(item.date)}
                                   </div>
                                   <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {item.paymentId || 'N/A'}</div>
                                </td>

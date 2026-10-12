@@ -8,7 +8,8 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, deleteItem, updateItem, setItem } from '../services/dbService';
 import { 
-  INDIA_STATES, REUSABLE_BOX_TYPES, ALL_SAAS_PAGES, BranchManager, ManagerLogEntry 
+  INDIA_STATES, REUSABLE_BOX_TYPES, ALL_SAAS_PAGES, BranchManager, ManagerLogEntry,
+  formatDateDDMMYYYY
 } from '../services/store';
 import { db } from '../services/firebase';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
@@ -1395,7 +1396,7 @@ const Settings = () => {
                       </td>
                       <td className="px-6 py-3.5">
                         <div className="font-bold text-slate-900">₹{(m.salary || 0).toLocaleString()}</div>
-                        <div className="text-[11px] text-slate-400 font-medium">Joined {m.dateOfJoining || '—'}</div>
+                        <div className="text-[11px] text-slate-400 font-medium">Joined {m.dateOfJoining ? formatDateDDMMYYYY(m.dateOfJoining) : '—'}</div>
                       </td>
                       <td className="px-6 py-3.5">
                         <div className="font-mono text-[11px] text-slate-700">{m.aadharNumber || '—'}</div>
@@ -1470,7 +1471,7 @@ const Settings = () => {
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {sortedManagerLogs.map(log => (
                   <tr key={log.id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="px-6 py-3.5 font-mono font-semibold text-slate-900">{log.date}</td>
+                    <td className="px-6 py-3.5 font-mono font-semibold text-slate-900">{formatDateDDMMYYYY(log.date)}</td>
                     <td className="px-6 py-3.5">
                       <div className="font-bold text-slate-900">{log.managerName}</div>
                       <div className="text-[11px] text-slate-400 font-mono">{log.managerEmail}</div>

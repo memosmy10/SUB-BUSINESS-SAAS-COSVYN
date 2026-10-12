@@ -9,7 +9,7 @@ import { useStreamCollection, addItem, updateItem, getTargetBusinessId } from '.
 import { 
   calculateEndDate, calculateRemainingDeliveries, shiftDateStr, isPlanActiveOnDate,
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
-  REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber
+  REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber, formatDateDDMMYYYY
 } from '../services/store';
 import { doc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -80,8 +80,14 @@ const Customers = () => {
     branchId: 'All', 
     paymentStatus: 'All', 
     timings: [] as string[],
+    deliveryBoyId: 'All',
     starred: 'All' 
   });
+  const [deliveryBoySort, setDeliveryBoySort] = useState<'none' | 'asc' | 'desc'>('none');
+
+  const toggleDeliveryBoySort = () => {
+    setDeliveryBoySort(prev => (prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none'));
+  };
 
   // Auto-lock branch filter to single branch (e.g. for branch manager)
   useEffect(() => {
@@ -230,6 +236,12 @@ const Customers = () => {
       
       const matchesTimings = filters.timings.length === 0 || mealTimes.some(m => filters.timings.includes(m));
 
+      const assignedBoy = staff.find((s: any) => s.id === c.deliveryBoyId) || staff.find((s: any) => s.name === c.deliveryBoyName);
+      const matchesDeliveryBoy = 
+        filters.deliveryBoyId === 'All' || 
+        (filters.deliveryBoyId === 'Unassigned' && !c.deliveryBoyId && !c.deliveryBoyName) ||
+        (c.deliveryBoyId === filters.deliveryBoyId || (assignedBoy && assignedBoy.id === filters.deliveryBoyId) || c.deliveryBoyName === filters.deliveryBoyId);
+
       return (
         (c.name || '').toLowerCase().includes(filters.name.toLowerCase()) &&
         (c.mobile || '').includes(filters.mobile) &&
@@ -237,9 +249,20 @@ const Customers = () => {
         matchesBranch &&
         matchesStatus &&
         matchesTimings &&
+        matchesDeliveryBoy &&
         matchesStarred
       );
     }).sort((a, b) => {
+      // 1. Delivery Boy Sort (if active)
+      if (deliveryBoySort !== 'none') {
+        const boyA = (staff.find((s: any) => s.id === a.deliveryBoyId)?.name || a.deliveryBoyName || '').toLowerCase().trim();
+        const boyB = (staff.find((s: any) => s.id === b.deliveryBoyId)?.name || b.deliveryBoyName || '').toLowerCase().trim();
+        if (!boyA && boyB) return 1;
+        if (boyA && !boyB) return -1;
+        const cmp = boyA.localeCompare(boyB);
+        if (cmp !== 0) return deliveryBoySort === 'asc' ? cmp : -cmp;
+      }
+
       // DEFAULT SORTING LOGIC:
       // 1. Active vs Expired
       const aIsActive = a.realDaysLeft > 0;
@@ -258,7 +281,7 @@ const Customers = () => {
       const bStart = b.startDate || '';
       return bStart.localeCompare(aStart);
     });
-  }, [enrichedCustomers, filters]);
+  }, [enrichedCustomers, filters, deliveryBoySort, staff]);
 
   const stats = useMemo(() => {
     const today = getTodayStr();
@@ -369,9 +392,12 @@ const Customers = () => {
             <Download size={14} className="text-primary-600" />
             <span>Export CSV</span>
          </button>
-         {(filters.name || filters.starred !== 'All' || filters.branchId !== 'All' || filters.paymentStatus !== 'All' || filters.timings.length > 0) && (
+         {(filters.name || filters.starred !== 'All' || filters.branchId !== 'All' || filters.paymentStatus !== 'All' || filters.timings.length > 0 || filters.deliveryBoyId !== 'All' || deliveryBoySort !== 'none') && (
            <button 
-            onClick={() => setFilters({ name: '', mobile: '', area: '', branchId: 'All', paymentStatus: 'All', timings: [], starred: 'All' })}
+            onClick={() => {
+              setFilters({ name: '', mobile: '', area: '', branchId: 'All', paymentStatus: 'All', timings: [], deliveryBoyId: 'All', starred: 'All' });
+              setDeliveryBoySort('none');
+            }}
             className="text-xs font-semibold text-slate-500 hover:text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50/60 transition-colors flex items-center gap-1.5"
            >
             <X size={14} />
@@ -394,6 +420,15 @@ const Customers = () => {
                         <TimingFilter 
                           selected={filters.timings} 
                           onChange={(vals) => setFilters({...filters, timings: vals})} 
+                        />
+                     </th>
+                     <th className="p-3.5">
+                        <DeliveryBoyFilter 
+                          staff={staff}
+                          value={filters.deliveryBoyId}
+                          onChange={(val) => setFilters({...filters, deliveryBoyId: val})}
+                          sortOrder={deliveryBoySort}
+                          onToggleSort={toggleDeliveryBoySort}
                         />
                      </th>
                      <th className="p-3.5">Locality</th>
@@ -422,6 +457,72 @@ const Customers = () => {
                     const isStarredCustomer = Boolean(c.isStarred || (c.activePlans || []).some(p => p.isStarred));
                     const boxHealth = getCustomerBoxHealth(c);
                     const reusableBoxPlans = (c.activePlans || []).filter((p: any) => p.reusableBoxType && p.reusableBoxType !== 'None');
+
+                    // Assigned Delivery Boy
+                    const assignedBoy = staff.find((s: any) => s.id === c.deliveryBoyId) || staff.find((s: any) => s.name === c.deliveryBoyName);
+                    const assignedBoyName = assignedBoy?.name || c.deliveryBoyName || '';
+
+                    // Active (green border) vs Expired (red border) plans info for Timing column
+                    const activePlansList = c.activePlans || [];
+                    const pastPlansList = c.pastPlans || [];
+                    const today = getTodayStr();
+
+                    let displayPlans: Array<{
+                      mealTime: string;
+                      planName?: string;
+                      startDate?: string;
+                      endDate?: string;
+                      isActive: boolean;
+                      isStarred?: boolean;
+                      daysRemaining?: number;
+                    }> = [];
+
+                    if (activePlansList.length > 0) {
+                      displayPlans = activePlansList.map((p: any) => {
+                        const isExpired = p.endDate ? (today > p.endDate) : (c.realDaysLeft <= 0);
+                        const planConfig = plans.find((pc: any) => pc.id === p.planId);
+                        const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6], p.pauses || []);
+                        return {
+                          mealTime: p.mealTime || 'Lunch',
+                          planName: p.planName,
+                          startDate: p.startDate,
+                          endDate: p.endDate,
+                          isActive: !isExpired,
+                          isStarred: Boolean(p.isStarred),
+                          daysRemaining: left
+                        };
+                      });
+                    } else {
+                      const mealTimes = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
+                      const isCustActive = today <= (c.endDate || '') && (c.realDaysLeft > 0 || c.isActive);
+                      displayPlans = mealTimes.map((m: string) => ({
+                        mealTime: m,
+                        planName: c.planId ? plans.find((pl: any) => pl.id === c.planId)?.name : undefined,
+                        startDate: c.startDate,
+                        endDate: c.endDate,
+                        isActive: isCustActive,
+                        daysRemaining: c.realDaysLeft
+                      }));
+                    }
+
+                    if (pastPlansList.length > 0) {
+                      const existingKeys = new Set(displayPlans.map(dp => `${dp.mealTime}-${dp.planName || ''}`));
+                      pastPlansList.forEach((pp: any) => {
+                        const key = `${pp.mealTime}-${pp.planName || ''}`;
+                        if (!existingKeys.has(key)) {
+                          displayPlans.push({
+                            mealTime: pp.mealTime || 'Lunch',
+                            planName: pp.planName,
+                            startDate: pp.startDate,
+                            endDate: pp.endDate,
+                            isActive: false,
+                            isStarred: Boolean(pp.isStarred),
+                            daysRemaining: 0
+                          });
+                          existingKeys.add(key);
+                        }
+                      });
+                    }
 
                     return (
                       <React.Fragment key={c.id}>
@@ -466,15 +567,40 @@ const Customers = () => {
                             )}
                           </td>
                           <td className="p-3.5">
-                            <div className="flex flex-col gap-1">
-                              <div className="flex flex-wrap gap-1">
-                                {mealTimes.map((m:string, idx: number) => (
-                                  <span key={`${m}-${idx}`} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border shadow-xs ${
-                                    m === 'Breakfast' ? 'bg-amber-50 text-amber-700 border-amber-200/60' : 
-                                    m === 'Lunch' ? 'bg-blue-50 text-blue-700 border-blue-200/60' : 
-                                    'bg-violet-50 text-violet-700 border-violet-200/60'
-                                  }`}>{m}</span>
-                                ))}
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {displayPlans.map((dp, pIdx) => {
+                                  const isGreen = dp.isActive;
+                                  return (
+                                    <div
+                                      key={`${dp.mealTime}-${pIdx}`}
+                                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all shadow-xs ${
+                                        isGreen 
+                                          ? 'border-2 border-emerald-500 bg-emerald-50/80 text-emerald-900 shadow-emerald-100' 
+                                          : 'border-2 border-rose-500 bg-rose-50/80 text-rose-900 shadow-rose-100'
+                                      }`}
+                                      title={`${dp.mealTime} Plan: ${dp.planName || 'Standard'} | ${isGreen ? 'Active' : 'Expired'} | ${dp.endDate ? `Expiry: ${formatDateDDMMYYYY(dp.endDate)}` : ''} ${dp.daysRemaining !== undefined ? `(${dp.daysRemaining} deliveries left)` : ''}`}
+                                    >
+                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isGreen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                                      <span className="font-bold uppercase tracking-tight">{dp.mealTime}</span>
+                                      {dp.planName && (
+                                        <span className={`text-[10px] max-w-[85px] truncate ${isGreen ? 'text-emerald-700 font-medium' : 'text-rose-700 opacity-90'}`}>
+                                          {dp.planName}
+                                        </span>
+                                      )}
+                                      <span className={`text-[9px] font-bold px-1 py-0.2 rounded border ${
+                                        isGreen 
+                                          ? 'bg-emerald-100/90 text-emerald-800 border-emerald-300/70' 
+                                          : 'bg-rose-100/90 text-rose-800 border-rose-300/70'
+                                      }`}>
+                                        {isGreen 
+                                          ? (dp.endDate ? formatDateDDMMYYYY(dp.endDate) : 'Active') 
+                                          : 'Expired'}
+                                      </span>
+                                      {dp.isStarred && <Star size={9} className="text-amber-500 fill-amber-500 shrink-0" />}
+                                    </div>
+                                  );
+                                })}
                               </div>
                               {reusableBoxPlans.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-0.5">
@@ -488,6 +614,26 @@ const Customers = () => {
                               )}
                             </div>
                           </td>
+                          <td className="p-3.5">
+                            {assignedBoyName ? (
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center font-bold text-[11px] shrink-0 shadow-xs">
+                                  {assignedBoyName.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <span className="font-semibold text-slate-800 text-xs block truncate max-w-[130px]">{assignedBoyName}</span>
+                                  {assignedBoy?.mobile && (
+                                    <span className="text-[10px] text-slate-400 font-mono block truncate">{assignedBoy.mobile}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-slate-400 text-xs font-medium bg-slate-50 border border-slate-200/60 px-2 py-0.5 rounded-md">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                                Unassigned
+                              </span>
+                            )}
+                          </td>
                           <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[120px]">{c.area || '—'}</td>
                           <td className="p-3.5 text-center">
                             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.pendingAmount <= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}`}>
@@ -496,9 +642,15 @@ const Customers = () => {
                           </td>
                           <td className="p-3.5 text-center">
                             {getTodayStr() > (c.endDate || '') ? (
-                               <span className="text-rose-600 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-md text-xs font-semibold">Expired</span>
+                               <div className="inline-flex flex-col items-center">
+                                 <span className="text-rose-600 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-md text-xs font-semibold">Expired</span>
+                                 {c.endDate && <span className="text-[9px] text-slate-400 font-mono mt-0.5">{formatDateDDMMYYYY(c.endDate)}</span>}
+                               </div>
                             ) : (
-                               <span className="text-primary-700 font-bold text-xs bg-primary-50 px-2 py-0.5 rounded-md border border-primary-200/50">{c.realDaysLeft} days</span>
+                               <div className="inline-flex flex-col items-center">
+                                 <span className="text-primary-700 font-bold text-xs bg-primary-50 px-2 py-0.5 rounded-md border border-primary-200/50">{c.realDaysLeft} days</span>
+                                 {c.endDate && <span className="text-[9px] text-slate-400 font-mono mt-0.5">till {formatDateDDMMYYYY(c.endDate)}</span>}
+                               </div>
                             )}
                           </td>
                           <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[90px]">{branch?.name || 'Main Kitchen'}</td>
@@ -530,7 +682,7 @@ const Customers = () => {
                         </tr>
                         {isExpanded && (
                           <tr>
-                            <td colSpan={10} className="p-0 bg-slate-50/50 border-b border-slate-200">
+                            <td colSpan={11} className="p-0 bg-slate-50/50 border-b border-slate-200">
                                <CustomerExpansion customer={c} plans={plans} deliveryLogs={deliveryLogs} onClose={() => toggleRow(c.id)} />
                             </td>
                           </tr>
@@ -562,6 +714,105 @@ const Customers = () => {
 };
 
 // --- COLUMN FILTER COMPONENTS ---
+
+const DeliveryBoyFilter = ({ 
+  staff, 
+  value, 
+  onChange, 
+  sortOrder, 
+  onToggleSort 
+}: { 
+  staff: any[], 
+  value: string, 
+  onChange: (val: string) => void,
+  sortOrder: 'none' | 'asc' | 'desc',
+  onToggleSort: () => void
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedBoy = staff.find((s: any) => s.id === value);
+  const activeLabel = value === 'All' ? 'Delivery Boy' : value === 'Unassigned' ? 'Unassigned' : (selectedBoy?.name || 'Delivery Boy');
+
+  return (
+    <div className="relative inline-block" ref={containerRef}>
+      <div className="flex items-center gap-1">
+        <button 
+          onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }} 
+          className="flex items-center gap-1.5 hover:text-slate-900 transition-colors uppercase font-semibold text-xs tracking-wider"
+          title="Filter by Delivery Boy"
+        >
+          <span className="truncate max-w-[90px]">{activeLabel}</span>
+          <Filter size={10} className={value !== 'All' ? 'text-primary-600' : 'text-slate-300'} />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleSort(); }}
+          className={`p-1 rounded hover:bg-slate-200/60 transition-colors ${sortOrder !== 'none' ? 'text-primary-600 font-bold' : 'text-slate-400'}`}
+          title={`Sort by Delivery Boy (${sortOrder === 'asc' ? 'A to Z' : sortOrder === 'desc' ? 'Z to A' : 'Click to sort'})`}
+        >
+          {sortOrder === 'asc' ? '▲' : sortOrder === 'desc' ? '▼' : '⇅'}
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-2 w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-30 p-2 overflow-hidden animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
+          <div className="text-[10px] font-bold text-slate-400 uppercase px-2 py-1 tracking-wider border-b border-slate-100 mb-1 flex items-center justify-between">
+            <span>Filter Rider</span>
+            <button 
+              onClick={() => onToggleSort()}
+              className="text-[9px] text-primary-600 hover:underline uppercase font-bold flex items-center gap-0.5"
+            >
+              Sort {sortOrder === 'asc' ? 'Z-A' : 'A-Z'}
+            </button>
+          </div>
+          <div className="max-h-56 overflow-y-auto no-scrollbar space-y-0.5">
+            <button
+              onClick={() => { onChange('All'); setIsOpen(false); }}
+              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-colors ${value === 'All' ? 'bg-primary-50 text-primary-700' : 'hover:bg-slate-50 text-slate-700'}`}
+            >
+              <span>All Delivery Boys</span>
+              {value === 'All' && <Check size={12} strokeWidth={3} className="text-primary-600" />}
+            </button>
+            <button
+              onClick={() => { onChange('Unassigned'); setIsOpen(false); }}
+              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-colors ${value === 'Unassigned' ? 'bg-rose-50 text-rose-700' : 'hover:bg-slate-50 text-slate-700'}`}
+            >
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span> Unassigned Only
+              </span>
+              {value === 'Unassigned' && <Check size={12} strokeWidth={3} className="text-rose-600" />}
+            </button>
+            {staff.map((s: any) => (
+              <button
+                key={s.id}
+                onClick={() => { onChange(s.id); setIsOpen(false); }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-colors ${value === s.id ? 'bg-primary-50 text-primary-700' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <div className="truncate pr-2">
+                  <span className="block truncate">{s.name}</span>
+                  {s.mobile && <span className="block text-[9px] text-slate-400 font-mono font-normal">{s.mobile}</span>}
+                </div>
+                {value === s.id && <Check size={12} strokeWidth={3} className="text-primary-600 shrink-0" />}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 pt-2 border-t border-slate-100 flex justify-between px-1">
+            <button onClick={() => { onChange('All'); setIsOpen(false); }} className="text-[9px] font-bold uppercase text-slate-400 hover:text-red-500">Reset</button>
+            <button onClick={() => setIsOpen(false)} className="text-[9px] font-bold uppercase text-primary-600 hover:text-primary-800">Close</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const TimingFilter = ({ selected, onChange }: { selected: string[], onChange: (vals: string[]) => void }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -705,7 +956,7 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
     activePlans.forEach(p => {
       const planConfig = plans.find(pc => pc.id === p.planId);
       const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || [], p.pauses || []);
-      msg += `🍴 *${p.mealTime} Plan* ${p.isStarred ? '⭐ (Spl Req)' : ''}\nPlan: ${p.planName}\nExpiry: ${p.endDate}\nDeliveries Left: ${left}\n\n`;
+      msg += `🍴 *${p.mealTime} Plan* ${p.isStarred ? '⭐ (Spl Req)' : ''}\nPlan: ${p.planName}\nExpiry: ${formatDateDDMMYYYY(p.endDate)}\nDeliveries Left: ${left}\n\n`;
     });
     if (customer.notes) msg += `📝 Notes: ${customer.notes}\n\n`;
     if (customer.locationLink) msg += `📍 Location: ${customer.locationLink}\n\n`;
@@ -905,7 +1156,7 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
                           'bg-amber-50/80 border-amber-200 text-amber-900'
                         }`}
                       >
-                        <span className="font-mono text-[10px] text-slate-500">{h.date} ({h.mealTime})</span>
+                        <span className="font-mono text-[10px] text-slate-500">{formatDateDDMMYYYY(h.date)} ({h.mealTime})</span>
                         <span className="font-bold text-[11px]">
                           {h.status === 'returned_clean' ? '✅ Clean' :
                            h.status === 'unclean' ? '⚠️ Unclean' :
@@ -1078,7 +1329,7 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
   const pending = Math.max(0, totalDays - delivered);
 
   const handleSharePlan = () => {
-    const msg = `*${plan.mealTime} Status - ScaleKitchen*\n\nHello ${customer.name},\nYour ${plan.mealTime} subscription (${plan.planName}) status:\n✅ Delivered: ${delivered}/${totalDays}\n⏳ Pending: ${pending}\n⏸ Paused: ${userPaused + branchPaused} days\n📅 Expiry: ${plan.endDate}\n\nThank you!`;
+    const msg = `*${plan.mealTime} Status - ScaleKitchen*\n\nHello ${customer.name},\nYour ${plan.mealTime} subscription (${plan.planName}) status:\n✅ Delivered: ${delivered}/${totalDays}\n⏳ Pending: ${pending}\n⏸ Paused: ${userPaused + branchPaused} days\n📅 Expiry: ${formatDateDDMMYYYY(plan.endDate)}\n\nThank you!`;
     window.open(`https://wa.me/${(customer.mobile || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -1161,7 +1412,7 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
                   />
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
                      <div className="bg-slate-900 text-white text-[8px] font-black py-1 px-2 rounded whitespace-nowrap shadow-xl">
-                        {dStr} • {label} {pause ? '(Click to Count)' : ''}
+                        {formatDateDDMMYYYY(dStr)} • {label} {pause ? '(Click to Count)' : ''}
                      </div>
                   </div>
                 </div>
@@ -1175,7 +1426,7 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
           <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200">
             <h3 className="text-lg font-black text-slate-900 mb-2">Count this date?</h3>
             <p className="text-sm text-slate-500 mb-6">
-              You are marking <span className="font-bold text-slate-900">{selectedDateToCount}</span> as a delivery day. This will reduce the paused days and update the plan's end date.
+              You are marking <span className="font-bold text-slate-900">{formatDateDDMMYYYY(selectedDateToCount)}</span> as a delivery day. This will reduce the paused days and update the plan's end date.
             </p>
             <div className="flex gap-3">
               <button 
@@ -1607,7 +1858,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                                 </div>
                               </div>
                               <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                                 <span className="text-slate-400 font-mono">Starts: {p.startDate}</span>
+                                 <span className="text-slate-400 font-mono">Starts: {formatDateDDMMYYYY(p.startDate)}</span>
                                  {isReusable ? (
                                    <span className="inline-flex items-center gap-1 font-bold text-teal-800 bg-teal-50 border border-teal-200/70 px-2 py-0.5 rounded-md">
                                      🔄 {p.reusableBoxType}
@@ -1764,7 +2015,7 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                                     </td>
                                     <td className="p-3 truncate max-w-[140px] text-slate-900">{p.planName}</td>
                                     <td className="p-3">₹{p.price}</td>
-                                    <td className="p-3 font-mono text-[10px]">{p.endDate}</td>
+                                    <td className="p-3 font-mono text-[10px]">{formatDateDDMMYYYY(p.endDate)}</td>
                                     <td className="p-3 text-green-600">{delCount}/{planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26}</td>
                                     <td className="p-3 text-orange-600">{pCount}</td>
                                     <td className="p-3 text-primary-600">{left}</td>
@@ -1798,12 +2049,12 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                               </p>
                               {selectedPlanIndices.length === 1 && (
                                 <p className="text-xl font-black">
-                                  {calculateEndDate(
+                                  {formatDateDDMMYYYY(calculateEndDate(
                                       activePlans[selectedPlanIndices[0]].startDate, 
                                       plans.find((pc:any) => pc.id === activePlans[selectedPlanIndices[0]].planId)?.numberOfDeliveryDays || activePlans[selectedPlanIndices[0]].totalDeliveries || 26,
                                       plans.find((pc:any) => pc.id === activePlans[selectedPlanIndices[0]].planId)?.weekdays || activePlans[selectedPlanIndices[0]].weekdays || [1,2,3,4,5,6],
                                       [...(activePlans[selectedPlanIndices[0]].pauses || []), { start: formData.start, end: formData.end, type: 'User' }]
-                                  )}
+                                  ))}
                                 </p>
                               )}
                            </div>

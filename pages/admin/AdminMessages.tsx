@@ -10,6 +10,7 @@ import { db } from '../../services/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { WhatsAppOutreach } from '../../components/admin/WhatsAppOutreach';
 import { EmailOutreach } from '../../components/admin/EmailOutreach';
+import { formatDateDDMMYYYY } from '../../services/store';
 
 const AdminMessages = () => {
   const { currentUser } = useAuth();
@@ -622,7 +623,7 @@ const AdminMessages = () => {
                       <div>
                         <h4 className="text-white font-bold text-xs leading-snug">{msg.title}</h4>
                         <span className="text-[9px] text-slate-500 font-mono">
-                          {new Date(msg.sentAt).toLocaleDateString()}
+                          {formatDateDDMMYYYY(msg.sentAt)}
                         </span>
                       </div>
                     </div>
@@ -705,7 +706,7 @@ const AdminMessages = () => {
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          Sent: {new Date(msg.sentAt).toLocaleString()} • Target: <span className="text-slate-300 font-bold">{msg.targetType || 'ALL'}</span>
+                          Sent: {formatDateDDMMYYYY(msg.sentAt)} {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • Target: <span className="text-slate-300 font-bold">{msg.targetType || 'ALL'}</span>
                           {msg.recipientCount != null && ` (${msg.recipientCount} clients)`}
                         </p>
                       </div>

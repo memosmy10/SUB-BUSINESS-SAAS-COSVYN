@@ -5,7 +5,7 @@ import {
   Info, Star, Users, Package, CheckCircle2, Clock, ChevronDown, Store
 } from 'lucide-react';
 import { useStreamCollection } from '../services/dbService';
-import { GlobalCustomer, GlobalPlan, getTodayStr, isPlanActiveOnDate, shiftDateStr } from '../services/store';
+import { GlobalCustomer, GlobalPlan, getTodayStr, isPlanActiveOnDate, shiftDateStr, formatDateDDMMYYYY } from '../services/store';
 
 const Prep = () => {
   const { data: customers = [], loading: l1 } = useStreamCollection<GlobalCustomer>('customers');
@@ -212,7 +212,7 @@ const PrepCard = ({ title, dateLabel, dateValue, data, themeColor }: any) => {
           </h2>
           <div className="flex items-center gap-2 mt-1">
              <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">{dateLabel}</span>
-             <span className="text-xs font-mono bg-white px-2 py-0.5 rounded border border-slate-100 text-slate-400">{dateValue}</span>
+             <span className="text-xs font-mono bg-white px-2 py-0.5 rounded border border-slate-100 text-slate-400">{formatDateDDMMYYYY(dateValue)}</span>
           </div>
         </div>
         <div className={`px-5 py-2.5 rounded-2xl font-black text-lg border shadow-md ${isPrimary ? 'bg-primary-600 text-white border-primary-700' : 'bg-slate-800 text-white border-slate-900'}`}>
@@ -337,7 +337,7 @@ const SpecialList = ({ title, list, dateLabel }: any) => (
   <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
      <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
         <h3 className="font-black text-slate-700 text-sm uppercase tracking-widest">{title}</h3>
-        <span className="text-[10px] font-bold text-slate-400 font-mono">{dateLabel}</span>
+        <span className="text-[10px] font-bold text-slate-400 font-mono">{formatDateDDMMYYYY(dateLabel)}</span>
      </div>
      <div className="p-6 space-y-4 max-h-[600px] overflow-y-auto no-scrollbar">
         {list.length > 0 ? list.map((item: any) => (

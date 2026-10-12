@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell, Legend, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
-import { calculateRemainingDeliveries, getTodayStr, isPlanActiveOnDate } from '../services/store';
+import { calculateRemainingDeliveries, getTodayStr, isPlanActiveOnDate, formatDateDDMMYYYY } from '../services/store';
 import { GlassmorphicDonutChart } from '../components/GlassmorphicDonutChart';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#6366f1'];
@@ -57,7 +57,7 @@ const Dashboard = () => {
   }, [branches, selectedBranch]);
 
   const today = new Date();
-  const formattedToday = today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  const formattedToday = formatDateDDMMYYYY(today);
 
   const yearOptions = useMemo(() => {
     const years = new Set<string>();

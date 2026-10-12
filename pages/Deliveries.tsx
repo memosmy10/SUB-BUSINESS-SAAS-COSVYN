@@ -11,7 +11,8 @@ import { useStreamCollection, updateItem, getTargetBusinessId } from '../service
 import { useAuth } from '../contexts/AuthContext';
 import { 
   calculateRemainingDeliveries, getTodayStr, getPlanDeliveryDayNumber, 
-  getCustomerUncollectedBoxesCount, getCustomerScheduledPlansForSession, isPlanActiveOnDate 
+  getCustomerUncollectedBoxesCount, getCustomerScheduledPlansForSession, isPlanActiveOnDate,
+  formatDateDDMMYYYY
 } from '../services/store';
 import { writeBatch, doc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -432,7 +433,7 @@ const Deliveries = () => {
               Today
             </button>
             <span className="text-xs text-slate-600 font-semibold px-1 hidden sm:inline">
-              {new Date(selectedDate.replace(/-/g, '/')).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              {new Date(selectedDate.replace(/-/g, '/')).toLocaleDateString('en-US', { weekday: 'long' })}, {formatDateDDMMYYYY(selectedDate)}
             </span>
             {!isSelectedToday && (
               <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${

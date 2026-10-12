@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem, deleteItem, getManagerBranchId } from '../services/dbService';
+import { formatDateDDMMYYYY } from '../services/store';
 
 const NOTE_COLORS = [
   { id: 'slate', bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-900', accent: 'bg-slate-200' },
@@ -68,7 +69,7 @@ const NoteCard = ({ note, branchName, onEdit, onDelete, onToggleStatus, onToggle
       <div className="mt-4 pt-4 border-t border-slate-100/50 flex items-center justify-between text-[10px] font-bold text-slate-400">
         <div className="flex items-center gap-1.5">
           <Calendar size={12}/>
-          <span>{note.date}</span>
+          <span>{formatDateDDMMYYYY(note.date)}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className={`font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isDone ? 'bg-green-50 text-green-600' : 'bg-white text-slate-400 border border-slate-100'}`}>

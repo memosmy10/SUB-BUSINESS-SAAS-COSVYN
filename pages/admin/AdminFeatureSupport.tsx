@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { MessageSquare, AlertCircle, Lightbulb, Star, Loader2 } from 'lucide-react';
 import { useGlobalCollection, updateGlobalItem } from '../../services/dbService';
+import { formatDateDDMMYYYY } from '../../services/store';
 
 const AdminFeatureSupport = () => {
   const [activeTab, setActiveTab] = useState<'features' | 'support' | 'reviews'>('features');
@@ -58,7 +59,7 @@ const AdminFeatureSupport = () => {
                     <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">{item.businessName || 'Unknown User'}</span>
                  </div>
                  <p className="text-slate-400 text-sm mb-2">{item.description}</p>
-                 <p className="text-xs text-slate-600">{item.createdAt?.split('T')[0]}</p>
+                 <p className="text-xs text-slate-600">{item.createdAt ? formatDateDDMMYYYY(item.createdAt) : ''}</p>
               </div>
               <div className="flex flex-wrap gap-2 mt-2 md:mt-0">
                  {['Pending', 'Processing', 'Approved', 'Delayed'].map(s => (
@@ -116,7 +117,7 @@ const AdminFeatureSupport = () => {
                     </div>
                     <span className="text-slate-400 text-sm font-bold">{item.businessName || 'Unknown User'}</span>
                  </div>
-                 <span className="text-xs text-slate-600">{item.createdAt?.split('T')[0]}</span>
+                 <span className="text-xs text-slate-600">{item.createdAt ? formatDateDDMMYYYY(item.createdAt) : ''}</span>
               </div>
               <p className="text-slate-200 italic">"{item.reviewText}"</p>
            </div>

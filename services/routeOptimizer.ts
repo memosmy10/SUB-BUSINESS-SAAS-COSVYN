@@ -10,7 +10,7 @@
  * - Formats WhatsApp dispatch route messages for delivery staff
  */
 
-import { getPlanDeliveryDayNumber, isPlanActiveOnDate } from './store';
+import { getPlanDeliveryDayNumber, isPlanActiveOnDate, formatDateDDMMYYYY } from './store';
 
 export interface LatLng {
   lat: number;
@@ -779,7 +779,7 @@ export const formatWhatsAppOptimizedRoute = (
 
   let msg = `🚚 *SHORTEST ROUTE DISPATCH - ${mealTime.toUpperCase()}*\n`;
   msg += `👤 Partner: *${deliveryBoy.name}*\n`;
-  msg += `📅 Date: ${dateStr}\n`;
+  msg += `📅 Date: ${formatDateDDMMYYYY(dateStr)}\n`;
   msg += `📍 Hub: *${hub.name}* (Round Trip: Hub ➔ Orders ➔ Hub)\n`;
   msg += `📦 Total Orders: *${orderedStops.length} Customers*\n`;
   if (totalRecollectionsToday > 0) {

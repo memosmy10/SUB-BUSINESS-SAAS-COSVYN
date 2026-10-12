@@ -7,7 +7,7 @@ import {
 import { Plus, Receipt, Loader2, X, Trash2, ShoppingBag, Edit2, Store, Download, Calendar, ChevronDown } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
-import { GlobalExpense, ExpenseItem } from '../services/store';
+import { GlobalExpense, ExpenseItem, formatDateDDMMYYYY } from '../services/store';
 
 const EXPENSE_CATEGORIES = ['Food', 'Salaries', 'Packaging', 'Rent', 'Marketing', 'Transportation', 'Others'];
 const UNITS = ['kg', 'g', 'L', 'ml', 'dozen', 'pcs', 'pkt'];
@@ -93,7 +93,7 @@ const Expenses = () => {
     const rows = filteredExpenses.map(e => {
       const branchName = branches.find(b => b.id === e.branchId)?.name || 'Unknown';
       return [
-        e.date,
+        formatDateDDMMYYYY(e.date),
         `"${branchName}"`,
         `"${e.category}"`,
         `"${e.title}"`,
@@ -255,7 +255,7 @@ const Expenses = () => {
                      <div className="flex-1 min-w-0 pr-3">
                         <div className="font-semibold text-slate-800 text-xs truncate">{e.title || e.category}</div>
                         <div className="text-[11px] text-slate-400 font-medium mt-0.5 flex items-center gap-2">
-                           <span>{e.date}</span>
+                           <span>{formatDateDDMMYYYY(e.date)}</span>
                            {e.items && e.items.length > 0 && (
                               <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[10px]">
                                  {e.items.length} items

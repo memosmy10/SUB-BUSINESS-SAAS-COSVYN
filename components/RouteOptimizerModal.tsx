@@ -8,7 +8,7 @@ import {
   optimizeRouteOrder, formatWhatsAppOptimizedRoute, 
   OptimizedRouteResult, HubLocation, extractCoordinates 
 } from '../services/routeOptimizer';
-import { getPlanDeliveryDayNumber, getCustomerScheduledPlansForSession } from '../services/store';
+import { getPlanDeliveryDayNumber, getCustomerScheduledPlansForSession, formatDateDDMMYYYY } from '../services/store';
 
 interface RouteOptimizerModalProps {
   isOpen: boolean;
@@ -172,7 +172,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 {mealTime} Session
               </span>
               <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-xl text-xs font-bold font-mono">
-                {todayDateStr}
+                {formatDateDDMMYYYY(todayDateStr)}
               </span>
             </div>
           </div>

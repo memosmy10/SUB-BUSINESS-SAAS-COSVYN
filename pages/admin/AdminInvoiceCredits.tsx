@@ -4,6 +4,7 @@ import {
   History, User, ArrowRight, TrendingUp, DollarSign, ChevronDown, ChevronUp, Download, Clock
 } from 'lucide-react';
 import { useAdminTenants, useAdminBillingHistory } from '../../services/dbService';
+import { formatDateDDMMYYYY } from '../../services/store';
 
 const AdminInvoiceCredits = () => {
   const { tenants, loading: tenantsLoading } = useAdminTenants();
@@ -155,7 +156,7 @@ const AdminInvoiceCredits = () => {
                                  {lastRecharge ? (
                                     <div className="flex flex-col items-center">
                                        <span className="text-white font-bold text-xs">{lastRecharge.planName}</span>
-                                       <span className="text-[10px] text-slate-500 uppercase font-black">{new Date(lastRecharge.date).toLocaleDateString()}</span>
+                                       <span className="text-[10px] text-slate-500 uppercase font-black">{formatDateDDMMYYYY(lastRecharge.date)}</span>
                                     </div>
                                  ) : <span className="text-slate-700 uppercase font-black text-[10px]">No History</span>}
                               </td>
@@ -208,7 +209,7 @@ const AdminInvoiceCredits = () => {
                                                    <div className="flex justify-between items-end border-t border-slate-800/50 pt-4">
                                                       <div>
                                                          <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Date</p>
-                                                         <p className="text-xs text-slate-300 font-bold">{new Date(log.date).toLocaleDateString()}</p>
+                                                         <p className="text-xs text-slate-300 font-bold">{formatDateDDMMYYYY(log.date)}</p>
                                                       </div>
                                                       <div className="text-right">
                                                          <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Value</p>

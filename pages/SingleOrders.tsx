@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem, deleteItem, getManagerBranchId } from '../services/dbService';
+import { formatDateDDMMYYYY } from '../services/store';
 
 const StatCard = ({ title, value, textColor = "text-slate-900" }: any) => (
   <div className="bg-white p-4 sm:p-6 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-center h-28 sm:h-32 hover:shadow-md transition-shadow">
@@ -160,7 +161,7 @@ const SingleOrders = () => {
                     </span>
                   </td>
                   <td className="p-4 text-center text-slate-500 font-bold text-[10px]">{o.paymentMethod}</td>
-                  <td className="p-4 text-slate-400 text-[10px] font-mono">{o.date}</td>
+                  <td className="p-4 text-slate-400 text-[10px] font-mono">{formatDateDDMMYYYY(o.date)}</td>
                   <td className="p-4 text-right">
                     <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => { setEditingOrder(o); setIsModalOpen(true); }} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"><Edit size={16}/></button>

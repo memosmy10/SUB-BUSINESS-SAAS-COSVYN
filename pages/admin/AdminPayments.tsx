@@ -7,6 +7,7 @@ import {
   AreaChart, Area, XAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
 import { useAdminBillingHistory, useAdminTenants } from '../../services/dbService';
+import { formatDateDDMMYYYY } from '../../services/store';
 
 const AdminPayments = () => {
   const [filterPlan, setFilterPlan] = useState('All');
@@ -64,7 +65,7 @@ const AdminPayments = () => {
      }, {});
 
      const sortedDates = Object.keys(grouped).sort();
-     return sortedDates.map(date => ({ name: date, value: grouped[date] }));
+     return sortedDates.map(date => ({ name: formatDateDDMMYYYY(date), value: grouped[date] }));
   }, [filteredPayments]);
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-white" /></div>;
@@ -172,7 +173,7 @@ const AdminPayments = () => {
                          <td className="px-6 py-4 text-slate-400 text-sm">
                             <div className="flex items-center gap-2">
                                <Calendar size={14} />
-                               {new Date(p.startDate).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })}
+                               {formatDateDDMMYYYY(p.startDate)}
                             </div>
                             <div className="text-xs text-slate-500 pl-6 mt-0.5">
                                {new Date(p.startDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}

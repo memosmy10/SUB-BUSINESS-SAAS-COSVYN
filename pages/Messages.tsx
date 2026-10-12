@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGlobalCollection, useStreamCollection } from '../services/dbService';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { formatDateDDMMYYYY } from '../services/store';
 
 const Messages = () => {
   const { currentUser } = useAuth();
@@ -121,7 +122,7 @@ const Messages = () => {
                            {msg.title}
                         </h3>
                         <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">
-                           <Clock size={12} /> {new Date(msg.sentAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+                           <Clock size={12} /> {formatDateDDMMYYYY(msg.sentAt)}
                         </div>
                      </div>
                      

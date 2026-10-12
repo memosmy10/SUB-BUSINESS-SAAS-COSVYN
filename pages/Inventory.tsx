@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
-import { InventoryItem } from '../services/store';
+import { InventoryItem, formatDateDDMMYYYY } from '../services/store';
 
 const CATEGORIES = ['Vegetables', 'Meat', 'Dairy', 'Spices', 'Grains', 'Packaging', 'Cleaning', 'Others'];
 const UNITS = ['kg', 'g', 'L', 'ml', 'pcs', 'box', 'packet'];
@@ -172,7 +172,7 @@ const Inventory = () => {
                         <tr key={item.id} className="hover:bg-slate-50 transition-colors group">
                            <td className="p-4">
                               <div className="font-bold text-slate-900">{item.name}</div>
-                              <div className="text-xs text-slate-400">Updated: {item.lastUpdated?.split('T')[0]}</div>
+                              <div className="text-xs text-slate-400">Updated: {formatDateDDMMYYYY(item.lastUpdated)}</div>
                            </td>
                            <td className="p-4">
                               <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-medium border border-slate-200">

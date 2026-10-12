@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGlobalCollection, addGlobalItem } from '../services/dbService';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { formatDateDDMMYYYY } from '../services/store';
 
 const Support = () => {
   const { currentUser } = useAuth();
@@ -158,7 +159,7 @@ const Support = () => {
                   <div>
                     <h5 className="font-bold text-slate-900">{req.featureName}</h5>
                     <p className="text-sm text-slate-600 mt-1">{req.description}</p>
-                    <p className="text-xs text-slate-400 mt-2">{req.createdAt?.split('T')[0]}</p>
+                    <p className="text-xs text-slate-400 mt-2">{formatDateDDMMYYYY(req.createdAt)}</p>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
                     req.status === 'Approved' ? 'bg-green-100 text-green-700' :
@@ -230,7 +231,7 @@ const Support = () => {
                    </div>
                    <p className="text-sm text-slate-600">{ticket.description}</p>
                    <div className="mt-3 pt-3 border-t border-slate-50 flex items-center gap-2 text-xs text-slate-400">
-                      <Clock size={12} /> Opened on {ticket.createdAt?.split('T')[0]}
+                      <Clock size={12} /> Opened on {formatDateDDMMYYYY(ticket.createdAt)}
                    </div>
                 </div>
               ))}
@@ -289,7 +290,7 @@ const Support = () => {
                      {[...Array(5)].map((_, i) => (
                        <Star key={i} size={14} className={i < rev.rating ? "text-yellow-400" : "text-slate-200"} fill="currentColor" />
                      ))}
-                     <span className="text-xs text-slate-400 ml-2">{rev.createdAt?.split('T')[0]}</span>
+                     <span className="text-xs text-slate-400 ml-2">{formatDateDDMMYYYY(rev.createdAt)}</span>
                    </div>
                    <p className="text-slate-800 text-sm italic">"{rev.reviewText}"</p>
                 </div>

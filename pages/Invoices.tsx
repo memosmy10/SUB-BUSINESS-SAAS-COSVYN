@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { handleRazorpayPayment } from '../services/razorpayService';
+import { formatDateDDMMYYYY } from '../services/store';
 
 type ThemeColor = 'black' | 'blue' | 'purple' | 'teal' | 'green' | 'amber' | 'orange' | 'red';
 
@@ -267,7 +268,7 @@ const Invoices = () => {
     const msg = `*Invoice from ${invoiceData.from.company}*\n\n` +
       `Invoice No: ${invoiceData.invoiceNo}\n` +
       `Amount Due: ₹${totals.grandTotal.toLocaleString()}\n` +
-      `Due Date: ${invoiceData.dueDate}\n\n` +
+      `Due Date: ${formatDateDDMMYYYY(invoiceData.dueDate)}\n\n` +
       `Thank you for your business!`;
     const url = `https://wa.me/${sharePhone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`;
     window.open(url, '_blank');
@@ -280,7 +281,7 @@ const Invoices = () => {
       `Please find the invoice details below:\n\n` +
       `Invoice No: ${invoiceData.invoiceNo}\n` +
       `Amount: ₹${totals.grandTotal.toLocaleString()}\n` +
-      `Due Date: ${invoiceData.dueDate}\n\n` +
+      `Due Date: ${formatDateDDMMYYYY(invoiceData.dueDate)}\n\n` +
       `Notes: ${invoiceData.notes}\n\n` +
       `Thank you!`
     );
@@ -477,8 +478,8 @@ const Invoices = () => {
                 <h2 className="text-5xl font-black text-slate-100 uppercase tracking-tighter mb-4">Invoice</h2>
                 <div className="space-y-1">
                   <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Invoice#</span><EditableInput value={invoiceData.invoiceNo} onChange={v => setInvoiceData({...invoiceData, invoiceNo: v})} className="text-right font-black text-slate-900 w-28" /></div>
-                  <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Date</span><input type="date" value={invoiceData.invoiceDate} onChange={e => setInvoiceData({...invoiceData, invoiceDate: e.target.value})} className="text-right text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer" /></div>
-                  <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Due Date</span><input type="date" value={invoiceData.dueDate} onChange={e => setInvoiceData({...invoiceData, dueDate: e.target.value})} className="text-right text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer" /></div>
+                  <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Date</span><input type="date" value={invoiceData.invoiceDate} onChange={e => setInvoiceData({...invoiceData, invoiceDate: e.target.value})} className="text-right text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer" /><span className="text-[10px] text-slate-500 font-mono font-bold">({formatDateDDMMYYYY(invoiceData.invoiceDate)})</span></div>
+                  <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Due Date</span><input type="date" value={invoiceData.dueDate} onChange={e => setInvoiceData({...invoiceData, dueDate: e.target.value})} className="text-right text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer" /><span className="text-[10px] text-slate-500 font-mono font-bold">({formatDateDDMMYYYY(invoiceData.dueDate)})</span></div>
                 </div>
               </div>
             </div>

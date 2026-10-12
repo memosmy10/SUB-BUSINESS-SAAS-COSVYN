@@ -13,7 +13,7 @@ import { db, auth } from '../services/firebase';
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
-  getCustomerScheduledPlansForSession, isPlanActiveOnDate
+  getCustomerScheduledPlansForSession, isPlanActiveOnDate, formatDateDDMMYYYY
 } from '../services/store';
 
 // Sample demo data for instant preview or offline testing
@@ -988,7 +988,7 @@ export const DriverPortal: React.FC = () => {
               )}
             </div>
             <p className="text-[10px] sm:text-[11px] text-slate-400 flex items-center gap-1">
-              <span>{todayStr}</span>
+              <span>{formatDateDDMMYYYY(todayStr)}</span>
               <span>•</span>
               <button 
                 onClick={() => setLoginModalOpen(true)} 

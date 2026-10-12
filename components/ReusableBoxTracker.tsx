@@ -8,7 +8,7 @@ import {
 import { 
   GlobalCustomer, REUSABLE_BOX_TYPES, 
   getCustomerBoxHealth, getCustomerUncollectedBoxesCount, 
-  BoxRecollectionStatus, getTodayStr 
+  BoxRecollectionStatus, getTodayStr, formatDateDDMMYYYY 
 } from '../services/store';
 import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -484,7 +484,7 @@ export const ReusableBoxTracker: React.FC<ReusableBoxTrackerProps> = ({
                     <div>
                       <div className="flex items-center gap-1.5 font-semibold text-slate-800">
                         <span>{h.status === 'Collected Clean' ? '✅ Clean' : h.status === 'Collected Unclean' ? '🧽 Unwashed' : h.status === 'Damaged / Missing Part' ? '💥 Damaged' : '⏳ Pending'}</span>
-                        <span className="text-[11px] text-slate-400 font-normal">• {h.date} ({h.mealTime})</span>
+                        <span className="text-[11px] text-slate-400 font-normal">• {formatDateDDMMYYYY(h.date)} ({h.mealTime})</span>
                       </div>
                       {h.notes && <p className="text-[11px] text-slate-500 italic mt-0.5">"{h.notes}"</p>}
                     </div>

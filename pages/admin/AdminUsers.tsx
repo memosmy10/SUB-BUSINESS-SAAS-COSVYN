@@ -10,7 +10,7 @@ import {
   syncAllBusinessesLiveStats, 
   fetchBusinessDetailedDossier 
 } from '../../services/dbService';
-import { getDaysDifference } from '../../services/store';
+import { getDaysDifference, formatDateDDMMYYYY } from '../../services/store';
 
 const AdminUsers = () => {
   const { tenants, loading } = useAdminTenants();
@@ -612,7 +612,7 @@ const AdminUsers = () => {
                             {isExpired ? 'Expired' : `${daysLeft} days`}
                           </span>
                           {t.planExpiryDate && (
-                            <span className="text-[10px] text-slate-500 mt-0.5">{t.planExpiryDate}</span>
+                            <span className="text-[10px] text-slate-500 mt-0.5">{formatDateDDMMYYYY(t.planExpiryDate)}</span>
                           )}
                         </div>
                       ) : (
@@ -694,8 +694,8 @@ const AdminUsers = () => {
                   <span className="text-slate-400">Latest Session Timestamp:</span>
                   <span className="font-mono text-slate-300">
                     {loginHistoryBiz.lastLoginAt 
-                      ? new Date(loginHistoryBiz.lastLoginAt).toLocaleString() 
-                      : (loginHistoryBiz.lastLoginDate || 'No record')}
+                      ? `${formatDateDDMMYYYY(loginHistoryBiz.lastLoginAt)} ${new Date(loginHistoryBiz.lastLoginAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` 
+                      : (loginHistoryBiz.lastLoginDate ? formatDateDDMMYYYY(loginHistoryBiz.lastLoginDate) : 'No record')}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
@@ -726,13 +726,13 @@ const AdminUsers = () => {
                     <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
                       <span className="text-[10px] text-slate-400 block mb-0.5">Account / Trial Origin:</span>
                       <span className="font-mono font-bold text-slate-200">
-                        {loginHistoryBiz.trialStartDate || loginHistoryBiz.createdAt?.split('T')[0] || (Array.isArray(loginHistoryBiz.recentLoginDates) ? [...loginHistoryBiz.recentLoginDates].sort()[0] : 'N/A')}
+                        {formatDateDDMMYYYY(loginHistoryBiz.trialStartDate || loginHistoryBiz.createdAt) || (Array.isArray(loginHistoryBiz.recentLoginDates) ? formatDateDDMMYYYY([...loginHistoryBiz.recentLoginDates].sort()[0]) : 'N/A')}
                       </span>
                     </div>
                     <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
                       <span className="text-[10px] text-slate-400 block mb-0.5">Trial Expiry Date:</span>
                       <span className="font-mono font-bold text-cyan-400">
-                        {loginHistoryBiz.planExpiryDate || 'N/A'}
+                        {loginHistoryBiz.planExpiryDate ? formatDateDDMMYYYY(loginHistoryBiz.planExpiryDate) : 'N/A'}
                       </span>
                     </div>
                   </div>
@@ -768,7 +768,7 @@ const AdminUsers = () => {
                       <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-slate-800/60 border border-slate-700/60 text-xs">
                         <div className="flex items-center gap-2">
                           <CheckCircle size={14} className="text-emerald-400" />
-                          <span className="font-mono text-slate-200">{date}</span>
+                          <span className="font-mono text-slate-200">{formatDateDDMMYYYY(date)}</span>
                         </div>
                         <span className="text-[10px] text-slate-400 font-medium">
                           {date === todayStr ? 'Today' : `${getDaysDifference(date, todayStr)} days ago`}
@@ -778,7 +778,7 @@ const AdminUsers = () => {
                   ) : (
                     <div className="p-4 text-center text-slate-500 text-xs bg-slate-950/40 rounded-xl">
                       {loginHistoryBiz.lastLoginDate 
-                        ? `Recorded login on ${loginHistoryBiz.lastLoginDate}. Ongoing tracking enabled.` 
+                        ? `Recorded login on ${formatDateDDMMYYYY(loginHistoryBiz.lastLoginDate)}. Ongoing tracking enabled.` 
                         : 'No historical login records yet.'}
                     </div>
                   )}

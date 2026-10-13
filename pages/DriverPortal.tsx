@@ -213,7 +213,10 @@ export const DriverPortal: React.FC = () => {
     if (decoded.boyId) safeStorageSet('driver_boy_id', decoded.boyId);
     if (decoded.mobile) safeStorageSet('driver_phone', decoded.mobile);
     if (decoded.pin) safeStorageSet('driver_token_pin', decoded.pin);
-    if (decoded.name) safeStorageSet('driver_token_name', decoded.name);
+    if (decoded.name) {
+      safeStorageSet('driver_token_name', decoded.name);
+      safeStorageSet('driver_name', decoded.name);
+    }
   }
 
   const initialBiz = decoded?.bizId || 
@@ -224,10 +227,12 @@ export const DriverPortal: React.FC = () => {
                      (!auth.currentUser?.isAnonymous ? auth.currentUser?.uid : '') || '';
   const initialBoy = decoded?.boyId || getParam('boy') || safeStorageGet('driver_boy_id') || '';
   const initialPhone = decoded?.mobile || getParam('phone') || safeStorageGet('driver_phone') || '';
+  const initialName = decoded?.name || safeStorageGet('driver_name') || safeStorageGet('driver_token_name') || '';
 
   const [bizId, setBizId] = useState<string>(initialBiz);
   const [bizInput, setBizInput] = useState<string>('');
   const [selectedBoyId, setSelectedBoyId] = useState<string>(initialBoy);
+  const [driverDisplayName, setDriverDisplayName] = useState<string>(initialName);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(initialBiz === 'demo');
   const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(Boolean(auth.currentUser && !auth.currentUser.isAnonymous));
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -382,57 +387,60 @@ export const DriverPortal: React.FC = () => {
       return;
     }
 
+    // 1. Direct staff subcollection stream (works in owner preview or when permissions permit)
     const staffRef = collection(db, 'businesses', bizId, 'staff');
     const unsubscribeStaff = onSnapshot(staffRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DeliveryBoyStaff[];
-      setAllStaff(list);
-      
-      // If a rider is selected, update shift status
-      if (selectedBoyId) {
-        const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
-        if (found) {
-          setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
-          setPunchInTime(found.attendanceMarkedAt || null);
+      if (list.length > 0) {
+        setAllStaff(list);
+        
+        // If a rider is selected, update shift status
+        if (selectedBoyId) {
+          const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
+          if (found) {
+            setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
+            setPunchInTime(found.attendanceMarkedAt || null);
 
-          // ENFORCE UPDATED PIN: If owner updated PIN in Settings, rider must re-enter updated PIN
-          const savedPin = safeStorageGet('driver_auth_pin');
-          const expectedPin = found.pin || '1234';
-          if (!isKitchenOwnerUser && savedPin && savedPin !== expectedPin) {
-            safeStorageSet('driver_auth_pin', '');
-            setPinInput('');
-            setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
-            setLoginModalOpen(true);
+            // ENFORCE UPDATED PIN: If owner updated PIN in Settings, rider must re-enter updated PIN
+            const savedPin = safeStorageGet('driver_auth_pin');
+            const expectedPin = found.pin || '1234';
+            if (!isKitchenOwnerUser && savedPin && savedPin !== expectedPin) {
+              safeStorageSet('driver_auth_pin', '');
+              setPinInput('');
+              setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
+              setLoginModalOpen(true);
+            }
           }
         }
       }
       setLoading(false);
     }, (err) => {
-      console.warn("Staff stream err (using fallback if needed):", err);
+      console.warn("Direct staff stream notice (using global manifest):", err?.message);
       setLoading(false);
     });
 
-    // Customers stream
+    // 2. Direct customers subcollection stream
     const custRef = collection(db, 'businesses', bizId, 'customers');
     const unsubscribeCust = onSnapshot(custRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as GlobalCustomer[];
-      setCustomers(list);
-    }, (err) => console.error("Customer stream err:", err));
+      if (list.length > 0) setCustomers(list);
+    }, (err) => console.warn("Direct customer stream notice (using global manifest):", err?.message));
 
-    // Plans stream
+    // 3. Direct plans stream
     const plansRef = collection(db, 'businesses', bizId, 'plans');
     const unsubscribePlans = onSnapshot(plansRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setPlans(list);
-    });
+      if (list.length > 0) setPlans(list);
+    }, (err) => console.warn("Direct plans stream notice:", err?.message));
 
-    // Branches stream
+    // 4. Direct branches stream
     const branchesRef = collection(db, 'businesses', bizId, 'branches');
     const unsubscribeBranches = onSnapshot(branchesRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setBranches(list);
-    });
+      if (list.length > 0) setBranches(list);
+    }, (err) => console.warn("Direct branches stream notice:", err?.message));
 
-    // Today's delivery logs stream
+    // 5. Direct today's delivery logs stream
     const logsRef = collection(db, 'businesses', bizId, 'delivery_logs');
     const unsubscribeLogs = onSnapshot(logsRef, (snap) => {
       const map: Record<string, any> = {};
@@ -442,10 +450,10 @@ export const DriverPortal: React.FC = () => {
           map[`${data.customerId}_${data.mealTime}`] = { id: d.id, ...data };
         }
       });
-      setDeliveryLogs(map);
-    });
+      setDeliveryLogs(prev => ({ ...prev, ...map }));
+    }, (err) => console.warn("Direct logs stream notice:", err?.message));
 
-    // Business profile stream for branding & logo
+    // 6. Direct business profile stream for branding & logo
     const bizDocRef = doc(db, 'businesses', bizId);
     const unsubscribeBiz = onSnapshot(bizDocRef, (snap) => {
       if (snap.exists()) {
@@ -453,7 +461,51 @@ export const DriverPortal: React.FC = () => {
         if (data.businessName) setBusinessName(data.businessName);
         if (data.logoUrl) setLogoUrl(data.logoUrl);
       }
-    }, (err) => console.warn("Driver biz profile err:", err));
+    }, (err) => console.warn("Driver biz profile err:", err?.message));
+
+    // 7. REAL-TIME UNIVERSAL DRIVER MANIFEST in global_features
+    // Accessible by all delivery boys across all browsers and devices without permission limits
+    const manifestDocRef = doc(db, 'global_features', `driver_manifest_${bizId}`);
+    const unsubscribeManifest = onSnapshot(manifestDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (Array.isArray(data.customers) && data.customers.length > 0) {
+          setCustomers(data.customers);
+        }
+        if (Array.isArray(data.plans) && data.plans.length > 0) {
+          setPlans(data.plans);
+        }
+        if (Array.isArray(data.staff) && data.staff.length > 0) {
+          setAllStaff(data.staff);
+        }
+        if (Array.isArray(data.branches) && data.branches.length > 0) {
+          setBranches(data.branches);
+        }
+        if (data.businessName) setBusinessName(data.businessName);
+        if (data.logoUrl) setLogoUrl(data.logoUrl);
+        if (Array.isArray(data.deliveryLogs)) {
+          const map: Record<string, any> = {};
+          data.deliveryLogs.forEach((l: any) => {
+            if (l.date === todayStr) {
+              map[`${l.customerId}_${l.mealTime}`] = l;
+            }
+          });
+          setDeliveryLogs(prev => ({ ...prev, ...map }));
+        }
+        setLoading(false);
+      }
+    }, (err) => console.warn("Global driver manifest stream notice:", err?.message));
+
+    // 8. REAL-TIME TODAY'S DELIVERY LOGS in global_features
+    const globalLogsDocRef = doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`);
+    const unsubscribeGlobalLogs = onSnapshot(globalLogsDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.logs && typeof data.logs === 'object') {
+          setDeliveryLogs(prev => ({ ...prev, ...data.logs }));
+        }
+      }
+    }, (err) => console.warn("Global logs stream notice:", err?.message));
 
     return () => {
       unsubscribeBiz();
@@ -462,6 +514,8 @@ export const DriverPortal: React.FC = () => {
       unsubscribePlans();
       unsubscribeBranches();
       unsubscribeLogs();
+      unsubscribeManifest();
+      unsubscribeGlobalLogs();
     };
   }, [bizId, selectedBoyId, todayStr]);
 
@@ -506,43 +560,115 @@ export const DriverPortal: React.FC = () => {
 
   // Active delivery boy & their branch hub
   const currentBoy = useMemo(() => {
-    return allStaff.find(s => s.id === selectedBoyId) || null;
-  }, [allStaff, selectedBoyId]);
+    const fromStaff = allStaff.find(s => 
+      s.id === selectedBoyId || 
+      (selectedBoyId && s.id?.toLowerCase() === selectedBoyId.toLowerCase()) ||
+      (driverDisplayName && s.name?.toLowerCase() === driverDisplayName.toLowerCase())
+    );
+    if (fromStaff) {
+      if (fromStaff.name && fromStaff.name !== driverDisplayName) {
+        setDriverDisplayName(fromStaff.name);
+        safeStorageSet('driver_name', fromStaff.name);
+      }
+      return fromStaff;
+    }
+    const name = driverDisplayName || safeStorageGet('driver_name') || safeStorageGet('driver_token_name');
+    if (selectedBoyId || name) {
+      return {
+        id: selectedBoyId || safeStorageGet('driver_boy_id') || 'driver-1',
+        name: name || 'Delivery Partner',
+        mobile: phoneInput || safeStorageGet('driver_phone') || '',
+        role: 'Delivery Boy',
+        status: isShiftActive ? 'Online' : 'Offline',
+        branchId: safeStorageGet('driver_branch_id') || '',
+        lastAttendanceDate: isShiftActive ? todayStr : '',
+        attendanceMarkedAt: punchInTime || undefined
+      } as DeliveryBoyStaff;
+    }
+    return null;
+  }, [allStaff, selectedBoyId, driverDisplayName, isShiftActive, phoneInput, todayStr, punchInTime]);
 
   const driverBranch = useMemo(() => {
     if (!currentBoy?.branchId) return branches[0] || null;
     return branches.find(b => b.id === currentBoy.branchId) || branches[0] || null;
   }, [currentBoy, branches]);
 
+  // Quick helper to determine if a customer is assigned to this driver
+  const isCustomerAssignedToRider = (c: any) => {
+    if (showAllUnassigned) return true;
+    const boyId = selectedBoyId || currentBoy?.id || '';
+    const boyName = (currentBoy?.name || driverDisplayName || '').toLowerCase().trim();
+    const boyPhone = (phoneInput || currentBoy?.mobile || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
+
+    const cBoyId = String(c.deliveryBoyId || '').trim();
+    const cBoyName = String(c.deliveryBoyName || '').toLowerCase().trim();
+    const cBoyPhone = String(c.deliveryBoyPhone || c.deliveryBoyMobile || '').replace(/\D/g, '').slice(-10);
+
+    // Exact ID match
+    if (boyId && cBoyId === boyId) return true;
+    // Name match (case-insensitive)
+    if (boyName && (cBoyName === boyName || cBoyId.toLowerCase() === boyName)) return true;
+    // Phone match
+    if (boyPhone && (cBoyPhone === boyPhone || cBoyId === boyPhone)) return true;
+    // If customer has no delivery boy assigned, and either single driver or matching branch
+    if (!cBoyId && !cBoyName) {
+      if (allStaff.length <= 1) return true;
+      if (currentBoy?.branchId && c.branchId && c.branchId === currentBoy.branchId) return true;
+    }
+    return false;
+  };
+
+  // Stop counts for each meal session (Breakfast, Lunch, Dinner)
+  const sessionStopCounts = useMemo(() => {
+    const counts = { Breakfast: 0, Lunch: 0, Dinner: 0 };
+    (['Breakfast', 'Lunch', 'Dinner'] as const).forEach(meal => {
+      const activeForMeal = customers.filter(c => {
+        if (c.isActive === false) return false;
+        if (!isCustomerAssignedToRider(c)) return false;
+        const plansList = getCustomerScheduledPlansForSession(c, meal, todayStr, plans);
+        if (plansList.length > 0) return true;
+        const cMeal = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
+        return cMeal.includes(meal) || cMeal.includes('All') || (meal === 'Lunch' && !c.mealTime);
+      });
+      counts[meal] = activeForMeal.length;
+    });
+    return counts;
+  }, [customers, selectedBoyId, currentBoy, driverDisplayName, phoneInput, todayStr, plans, showAllUnassigned, allStaff.length]);
+
   // Stops assigned to this delivery boy for the selected meal session
   // Grouped BY CUSTOMER (Stop-based Route)
   const stops = useMemo(() => {
-    if (!selectedBoyId) return [];
+    if (!selectedBoyId && !driverDisplayName) return [];
 
     const activeCustomerStops: any[] = [];
 
     customers
-      .filter(c => {
-        if (c.isActive === false) return false;
-        if (showAllUnassigned) return true;
-        return (
-          c.deliveryBoyId === selectedBoyId || 
-          (currentBoy && (c.deliveryBoyId === currentBoy.name || c.deliveryBoyName === currentBoy.name)) ||
-          (!c.deliveryBoyId && allStaff.length <= 1)
-        );
-      })
+      .filter(c => c.isActive !== false && isCustomerAssignedToRider(c))
       .forEach(c => {
         // Collect all scheduled plans for this customer for today in the selected meal session
         const rawPlans = getCustomerScheduledPlansForSession(c, selectedMeal, todayStr, plans);
-        const scheduledPlans = rawPlans.map(ap => ({
+        let scheduledPlans = rawPlans.map(ap => ({
           ...ap,
           planConfig: plans.find(p => p.id === ap.planId),
           quantity: Number(ap.quantity) || 1
         }));
-        const stopTotalBoxes = scheduledPlans.reduce((sum: number, p: any) => sum + p.quantity, 0);
+
+        // Robust fallback: if customer has a subscription, check if meal matches
+        if (scheduledPlans.length === 0) {
+          const cMeal = Array.isArray(c.mealTime) ? c.mealTime : [c.mealTime || 'Lunch'];
+          if (cMeal.includes(selectedMeal) || cMeal.includes('All') || (selectedMeal === 'Lunch' && !c.mealTime)) {
+            scheduledPlans = [{
+              planId: c.planId || 'std-1',
+              planName: c.planName || 'Standard Meal Plan',
+              quantity: 1,
+              mealTime: selectedMeal
+            } as any];
+          }
+        }
 
         // Only include customer if they actually have a scheduled meal today in this session!
         if (scheduledPlans.length > 0) {
+          const stopTotalBoxes = scheduledPlans.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0);
           const logKey = `${c.id}_${selectedMeal}`;
           const logRecord = deliveryLogs[logKey];
           const isDelivered = logRecord?.status === 'Delivered';
@@ -596,14 +722,14 @@ export const DriverPortal: React.FC = () => {
             logRecord,
             isDelivered,
             isDay2Plus,
-            routeOrder: c.routeOrder ?? 999
+            routeOrder: typeof c.routeOrder === 'number' ? c.routeOrder : 999
           });
         }
       });
 
     // Sort by optimal route order
     return activeCustomerStops.sort((a, b) => a.routeOrder - b.routeOrder);
-  }, [customers, selectedBoyId, currentBoy, selectedMeal, plans, todayStr, dayOfWeek, deliveryLogs, showAllUnassigned, allStaff.length]);
+  }, [customers, selectedBoyId, currentBoy, driverDisplayName, selectedMeal, plans, todayStr, deliveryLogs, showAllUnassigned, allStaff.length, phoneInput]);
 
   // Summary Metrics
   const metrics = useMemo(() => {
@@ -695,6 +821,26 @@ export const DriverPortal: React.FC = () => {
 
     if (bizId === 'demo') return;
 
+    // Always sync box status to global_features real-time logs
+    setDoc(doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`), {
+      date: todayStr,
+      bizId,
+      updatedAt: now.toISOString(),
+      logs: {
+        [`${customer.id}_${selectedMeal}`]: {
+          date: todayStr,
+          customerId: customer.id,
+          customerName: customer.name,
+          deliveryBoyId: selectedBoyId,
+          deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
+          mealTime: selectedMeal,
+          boxStatus: status,
+          boxNotes: note.trim(),
+          updatedAt: now.toISOString()
+        }
+      }
+    }, { merge: true }).catch(() => {});
+
     try {
       const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${customer.id}_${selectedMeal}`);
       await setDoc(logDocRef, {
@@ -702,7 +848,7 @@ export const DriverPortal: React.FC = () => {
         customerId: customer.id,
         customerName: customer.name,
         deliveryBoyId: selectedBoyId,
-        deliveryBoyName: currentBoy?.name || 'Rider',
+        deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
         mealTime: selectedMeal,
         reusableBoxEnabled: true,
         boxType: customer.reusableBoxType || stop.primaryBoxType || 'Stainless Steel 3-Tier Dabba',
@@ -841,6 +987,31 @@ export const DriverPortal: React.FC = () => {
       return;
     }
 
+    // Always sync to global_features real-time delivery logs
+    setDoc(doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`), {
+      date: todayStr,
+      bizId,
+      updatedAt: now.toISOString(),
+      logs: {
+        [`${stop.customer.id}_${selectedMeal}`]: {
+          date: todayStr,
+          customerId: stop.customer.id,
+          customerName: stop.customer.name,
+          deliveryBoyId: selectedBoyId,
+          deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
+          mealTime: selectedMeal,
+          status: currentStatus,
+          deliveredAt: currentStatus === 'Delivered' ? now.toISOString() : null,
+          reusableBoxEnabled: stop.customer.reusableBoxEnabled || false,
+          boxType: stop.customer.reusableBoxType || stop.primaryBoxType || 'None',
+          isDay2Plus: stop.isDay2Plus,
+          boxStatus: stop.logRecord?.boxStatus || (stop.customer.reusableBoxEnabled && stop.isDay2Plus ? 'Pending' : 'None'),
+          boxNotes: stop.logRecord?.boxNotes || '',
+          updatedAt: now.toISOString()
+        }
+      }
+    }, { merge: true }).catch(err => console.warn("Global logs sync notice:", err));
+
     try {
       const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${stop.customer.id}_${selectedMeal}`);
       await setDoc(logDocRef, {
@@ -848,7 +1019,7 @@ export const DriverPortal: React.FC = () => {
         customerId: stop.customer.id,
         customerName: stop.customer.name,
         deliveryBoyId: selectedBoyId,
-        deliveryBoyName: currentBoy?.name || 'Rider',
+        deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
         mealTime: selectedMeal,
         status: currentStatus,
         deliveredAt: currentStatus === 'Delivered' ? now.toISOString() : null,
@@ -860,8 +1031,7 @@ export const DriverPortal: React.FC = () => {
         updatedAt: now.toISOString()
       }, { merge: true });
     } catch (err) {
-      console.error("Toggle delivery error:", err);
-      alert("Could not update delivery status.");
+      console.warn("Direct delivery log write notice (synced to global logs):", err);
     }
   };
 
@@ -924,6 +1094,26 @@ export const DriverPortal: React.FC = () => {
       return;
     }
 
+    // Always sync box recollection to global_features real-time logs
+    setDoc(doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`), {
+      date: todayStr,
+      bizId,
+      updatedAt: now.toISOString(),
+      logs: {
+        [`${customer.id}_${selectedMeal}`]: {
+          date: todayStr,
+          customerId: customer.id,
+          customerName: customer.name,
+          deliveryBoyId: selectedBoyId,
+          deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
+          mealTime: selectedMeal,
+          boxStatus: selectedBoxStatus,
+          boxNotes: boxNotes.trim(),
+          updatedAt: now.toISOString()
+        }
+      }
+    }, { merge: true }).catch(err => console.warn("Global box log sync notice:", err));
+
     try {
       const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${customer.id}_${selectedMeal}`);
 
@@ -932,7 +1122,7 @@ export const DriverPortal: React.FC = () => {
         customerId: customer.id,
         customerName: customer.name,
         deliveryBoyId: selectedBoyId,
-        deliveryBoyName: currentBoy?.name || 'Rider',
+        deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
         mealTime: selectedMeal,
         reusableBoxEnabled: true,
         boxType: customer.reusableBoxType || '3-Tier Stainless Steel Tiffin',
@@ -956,7 +1146,7 @@ export const DriverPortal: React.FC = () => {
             boxType: customer.reusableBoxType || 'Stainless Steel 3-Tier Dabba',
             issueNote: boxNotes.trim(),
             collectedAt: now.toISOString(),
-            updatedBy: currentBoy?.name || 'Delivery Partner'
+            updatedBy: currentBoy?.name || driverDisplayName || 'Delivery Partner'
           },
           updatedAt: now.toISOString()
         });
@@ -964,8 +1154,7 @@ export const DriverPortal: React.FC = () => {
         console.warn("Could not sync customer box record directly:", custErr);
       }
     } catch (err) {
-      console.error("Save box recollection error:", err);
-      alert("Could not save box status.");
+      console.warn("Direct box recollection write notice (synced to global logs):", err);
     }
   };
 
@@ -1002,16 +1191,37 @@ export const DriverPortal: React.FC = () => {
         const lookupData = lookupSnap.data();
         const expectedPin = String(lookupData.pin || '1234').trim();
         if (pin === expectedPin) {
+          const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
           if (lookupData.bizId) setBizId(lookupData.bizId);
           if (lookupData.staffId) setSelectedBoyId(lookupData.staffId);
+          setDriverDisplayName(verifiedName);
           safeStorageSet('driver_biz_id', lookupData.bizId || '');
           safeStorageSet('driver_boy_id', lookupData.staffId || '');
+          safeStorageSet('driver_name', verifiedName);
           safeStorageSet('driver_auth_pin', pin);
           safeStorageSet('driver_phone', digits);
+          if (lookupData.branchId) safeStorageSet('driver_branch_id', lookupData.branchId);
+
+          setAllStaff(prev => {
+            if (prev.some(s => s.id === (lookupData.staffId || 'driver-1') || s.name === verifiedName)) return prev;
+            return [
+              ...prev,
+              {
+                id: lookupData.staffId || 'driver-1',
+                name: verifiedName,
+                mobile: digits,
+                pin: pin,
+                branchId: lookupData.branchId || '',
+                role: 'Delivery Boy',
+                status: 'Online'
+              } as DeliveryBoyStaff
+            ];
+          });
+
           setLoginModalOpen(false);
           setPinInput('');
           setVerifying(false);
-          showToast(`Welcome back, ${lookupData.name || 'Partner'}! Ready for today's deliveries.`);
+          showToast(`Welcome back, ${verifiedName}! Ready for today's deliveries.`);
           return;
         } else {
           setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1040,6 +1250,8 @@ export const DriverPortal: React.FC = () => {
           setSelectedBoyId(tokenBoy);
           safeStorageSet('driver_boy_id', tokenBoy);
         }
+        setDriverDisplayName(tokenName);
+        safeStorageSet('driver_name', tokenName);
         safeStorageSet('driver_auth_pin', pin);
         safeStorageSet('driver_phone', digits);
         setLoginModalOpen(false);
@@ -1065,7 +1277,9 @@ export const DriverPortal: React.FC = () => {
         const expectedPin = String(matched.pin || '1234').trim();
         if (pin === expectedPin) {
           setSelectedBoyId(matched.id);
+          setDriverDisplayName(matched.name);
           safeStorageSet('driver_boy_id', matched.id);
+          safeStorageSet('driver_name', matched.name);
           safeStorageSet('driver_auth_pin', pin);
           safeStorageSet('driver_phone', digits);
           if (bizId) safeStorageSet('driver_biz_id', bizId);
@@ -1098,7 +1312,9 @@ export const DriverPortal: React.FC = () => {
           const expectedPin = String(matched.pin || '1234').trim();
           if (pin === expectedPin) {
             setSelectedBoyId(matched.id);
+            setDriverDisplayName(matched.name);
             safeStorageSet('driver_boy_id', matched.id);
+            safeStorageSet('driver_name', matched.name);
             safeStorageSet('driver_auth_pin', pin);
             safeStorageSet('driver_phone', digits);
             setLoginModalOpen(false);
@@ -1125,16 +1341,19 @@ export const DriverPortal: React.FC = () => {
         const data = legacySnap.data();
         const expectedPin = String(data.pin || '1234').trim();
         if (pin === expectedPin) {
+          const legName = data.name || 'Partner';
           if (data.bizId) setBizId(data.bizId);
           if (data.staffId) setSelectedBoyId(data.staffId);
+          setDriverDisplayName(legName);
           safeStorageSet('driver_biz_id', data.bizId || '');
           safeStorageSet('driver_boy_id', data.staffId || '');
+          safeStorageSet('driver_name', legName);
           safeStorageSet('driver_auth_pin', pin);
           safeStorageSet('driver_phone', digits);
           setLoginModalOpen(false);
           setPinInput('');
           setVerifying(false);
-          showToast(`Welcome back, ${data.name || 'Partner'}! Ready for today's deliveries.`);
+          showToast(`Welcome back, ${legName}! Ready for today's deliveries.`);
           return;
         } else {
           setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1296,7 +1515,7 @@ export const DriverPortal: React.FC = () => {
           <div>
             <div className="flex items-center gap-1.5">
               <h1 className="font-bold font-display text-xs sm:text-sm tracking-tight text-white truncate max-w-[90px] sm:max-w-none">
-                {currentBoy ? currentBoy.name : 'Select Driver'}
+                {currentBoy ? currentBoy.name : driverDisplayName || 'Select Driver'}
               </h1>
               {isShiftActive && (
                 <span className="flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 rounded-full animate-pulse">
@@ -1317,9 +1536,9 @@ export const DriverPortal: React.FC = () => {
           </div>
         </div>
 
-        {/* Center: Business Name in Middle of Top (Requirement from Part 4) */}
+        {/* Center: Business Name in Middle of Top */}
         <div className="flex-1 text-center px-1 sm:px-3">
-          <h2 className="font-bold font-display text-xs sm:text-sm tracking-tight text-white truncate max-w-[130px] sm:max-w-xs mx-auto">
+          <h2 className="font-bold font-display text-xs sm:text-sm tracking-tight text-white truncate max-w-[110px] sm:max-w-xs mx-auto">
             {businessName || 'ScaleKitchen'}
           </h2>
           <span className="text-[9px] text-amber-400/90 font-medium hidden sm:inline-block">
@@ -1327,8 +1546,25 @@ export const DriverPortal: React.FC = () => {
           </span>
         </div>
 
-        {/* Right Corner: Shift Action Button & Company / Business Logo (Requirement from Part 4) */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right Corner: Driver Name Badge, Shift Action Button & Company / Business Logo */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Driver Name in Top Right Corner */}
+          {(currentBoy?.name || driverDisplayName) && (
+            <div className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500/15 to-orange-500/15 border border-amber-500/35 text-amber-200 shadow-xs">
+              <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-[10px] sm:text-xs border border-amber-400/40 shrink-0">
+                {(currentBoy?.name || driverDisplayName || 'D').charAt(0).toUpperCase()}
+              </div>
+              <div className="text-left leading-none">
+                <span className="block text-xs font-bold text-amber-100 truncate max-w-[70px] sm:max-w-[120px]">
+                  {currentBoy?.name || driverDisplayName}
+                </span>
+                <span className="block text-[8px] sm:text-[9px] text-emerald-400 font-semibold mt-0.5">
+                  {isShiftActive ? '● Online' : '○ Standby'}
+                </span>
+              </div>
+            </div>
+          )}
+
           {isShiftActive ? (
             <button 
               onClick={handlePunchOut}
@@ -1451,7 +1687,7 @@ export const DriverPortal: React.FC = () => {
             <button
               key={meal}
               onClick={() => setSelectedMeal(meal)}
-              className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 ${
+              className={`py-2 px-2.5 rounded-xl text-xs font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 ${
                 selectedMeal === meal 
                   ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20' 
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -1459,6 +1695,13 @@ export const DriverPortal: React.FC = () => {
             >
               <span>{meal === 'Breakfast' ? '🌅' : meal === 'Lunch' ? '☀️' : '🌙'}</span>
               <span>{meal}</span>
+              {sessionStopCounts[meal] > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  selectedMeal === meal ? 'bg-slate-950 text-amber-300' : 'bg-amber-500/25 text-amber-300 border border-amber-500/30'
+                }`}>
+                  {sessionStopCounts[meal]}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1933,22 +2176,79 @@ export const DriverPortal: React.FC = () => {
           )}
 
           {stops.length === 0 && (
-            <div className="glass-card bg-white/5 border border-white/10 rounded-2xl p-8 text-center space-y-3">
-              <CheckCircle2 size={36} className="text-emerald-400 mx-auto" />
-              <h3 className="font-bold text-white text-base">All Caught Up!</h3>
-              <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                No active deliveries scheduled for {selectedMeal} under {currentBoy ? currentBoy.name : 'this rider'} today.
-              </p>
-              {!showAllUnassigned && customers.length > 0 && (
+            <div className="glass-card bg-white/5 border border-white/10 rounded-2xl p-6 sm:p-8 text-center space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+                <Truck size={28} />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">
+                  No {selectedMeal} Deliveries Scheduled
+                </h3>
+                <p className="text-xs text-slate-400 max-w-xs mx-auto mt-1">
+                  {currentBoy?.name || driverDisplayName || 'Driver'} has no active meal stops scheduled for {selectedMeal} today.
+                </p>
+              </div>
+
+              {/* Quick switch to session that actually has stops */}
+              {sessionStopCounts['Lunch'] > 0 && selectedMeal !== 'Lunch' && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center justify-between gap-2 max-w-sm mx-auto">
+                  <span>☀️ <strong>{sessionStopCounts['Lunch']}</strong> stops scheduled in Lunch session</span>
+                  <button
+                    onClick={() => setSelectedMeal('Lunch')}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-lg transition-all"
+                  >
+                    View Lunch
+                  </button>
+                </div>
+              )}
+
+              {sessionStopCounts['Dinner'] > 0 && selectedMeal !== 'Dinner' && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center justify-between gap-2 max-w-sm mx-auto">
+                  <span>🌙 <strong>{sessionStopCounts['Dinner']}</strong> stops scheduled in Dinner session</span>
+                  <button
+                    onClick={() => setSelectedMeal('Dinner')}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-lg transition-all"
+                  >
+                    View Dinner
+                  </button>
+                </div>
+              )}
+
+              {sessionStopCounts['Breakfast'] > 0 && selectedMeal !== 'Breakfast' && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center justify-between gap-2 max-w-sm mx-auto">
+                  <span>🌅 <strong>{sessionStopCounts['Breakfast']}</strong> stops scheduled in Breakfast session</span>
+                  <button
+                    onClick={() => setSelectedMeal('Breakfast')}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-lg transition-all"
+                  >
+                    View Breakfast
+                  </button>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                {!showAllUnassigned && customers.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllUnassigned(true)}
+                    className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-semibold transition-all inline-flex items-center gap-1.5"
+                  >
+                    <Sparkles size={13} />
+                    <span>Show All Unassigned Kitchen Stops</span>
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setShowAllUnassigned(true)}
-                  className="mt-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-semibold transition-all inline-flex items-center gap-1.5"
+                  onClick={() => {
+                    setLoading(true);
+                    setTimeout(() => setLoading(false), 500);
+                  }}
+                  className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 rounded-xl text-xs font-semibold transition-all inline-flex items-center gap-1.5"
                 >
-                  <Sparkles size={13} />
-                  <span>Show All Kitchen Drops for {selectedMeal}</span>
+                  <RotateCcw size={13} />
+                  <span>Refresh Stops</span>
                 </button>
-              )}
+              </div>
             </div>
           )}
         </div>

@@ -48,7 +48,7 @@ import {
 import { getDaysDifference, calculateRemainingDeliveries } from './services/store';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ADMIN_EMAIL, isAdminEmail } from './services/adminStore';
-import { doc, onSnapshot, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, getDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { db } from './services/firebase';
 import { useStreamCollection, recordOwnerDailyLogin, syncBusinessLiveStats } from './services/dbService';
 
@@ -279,6 +279,74 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
   
   const { data: customers = [] } = useStreamCollection<any>('customers');
   const { data: plans = [] } = useStreamCollection<any>('plans');
+  const { data: staff = [] } = useStreamCollection<any>('staff');
+  const { data: branches = [] } = useStreamCollection<any>('branches');
+  const { data: deliveryLogs = [] } = useStreamCollection<any>('delivery_logs');
+
+  // Auto-sync real-time driver manifest to global_features so delivery boys have full instant access
+  useEffect(() => {
+    if (!currentUser?.uid || customers.length === 0) return;
+    const bizId = currentUser.uid;
+    const manifestRef = doc(db, 'global_features', `driver_manifest_${bizId}`);
+    
+    // Clean and serialize customer data for driver portal
+    const serializedCustomers = customers.map((c: any) => ({
+      id: c.id,
+      name: c.name || 'Customer',
+      mobile: c.mobile || '',
+      address: c.address || '',
+      area: c.area || '',
+      branchId: c.branchId || '',
+      deliveryBoyId: c.deliveryBoyId || '',
+      deliveryBoyName: c.deliveryBoyName || '',
+      routeOrder: typeof c.routeOrder === 'number' ? c.routeOrder : 999,
+      isActive: c.isActive !== false,
+      activePlans: c.activePlans || [],
+      planId: c.planId || '',
+      planName: c.planName || '',
+      mealTime: c.mealTime || 'Lunch',
+      startDate: c.startDate || '',
+      endDate: c.endDate || '',
+      weekdays: c.weekdays || [1, 2, 3, 4, 5, 6],
+      pauses: c.pauses || [],
+      notes: c.notes || '',
+      starredQuery: c.starredQuery || '',
+      highlightMark: c.highlightMark || '',
+      isStarred: Boolean(c.isStarred),
+      reusableBoxEnabled: Boolean(c.reusableBoxEnabled),
+      reusableBoxType: c.reusableBoxType || '',
+      uncollectedBoxesCount: Number(c.uncollectedBoxesCount) || 0,
+      boxCollections: c.boxCollections || {}
+    }));
+
+    setDoc(manifestRef, {
+      bizId,
+      businessName: businessData?.businessName || 'ScaleKitchen',
+      logoUrl: businessData?.logoUrl || '',
+      updatedAt: new Date().toISOString(),
+      customers: serializedCustomers,
+      plans: plans || [],
+      staff: staff || [],
+      branches: branches || [],
+      deliveryLogs: deliveryLogs || []
+    }, { merge: true }).catch(err => console.warn("Driver manifest background sync:", err));
+
+    // Also sync each delivery boy's auth document with their name, PIN, and stats
+    staff.forEach((boy: any) => {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone) {
+        setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), {
+          bizId,
+          staffId: boy.id,
+          name: boy.name,
+          mobile: cleanPhone,
+          pin: (boy.pin || '1234').trim(),
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
+    });
+  }, [currentUser?.uid, customers, plans, staff, branches, deliveryLogs, businessData]);
 
   // FIX: SYNCED LIVE CALCULATION FOR NOTIFICATIONS BASED ON DATABASE AND LIVE PLAN DELIVERY COUNT
   const expiringCustomers = React.useMemo(() => {

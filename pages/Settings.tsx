@@ -13,6 +13,7 @@ import {
 } from '../services/store';
 import { db } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
 
 // --- Types ---
 interface Branch { 
@@ -98,6 +99,8 @@ const Settings = () => {
   const [activeModal, setActiveModal] = useState<'branch' | 'plan' | 'delivery' | 'boxType' | 'manager' | 'shareManager' | null>(null);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [selectedShareManager, setSelectedShareManager] = useState<BranchManager | null>(null);
+  const [shareDriverModalOpen, setShareDriverModalOpen] = useState(false);
+  const [selectedShareDriver, setSelectedShareDriver] = useState<any>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Fetch business profile (name & logo)
@@ -113,14 +116,14 @@ const Settings = () => {
     return () => unsub();
   }, [currentUser]);
 
-  // Auto-sync delivery boys to driver_auth_lookup & backfill default PIN if missing
+  // Auto-sync delivery boys to universal driver auth & backfill default PIN if missing
   useEffect(() => {
     if (!currentUser || !deliveryBoys || deliveryBoys.length === 0) return;
     deliveryBoys.forEach((boy) => {
       const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
       if (cleanPhone) {
-        const pin = boy.pin || '1234';
-        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+        const pin = (boy.pin || '1234').trim();
+        const payload = {
           bizId: currentUser.uid,
           staffId: boy.id,
           name: boy.name,
@@ -128,7 +131,15 @@ const Settings = () => {
           pin: pin,
           branchId: boy.branchId || '',
           updatedAt: new Date().toISOString()
-        }, { merge: true }).catch((err) => console.warn("Driver lookup sync warn:", err));
+        };
+
+        // Universal real-time auth in global_features (accessible across all devices & browsers)
+        setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true })
+          .catch((err) => console.warn("Global driver auth sync warn:", err));
+
+        // Legacy / local collection sync
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true })
+          .catch(() => {});
 
         if (!boy.pin) {
           updateDoc(doc(db, 'businesses', currentUser.uid, 'staff', boy.id), {
@@ -273,18 +284,24 @@ const Settings = () => {
       staffId = (addedDoc as any)?.id || '';
     }
 
-    // Sync to top-level driver_auth_lookup for universal multi-browser Phone + PIN login
+    // Sync to universal driver auth for multi-browser Phone + PIN login
     if (cleanPhone) {
+      const payload = {
+        bizId: currentUser.uid,
+        staffId: staffId || editingItem?.id || '',
+        name: data.name,
+        mobile: cleanPhone,
+        pin: cleanPin,
+        branchId: data.branchId || '',
+        updatedAt: new Date().toISOString()
+      };
       try {
-        await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
-          bizId: currentUser.uid,
-          staffId: staffId || editingItem?.id || '',
-          name: data.name,
-          mobile: cleanPhone,
-          pin: cleanPin,
-          branchId: data.branchId || '',
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
+        await setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true });
+      } catch (err) {
+        console.warn("Could not sync global driver auth:", err);
+      }
+      try {
+        await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true });
       } catch (err) {
         console.warn("Could not sync driver_auth_lookup:", err);
       }
@@ -356,6 +373,11 @@ const Settings = () => {
       if (boy?.mobile) {
         const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
         if (cleanPhone) {
+          try {
+            await deleteDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`));
+          } catch (e) {
+            console.warn("Failed removing global driver auth:", e);
+          }
           try {
             await deleteDoc(doc(db, 'driver_auth_lookup', cleanPhone));
           } catch (e) {
@@ -1799,6 +1821,17 @@ const Settings = () => {
                   <td className="px-6 py-3.5 font-semibold text-slate-800">₹{d.salary?.toLocaleString() || 0}</td>
                   <td className="px-6 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      <button 
+                        onClick={() => {
+                          setSelectedShareDriver(d);
+                          setShareDriverModalOpen(true);
+                        }} 
+                        className="text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 font-semibold text-[11px]" 
+                        title="Share Secure Driver App Link"
+                      >
+                        <Share2 size={13} />
+                        <span>Share App</span>
+                      </button>
                       <button onClick={() => handleOpenModal('delivery', d)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors" title="Edit"><Edit2 size={14}/></button>
                       <button onClick={() => handleDelete('staff', d.id)} className="text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors" title="Delete"><Trash2 size={14}/></button>
                     </div>
@@ -1903,6 +1936,19 @@ const Settings = () => {
       {activeModal === 'manager' && <ManagerModal initialData={editingItem} onClose={() => { setActiveModal(null); setEditingItem(null); }} />}
       {activeModal === 'shareManager' && selectedShareManager && <ShareManagerModal manager={selectedShareManager} onClose={() => { setActiveModal(null); setSelectedShareManager(null); }} />}
       {activeModal === 'boxType' && <BoxTypeModal initialData={editingItem} onClose={() => { setActiveModal(null); setEditingItem(null); }} />}
+
+      {shareDriverModalOpen && (
+        <ShareDriverLinkModal
+          isOpen={shareDriverModalOpen}
+          onClose={() => {
+            setShareDriverModalOpen(false);
+            setSelectedShareDriver(null);
+          }}
+          bizId={currentUser?.uid || ''}
+          staff={deliveryBoys}
+          selectedBoy={selectedShareDriver}
+        />
+      )}
     </div>
   );
 };

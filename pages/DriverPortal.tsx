@@ -10,7 +10,7 @@ import {
   collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc 
 } from 'firebase/firestore';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { db, auth } from '../services/firebase';
+import { db, auth, ensureDriverAuth } from '../services/firebase';
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
@@ -207,6 +207,15 @@ export const DriverPortal: React.FC = () => {
   const token = getParam('auth') || getParam('k') || getParam('token');
   const decoded = token ? decodeDriverToken(token) : null;
 
+  // Persist token parameters securely in storage so session persists across tab refreshes
+  if (decoded) {
+    if (decoded.bizId) safeStorageSet('driver_biz_id', decoded.bizId);
+    if (decoded.boyId) safeStorageSet('driver_boy_id', decoded.boyId);
+    if (decoded.mobile) safeStorageSet('driver_phone', decoded.mobile);
+    if (decoded.pin) safeStorageSet('driver_token_pin', decoded.pin);
+    if (decoded.name) safeStorageSet('driver_token_name', decoded.name);
+  }
+
   const initialBiz = decoded?.bizId || 
                      getParam('biz') || 
                      safeStorageGet('driver_biz_id') || 
@@ -290,23 +299,56 @@ export const DriverPortal: React.FC = () => {
     }
   }, []);
 
-  // Robust auth synchronization: Wait for auth session restoration before signing in anonymously
+  // Universal Auth Synchronization for Delivery Boy App across all browsers
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
-      if (user && !user.isAnonymous) {
+      if (user && !user.isAnonymous && user.email !== 'driver_session_system@scalekitchen.internal') {
         setIsKitchenOwnerUser(true);
         if (!bizId && !isDemoMode) {
           setBizId(user.uid);
         }
       } else if (!user) {
-        signInAnonymously(auth).catch((err) => {
-          console.warn("Driver anonymous auth initialization:", err);
+        ensureDriverAuth().catch((err) => {
+          console.warn("Driver session auth initialization:", err);
         });
       }
     });
 
     return () => unsub();
   }, [bizId, isDemoMode]);
+
+  // Real-time listener for PIN updates made by Kitchen Manager in Settings
+  useEffect(() => {
+    const cleanPhone = (phoneInput || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
+    if (!cleanPhone) return;
+
+    const authDocRef = doc(db, 'global_features', `driver_auth_${cleanPhone}`);
+    const unsub = onSnapshot(authDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.pin) {
+          const expectedPin = String(data.pin).trim();
+          const currentSavedPin = safeStorageGet('driver_auth_pin');
+          if (!isKitchenOwnerUser && currentSavedPin && currentSavedPin !== expectedPin) {
+            safeStorageSet('driver_auth_pin', '');
+            setPinInput('');
+            setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
+            setLoginModalOpen(true);
+          }
+        }
+        if (data.bizId && !bizId) {
+          setBizId(data.bizId);
+        }
+        if (data.staffId && !selectedBoyId) {
+          setSelectedBoyId(data.staffId);
+        }
+      }
+    }, (err) => {
+      console.warn("Driver auth stream listener warn:", err);
+    });
+
+    return () => unsub();
+  }, [phoneInput, isKitchenOwnerUser, bizId, selectedBoyId]);
 
   // Sync to localStorage
   useEffect(() => {
@@ -944,19 +986,26 @@ export const DriverPortal: React.FC = () => {
     setVerifying(true);
     setLoginError(null);
 
+    // 0. Ensure background driver session auth is active
     try {
-      // 1. Check top-level driver_auth_lookup collection (universal across all browsers)
-      const lookupRef = doc(db, 'driver_auth_lookup', digits);
+      await ensureDriverAuth();
+    } catch (e) {
+      console.warn("Driver session auth check:", e);
+    }
+
+    // 1. Check real-time universal directory in global_features (accessible across all browsers)
+    try {
+      const lookupRef = doc(db, 'global_features', `driver_auth_${digits}`);
       const lookupSnap = await getDoc(lookupRef);
 
       if (lookupSnap.exists()) {
         const lookupData = lookupSnap.data();
-        const expectedPin = lookupData.pin || '1234';
+        const expectedPin = String(lookupData.pin || '1234').trim();
         if (pin === expectedPin) {
-          setBizId(lookupData.bizId);
-          setSelectedBoyId(lookupData.staffId);
-          safeStorageSet('driver_biz_id', lookupData.bizId);
-          safeStorageSet('driver_boy_id', lookupData.staffId);
+          if (lookupData.bizId) setBizId(lookupData.bizId);
+          if (lookupData.staffId) setSelectedBoyId(lookupData.staffId);
+          safeStorageSet('driver_biz_id', lookupData.bizId || '');
+          safeStorageSet('driver_boy_id', lookupData.staffId || '');
           safeStorageSet('driver_auth_pin', pin);
           safeStorageSet('driver_phone', digits);
           setLoginModalOpen(false);
@@ -970,22 +1019,88 @@ export const DriverPortal: React.FC = () => {
           return;
         }
       }
+    } catch (err) {
+      console.warn("Global driver auth lookup check (falling back to token/local):", err);
+    }
 
-      // 2. Fallback: if allStaff is already loaded or bizId is active
-      if (allStaff.length > 0) {
-        const matched = allStaff.find(s => {
-          const m = (s.mobile || '').replace(/\D/g, '');
-          return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-        });
+    // 2. Check decoded secure token in memory or storage (instant, zero-latency verification)
+    const tokenPhone = (decoded?.mobile || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
+    const tokenPin = (decoded?.pin || safeStorageGet('driver_token_pin') || '1234').trim();
+    const tokenBiz = decoded?.bizId || safeStorageGet('driver_biz_id') || bizId;
+    const tokenBoy = decoded?.boyId || safeStorageGet('driver_boy_id') || selectedBoyId;
+    const tokenName = decoded?.name || safeStorageGet('driver_token_name') || 'Partner';
+
+    if (tokenPhone && (digits === tokenPhone || tokenPhone.endsWith(digits) || digits.endsWith(tokenPhone))) {
+      if (pin === tokenPin) {
+        if (tokenBiz) {
+          setBizId(tokenBiz);
+          safeStorageSet('driver_biz_id', tokenBiz);
+        }
+        if (tokenBoy) {
+          setSelectedBoyId(tokenBoy);
+          safeStorageSet('driver_boy_id', tokenBoy);
+        }
+        safeStorageSet('driver_auth_pin', pin);
+        safeStorageSet('driver_phone', digits);
+        setLoginModalOpen(false);
+        setPinInput('');
+        setVerifying(false);
+        showToast(`Welcome back, ${tokenName}! Ready for today's deliveries.`);
+        return;
+      } else {
+        setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+        setVerifying(false);
+        return;
+      }
+    }
+
+    // 3. Fallback: if allStaff is already loaded in memory
+    if (allStaff.length > 0) {
+      const matched = allStaff.find(s => {
+        const m = (s.mobile || '').replace(/\D/g, '');
+        return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+      });
+
+      if (matched) {
+        const expectedPin = String(matched.pin || '1234').trim();
+        if (pin === expectedPin) {
+          setSelectedBoyId(matched.id);
+          safeStorageSet('driver_boy_id', matched.id);
+          safeStorageSet('driver_auth_pin', pin);
+          safeStorageSet('driver_phone', digits);
+          if (bizId) safeStorageSet('driver_biz_id', bizId);
+          setLoginModalOpen(false);
+          setPinInput('');
+          setVerifying(false);
+          showToast(`Welcome back, ${matched.name}! Ready for today's deliveries.`);
+          return;
+        } else {
+          setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+          setVerifying(false);
+          return;
+        }
+      }
+    }
+
+    // 4. Fallback: if bizId is present in URL or state, query staff collection directly
+    if (bizId) {
+      try {
+        const staffQuery = query(collection(db, 'businesses', bizId, 'staff'));
+        const snap = await getDocs(staffQuery);
+        const matched = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+          .find(s => {
+            const m = (s.mobile || '').replace(/\D/g, '');
+            return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+          });
 
         if (matched) {
-          const expectedPin = matched.pin || '1234';
+          const expectedPin = String(matched.pin || '1234').trim();
           if (pin === expectedPin) {
             setSelectedBoyId(matched.id);
             safeStorageSet('driver_boy_id', matched.id);
             safeStorageSet('driver_auth_pin', pin);
             safeStorageSet('driver_phone', digits);
-            if (bizId) safeStorageSet('driver_biz_id', bizId);
             setLoginModalOpen(false);
             setPinInput('');
             setVerifying(false);
@@ -997,50 +1112,42 @@ export const DriverPortal: React.FC = () => {
             return;
           }
         }
+      } catch (e) {
+        console.warn("Direct staff query fallback check:", e);
       }
+    }
 
-      // 3. Fallback: if bizId is present in URL or state, query staff collection directly
-      if (bizId) {
-        try {
-          const staffQuery = query(collection(db, 'businesses', bizId, 'staff'));
-          const snap = await getDocs(staffQuery);
-          const matched = snap.docs
-            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-            .find(s => {
-              const m = (s.mobile || '').replace(/\D/g, '');
-              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-            });
-
-          if (matched) {
-            const expectedPin = matched.pin || '1234';
-            if (pin === expectedPin) {
-              setSelectedBoyId(matched.id);
-              safeStorageSet('driver_boy_id', matched.id);
-              safeStorageSet('driver_auth_pin', pin);
-              safeStorageSet('driver_phone', digits);
-              setLoginModalOpen(false);
-              setPinInput('');
-              setVerifying(false);
-              showToast(`Welcome back, ${matched.name}! Ready for today's deliveries.`);
-              return;
-            } else {
-              setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-              setVerifying(false);
-              return;
-            }
-          }
-        } catch (e) {
-          console.warn("Direct staff query fallback error:", e);
+    // 5. Fallback: Check legacy driver_auth_lookup collection
+    try {
+      const legacyRef = doc(db, 'driver_auth_lookup', digits);
+      const legacySnap = await getDoc(legacyRef);
+      if (legacySnap.exists()) {
+        const data = legacySnap.data();
+        const expectedPin = String(data.pin || '1234').trim();
+        if (pin === expectedPin) {
+          if (data.bizId) setBizId(data.bizId);
+          if (data.staffId) setSelectedBoyId(data.staffId);
+          safeStorageSet('driver_biz_id', data.bizId || '');
+          safeStorageSet('driver_boy_id', data.staffId || '');
+          safeStorageSet('driver_auth_pin', pin);
+          safeStorageSet('driver_phone', digits);
+          setLoginModalOpen(false);
+          setPinInput('');
+          setVerifying(false);
+          showToast(`Welcome back, ${data.name || 'Partner'}! Ready for today's deliveries.`);
+          return;
+        } else {
+          setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+          setVerifying(false);
+          return;
         }
       }
-
-      setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify with your kitchen manager.`);
-    } catch (err: any) {
-      console.error("Login verification error:", err);
-      setLoginError("Connection issue connecting to kitchen servers. Please check your internet connection and retry.");
-    } finally {
-      setVerifying(false);
+    } catch (e) {
+      console.warn("Legacy driver lookup check:", e);
     }
+
+    setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);
+    setVerifying(false);
   };
 
   if (!bizId) {

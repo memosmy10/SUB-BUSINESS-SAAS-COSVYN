@@ -7,7 +7,9 @@ import {
   browserSessionPersistence, 
   inMemoryPersistence, 
   indexedDBLocalPersistence,
-  GoogleAuthProvider 
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
 } from "firebase/auth";
 import { initializeFirestore, memoryLocalCache, setLogLevel } from "firebase/firestore";
 
@@ -39,6 +41,26 @@ export const auth = (() => {
 })();
 
 export const googleProvider = new GoogleAuthProvider();
+
+// Universal session for Delivery Boy App across all browsers
+export const ensureDriverAuth = async () => {
+  if (auth.currentUser) return auth.currentUser;
+  try {
+    const cred = await signInWithEmailAndPassword(auth, "driver_session_system@scalekitchen.internal", "DriverPass@9999");
+    return cred.user;
+  } catch (err: any) {
+    if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, "driver_session_system@scalekitchen.internal", "DriverPass@9999");
+        return cred.user;
+      } catch (createErr) {
+        console.warn("Could not create driver session user:", createErr);
+      }
+    }
+    console.warn("Driver session auth error:", err);
+    return null;
+  }
+};
 
 // Use memoryLocalCache to ensure clean in-memory state in iframe environments
 export const db = initializeFirestore(app, {

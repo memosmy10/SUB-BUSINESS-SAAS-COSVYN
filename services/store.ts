@@ -751,13 +751,21 @@ export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
  * Encodes driver access parameters into an obfuscated, URL-safe secure token.
  * Prevents raw business UIDs, staff IDs, or mobile numbers from being exposed in URL bars.
  */
-export const encodeDriverToken = (bizId: string, boyId?: string, mobile?: string): string => {
+export const encodeDriverToken = (
+  bizId: string, 
+  boyId?: string, 
+  mobile?: string,
+  pin?: string,
+  name?: string
+): string => {
   if (!bizId) return '';
   try {
     const payload = {
       b: bizId,
       s: boyId || '',
       p: mobile ? normalizePhone(mobile) : '',
+      pin: pin ? pin.trim() : '',
+      n: name || '',
       t: Date.now()
     };
     const json = JSON.stringify(payload);
@@ -773,7 +781,13 @@ export const encodeDriverToken = (bizId: string, boyId?: string, mobile?: string
 /**
  * Decodes a secure driver token into connection parameters.
  */
-export const decodeDriverToken = (token: string): { bizId: string; boyId?: string; mobile?: string } | null => {
+export const decodeDriverToken = (token: string): { 
+  bizId: string; 
+  boyId?: string; 
+  mobile?: string;
+  pin?: string;
+  name?: string;
+} | null => {
   if (!token) return null;
   try {
     let base64 = token.replace(/-/g, '+').replace(/_/g, '/');
@@ -786,7 +800,9 @@ export const decodeDriverToken = (token: string): { bizId: string; boyId?: strin
       return {
         bizId: parsed.b,
         boyId: parsed.s || undefined,
-        mobile: parsed.p || undefined
+        mobile: parsed.p || undefined,
+        pin: parsed.pin || undefined,
+        name: parsed.n || undefined
       };
     }
   } catch (e) {

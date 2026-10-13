@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, Copy, Check, MessageSquare, ExternalLink, 
   Truck, Shield, Phone, Sparkles, QrCode, Smartphone, Key, Lock 
 } from 'lucide-react';
 import { encodeDriverToken } from '../services/store';
+import { db } from '../services/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 
 interface ShareDriverLinkModalProps {
   isOpen: boolean;
@@ -22,6 +24,28 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Auto-sync active drivers to global auth directory whenever modal opens
+  useEffect(() => {
+    if (!isOpen || !bizId || !staff || staff.length === 0) return;
+    staff.forEach((boy) => {
+      const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanMobile) {
+        const pin = (boy?.pin || '1234').trim();
+        const payload = {
+          bizId,
+          staffId: boy.id,
+          name: boy.name,
+          mobile: cleanMobile,
+          pin,
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        };
+        setDoc(doc(db, 'global_features', `driver_auth_${cleanMobile}`), payload, { merge: true })
+          .catch((err) => console.warn("Share modal driver auth sync:", err));
+      }
+    });
+  }, [isOpen, bizId, staff]);
+
   if (!isOpen) return null;
 
   const origin = window.location.origin;
@@ -31,7 +55,8 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
   const getBoyUrl = (boy: any) => {
     const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
-    const token = encodeDriverToken(bizId, boy?.id, cleanMobile);
+    const pin = (boy?.pin || '1234').trim();
+    const token = encodeDriverToken(bizId, boy?.id, cleanMobile, pin, boy?.name);
     return token ? `${origin}/#/driver?auth=${token}` : `${origin}/#/driver`;
   };
 
@@ -43,7 +68,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
   const handleWhatsApp = (boy: any) => {
     const boyUrl = getBoyUrl(boy);
-    const pin = boy?.pin || '1234';
+    const pin = (boy?.pin || '1234').trim();
     const msg = `Hello ${boy.name}! 🚀\n\nHere is your secure ScaleKitchen Delivery App link for today's deliveries:\n${boyUrl}\n\n🔑 *Your 4-Digit Login PIN:* ${pin}\n\n📱 *Steps (Works on Safari, Chrome, iPhone & Android):*\n1. Open link on your phone browser\n2. Enter your 4-digit PIN: ${pin}\n3. Punch In to activate live GPS tracking and view today's meal stops!\n\nHave a safe delivery ride!`;
     const cleanDigits = (boy.mobile || '').replace(/\D/g, '');
     window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(msg)}`, '_blank');

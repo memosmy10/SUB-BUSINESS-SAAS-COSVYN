@@ -3,7 +3,8 @@ import {
   Truck, MapPin, Phone, MessageSquare, CheckCircle2, Clock, 
   AlertCircle, AlertTriangle, Navigation, ArrowRight, RefreshCw, 
   ChevronRight, Calendar, User, Shield, Info, Battery, Compass,
-  Sparkles, Check, X, RotateCcw, Package, HelpCircle, ExternalLink, Play, Star
+  Sparkles, Check, X, RotateCcw, Package, HelpCircle, ExternalLink, Play, Star,
+  Lock, Key, Eye, EyeOff, LogOut
 } from 'lucide-react';
 import { 
   collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc 
@@ -13,7 +14,8 @@ import { db, auth } from '../services/firebase';
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
-  getCustomerScheduledPlansForSession, isPlanActiveOnDate, formatDateDDMMYYYY
+  getCustomerScheduledPlansForSession, isPlanActiveOnDate, formatDateDDMMYYYY,
+  decodeDriverToken, normalizePhone
 } from '../services/store';
 
 // Sample demo data for instant preview or offline testing
@@ -166,29 +168,73 @@ const DEMO_CUSTOMERS: GlobalCustomer[] = [
   }
 ];
 
+// Safe storage helpers for Safari Private Browsing and cross-browser reliability
+const safeStorageGet = (key: string): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    return localStorage.getItem(key) || sessionStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+};
+
+const safeStorageSet = (key: string, val: string) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, val);
+  } catch {}
+  try {
+    sessionStorage.setItem(key, val);
+  } catch {}
+};
+
 export const DriverPortal: React.FC = () => {
-  // Read params from URL or localStorage
+  // Read params from URL or localStorage across all browsers
   const getParam = (key: string) => {
-    const hashPart = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-    const hashParams = new URLSearchParams(hashPart);
-    const searchParams = new URLSearchParams(window.location.search);
-    return hashParams.get(key) || searchParams.get(key) || '';
+    if (typeof window === 'undefined') return '';
+    try {
+      const hash = window.location.hash || '';
+      const hashPart = hash.includes('?') ? hash.split('?')[1] : '';
+      const hashParams = new URLSearchParams(hashPart);
+      const searchParams = new URLSearchParams(window.location.search);
+      return hashParams.get(key) || searchParams.get(key) || '';
+    } catch {
+      return '';
+    }
   };
 
-  const paramBiz = getParam('biz') || 
-                   localStorage.getItem('driver_biz_id') || 
-                   localStorage.getItem('last_active_business_id') || 
-                   localStorage.getItem('manager_biz_id') || 
-                   (!auth.currentUser?.isAnonymous ? auth.currentUser?.uid : '') || '';
-  const paramBoy = getParam('boy') || localStorage.getItem('driver_boy_id') || '';
-  const paramPhone = getParam('phone') || '';
+  // Decode secure obfuscated token if present (protects raw database UIDs and phone numbers from being exposed)
+  const token = getParam('auth') || getParam('k') || getParam('token');
+  const decoded = token ? decodeDriverToken(token) : null;
 
-  const [bizId, setBizId] = useState<string>(paramBiz);
+  const initialBiz = decoded?.bizId || 
+                     getParam('biz') || 
+                     safeStorageGet('driver_biz_id') || 
+                     safeStorageGet('last_active_business_id') || 
+                     safeStorageGet('manager_biz_id') || 
+                     (!auth.currentUser?.isAnonymous ? auth.currentUser?.uid : '') || '';
+  const initialBoy = decoded?.boyId || getParam('boy') || safeStorageGet('driver_boy_id') || '';
+  const initialPhone = decoded?.mobile || getParam('phone') || safeStorageGet('driver_phone') || '';
+
+  const [bizId, setBizId] = useState<string>(initialBiz);
   const [bizInput, setBizInput] = useState<string>('');
-  const [selectedBoyId, setSelectedBoyId] = useState<string>(paramBoy);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(paramBiz === 'demo');
+  const [selectedBoyId, setSelectedBoyId] = useState<string>(initialBoy);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(initialBiz === 'demo');
   const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(Boolean(auth.currentUser && !auth.currentUser.isAnonymous));
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [phoneInput, setPhoneInput] = useState<string>(initialPhone);
+  const [pinInput, setPinInput] = useState<string>('');
+  const [showPin, setShowPin] = useState<boolean>(false);
+  const [verifying, setVerifying] = useState<boolean>(false);
+
+  // If already authenticated with saved PIN, close login modal; otherwise prompt for 4-digit PIN
+  const hasSavedPin = Boolean(safeStorageGet('driver_auth_pin'));
+  const [loginModalOpen, setLoginModalOpen] = useState<boolean>(() => {
+    if (initialBiz === 'demo' || (auth.currentUser && !auth.currentUser.isAnonymous)) return false;
+    if (initialBoy && hasSavedPin) return false;
+    return true;
+  });
+
   const [selectedMeal, setSelectedMeal] = useState<'Breakfast' | 'Lunch' | 'Dinner'>(() => {
     const hr = new Date().getHours();
     if (hr < 11) return 'Breakfast';
@@ -208,9 +254,6 @@ export const DriverPortal: React.FC = () => {
   const [punchInTime, setPunchInTime] = useState<string | null>(null);
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
-  const [loginModalOpen, setLoginModalOpen] = useState(!paramBoy);
-  const [phoneInput, setPhoneInput] = useState(paramPhone);
-  const [pinInput, setPinInput] = useState('');
   const [activeBoxModal, setActiveBoxModal] = useState<{ customer: GlobalCustomer; logKey: string } | null>(null);
   const [selectedBoxStatus, setSelectedBoxStatus] = useState<BoxRecollectionStatus>('Collected');
   const [boxNotes, setBoxNotes] = useState('');
@@ -230,6 +273,22 @@ export const DriverPortal: React.FC = () => {
   const todayStr = getTodayStr();
   const dayOfWeek = new Date().getDay();
   const watchIdRef = useRef<number | null>(null);
+
+  // ZERO URL EXPOSURE: Clean query parameters from address bar immediately after reading
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const hasSearch = Boolean(window.location.search);
+        const hasHashQuery = window.location.hash.includes('?');
+        if (hasSearch || hasHashQuery) {
+          const cleanHash = window.location.hash.split('?')[0] || '#/driver';
+          window.history.replaceState(null, '', window.location.pathname + cleanHash);
+        }
+      } catch (e) {
+        console.warn("Could not clean driver address bar URL:", e);
+      }
+    }
+  }, []);
 
   // Robust auth synchronization: Wait for auth session restoration before signing in anonymously
   useEffect(() => {
@@ -251,8 +310,8 @@ export const DriverPortal: React.FC = () => {
 
   // Sync to localStorage
   useEffect(() => {
-    if (bizId) localStorage.setItem('driver_biz_id', bizId);
-    if (selectedBoyId) localStorage.setItem('driver_boy_id', selectedBoyId);
+    if (bizId) safeStorageSet('driver_biz_id', bizId);
+    if (selectedBoyId) safeStorageSet('driver_boy_id', selectedBoyId);
   }, [bizId, selectedBoyId]);
 
   // Load Demo Data if in demo mode
@@ -286,48 +345,23 @@ export const DriverPortal: React.FC = () => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DeliveryBoyStaff[];
       setAllStaff(list);
       
-      // Auto-select boy if matching boy ID or phone from URL
-      if (paramBoy) {
-        const found = list.find(s => 
-          s.id === paramBoy || 
-          s.name?.toLowerCase() === paramBoy.toLowerCase() ||
-          (s.mobile && s.mobile.replace(/\D/g, '').endsWith(paramBoy.replace(/\D/g, '').slice(-10)))
-        );
-        if (found) {
-          setSelectedBoyId(found.id);
-          setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
-          setPunchInTime(found.attendanceMarkedAt || null);
-          setLoginModalOpen(false);
-        } else {
-          // If specified rider from link not found, open modal to let rider tap their name
-          setLoginModalOpen(true);
-        }
-      } else if (paramPhone) {
-        const digits = paramPhone.replace(/\D/g, '');
-        const found = list.find(s => {
-          const m = (s.mobile || '').replace(/\D/g, '');
-          return m && (m.endsWith(digits.slice(-10)) || digits.endsWith(m.slice(-10)));
-        });
-        if (found) {
-          setSelectedBoyId(found.id);
-          setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
-          setPunchInTime(found.attendanceMarkedAt || null);
-          setLoginModalOpen(false);
-        } else {
-          setLoginModalOpen(true);
-        }
-      } else if (selectedBoyId) {
+      // If a rider is selected, update shift status
+      if (selectedBoyId) {
         const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
         if (found) {
           setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
           setPunchInTime(found.attendanceMarkedAt || null);
-        } else if (list.length > 0) {
-          // Auto-select first rider for owner preview
-          setSelectedBoyId(list[0].id);
+
+          // ENFORCE UPDATED PIN: If owner updated PIN in Settings, rider must re-enter updated PIN
+          const savedPin = safeStorageGet('driver_auth_pin');
+          const expectedPin = found.pin || '1234';
+          if (!isKitchenOwnerUser && savedPin && savedPin !== expectedPin) {
+            safeStorageSet('driver_auth_pin', '');
+            setPinInput('');
+            setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
+            setLoginModalOpen(true);
+          }
         }
-      } else if (list.length > 0) {
-        // Default to first rider for preview
-        setSelectedBoyId(list[0].id);
       }
       setLoading(false);
     }, (err) => {
@@ -893,6 +927,122 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
+  const handleVerifyLogin = async (mobileOverride?: string, boyIdOverride?: string) => {
+    const rawMobile = mobileOverride || phoneInput;
+    const digits = (rawMobile || '').replace(/\D/g, '').slice(-10);
+    const pin = pinInput.trim();
+
+    if (!digits || digits.length < 10) {
+      setLoginError("Please enter your valid 10-digit registered mobile number.");
+      return;
+    }
+    if (!pin || pin.length !== 4) {
+      setLoginError("Please enter your 4-digit security PIN.");
+      return;
+    }
+
+    setVerifying(true);
+    setLoginError(null);
+
+    try {
+      // 1. Check top-level driver_auth_lookup collection (universal across all browsers)
+      const lookupRef = doc(db, 'driver_auth_lookup', digits);
+      const lookupSnap = await getDoc(lookupRef);
+
+      if (lookupSnap.exists()) {
+        const lookupData = lookupSnap.data();
+        const expectedPin = lookupData.pin || '1234';
+        if (pin === expectedPin) {
+          setBizId(lookupData.bizId);
+          setSelectedBoyId(lookupData.staffId);
+          safeStorageSet('driver_biz_id', lookupData.bizId);
+          safeStorageSet('driver_boy_id', lookupData.staffId);
+          safeStorageSet('driver_auth_pin', pin);
+          safeStorageSet('driver_phone', digits);
+          setLoginModalOpen(false);
+          setPinInput('');
+          setVerifying(false);
+          showToast(`Welcome back, ${lookupData.name || 'Partner'}! Ready for today's deliveries.`);
+          return;
+        } else {
+          setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+          setVerifying(false);
+          return;
+        }
+      }
+
+      // 2. Fallback: if allStaff is already loaded or bizId is active
+      if (allStaff.length > 0) {
+        const matched = allStaff.find(s => {
+          const m = (s.mobile || '').replace(/\D/g, '');
+          return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+        });
+
+        if (matched) {
+          const expectedPin = matched.pin || '1234';
+          if (pin === expectedPin) {
+            setSelectedBoyId(matched.id);
+            safeStorageSet('driver_boy_id', matched.id);
+            safeStorageSet('driver_auth_pin', pin);
+            safeStorageSet('driver_phone', digits);
+            if (bizId) safeStorageSet('driver_biz_id', bizId);
+            setLoginModalOpen(false);
+            setPinInput('');
+            setVerifying(false);
+            showToast(`Welcome back, ${matched.name}! Ready for today's deliveries.`);
+            return;
+          } else {
+            setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+            setVerifying(false);
+            return;
+          }
+        }
+      }
+
+      // 3. Fallback: if bizId is present in URL or state, query staff collection directly
+      if (bizId) {
+        try {
+          const staffQuery = query(collection(db, 'businesses', bizId, 'staff'));
+          const snap = await getDocs(staffQuery);
+          const matched = snap.docs
+            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+            .find(s => {
+              const m = (s.mobile || '').replace(/\D/g, '');
+              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+            });
+
+          if (matched) {
+            const expectedPin = matched.pin || '1234';
+            if (pin === expectedPin) {
+              setSelectedBoyId(matched.id);
+              safeStorageSet('driver_boy_id', matched.id);
+              safeStorageSet('driver_auth_pin', pin);
+              safeStorageSet('driver_phone', digits);
+              setLoginModalOpen(false);
+              setPinInput('');
+              setVerifying(false);
+              showToast(`Welcome back, ${matched.name}! Ready for today's deliveries.`);
+              return;
+            } else {
+              setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+              setVerifying(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Direct staff query fallback error:", e);
+        }
+      }
+
+      setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify with your kitchen manager.`);
+    } catch (err: any) {
+      console.error("Login verification error:", err);
+      setLoginError("Connection issue connecting to kitchen servers. Please check your internet connection and retry.");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   if (!bizId) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-850 to-slate-950 text-white flex items-center justify-center p-4">
@@ -901,64 +1051,124 @@ export const DriverPortal: React.FC = () => {
             <Truck size={32} />
           </div>
           <div>
-            <h2 className="text-xl font-bold font-display tracking-tight text-white">Delivery Partner Portal</h2>
+            <h2 className="text-xl font-bold font-display tracking-tight text-white">Delivery Partner Login</h2>
             <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-              Open your kitchen's delivery run, mark live deliveries, track GPS, and record collected reusable dabbas.
+              Enter your registered mobile number and 4-digit security PIN to access today's delivery route.
             </p>
           </div>
 
-          {/* Business ID input */}
-          <div className="space-y-2 pt-1 text-left">
-            <label className="text-[11px] font-semibold text-slate-300">Kitchen / Business ID</label>
-            <div className="flex gap-2">
-              <input 
-                type="text" 
-                placeholder="e.g. kitchen_abc123 or User ID"
-                value={bizInput}
-                onChange={(e) => setBizInput(e.target.value)}
-                className="flex-1 p-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-400 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const val = bizInput.trim();
-                    if (val) setBizId(val);
-                  }
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const val = bizInput.trim();
-                  if (val) setBizId(val);
-                  else alert("Please enter your Kitchen ID or click 'Try Demo Route' below.");
-                }}
-                className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95"
-              >
-                Connect
+          {/* In-Screen Alert / Error Banner */}
+          {loginError && (
+            <div className="p-3 bg-rose-500/20 border border-rose-500/40 text-rose-200 rounded-xl text-xs flex items-start gap-2 text-left animate-in fade-in">
+              <AlertCircle size={15} className="shrink-0 text-rose-400 mt-0.5" />
+              <div className="flex-1">
+                <span>{loginError}</span>
+              </div>
+              <button onClick={() => setLoginError(null)} className="text-rose-300 hover:text-white">
+                <X size={14} />
               </button>
             </div>
-          </div>
-
-          {/* Quick Connect Current Session */}
-          {auth.currentUser && (
-            <button
-              onClick={() => setBizId(auth.currentUser!.uid)}
-              className="w-full py-2.5 px-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition-all active:scale-95"
-            >
-              <span>Connect As Current Kitchen Owner</span>
-              <ArrowRight size={14} className="text-amber-400" />
-            </button>
           )}
 
-          {/* Demo Mode Button */}
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleVerifyLogin();
+            }}
+            className="space-y-3.5 text-left"
+          >
+            <div>
+              <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                Registered Mobile Number
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                <input
+                  required
+                  type="tel"
+                  placeholder="e.g. 9876543210"
+                  value={phoneInput}
+                  onChange={(e) => {
+                    setPhoneInput(e.target.value);
+                    setLoginError(null);
+                  }}
+                  className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-semibold text-slate-300">
+                  4-Digit Access PIN
+                </label>
+                <span className="text-[10px] text-amber-400 font-medium">Set by Kitchen Manager</span>
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                <input
+                  required
+                  type={showPin ? "text" : "password"}
+                  maxLength={4}
+                  inputMode="numeric"
+                  pattern="[0-9]{4}"
+                  placeholder="••••"
+                  value={pinInput}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+                    setPinInput(digits);
+                    setLoginError(null);
+                  }}
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-sm font-mono tracking-widest text-center font-bold outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPin(!showPin)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                >
+                  {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={verifying}
+              className="w-full py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+            >
+              {verifying ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin text-slate-950" />
+                  <span>Connecting to Kitchen...</span>
+                </>
+              ) : (
+                <>
+                  <span>Verify & Access Route</span>
+                  <ArrowRight size={14} />
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Quick Connect for Owner or Demo Route */}
           <div className="pt-2 border-t border-white/10 space-y-2">
-            <p className="text-[11px] text-slate-400">Testing or previewing the delivery boy interface?</p>
+            {auth.currentUser && (
+              <button
+                onClick={() => setBizId(auth.currentUser!.uid)}
+                className="w-full py-2 px-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition-all active:scale-95"
+              >
+                <span>Connect As Current Kitchen Owner</span>
+                <ArrowRight size={14} className="text-amber-400" />
+              </button>
+            )}
+
             <button
               type="button"
               onClick={launchDemoMode}
-              className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95"
+              className="w-full py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-medium text-xs rounded-xl flex items-center justify-center gap-2 transition-all"
             >
-              <Sparkles size={15} />
-              <span>Launch Demo Rider Route (Instant Preview)</span>
+              <Sparkles size={13} className="text-amber-400" />
+              <span>Launch Demo Rider Route (Preview)</span>
             </button>
           </div>
         </div>
@@ -1637,21 +1847,26 @@ export const DriverPortal: React.FC = () => {
         </div>
       </main>
 
-      {/* Rider Switcher Modal */}
+      {/* Rider Switcher / PIN Login Modal */}
       {loginModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
           <div className="glass-card bg-slate-900 border border-white/20 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-left">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold font-display text-base text-white">Select Delivery Partner</h3>
-              {selectedBoyId && (
-                <button onClick={() => setLoginModalOpen(false)} className="text-slate-400 hover:text-white">
+              <div>
+                <h3 className="font-bold font-display text-base text-white">Delivery Partner Login</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Enter your registered phone & 4-digit PIN
+                </p>
+              </div>
+              {selectedBoyId && hasSavedPin && (
+                <button 
+                  onClick={() => setLoginModalOpen(false)} 
+                  className="text-slate-400 hover:text-white p-1 hover:bg-white/10 rounded-lg transition-colors"
+                >
                   <X size={18} />
                 </button>
               )}
             </div>
-            <p className="text-xs text-slate-400">
-              Enter your mobile number or tap your profile to load today's route.
-            </p>
 
             {/* In-Modal Alert / Error Banner */}
             {loginError && (
@@ -1666,67 +1881,85 @@ export const DriverPortal: React.FC = () => {
               </div>
             )}
 
-            {/* Mobile Number Login Input */}
-            <div className="space-y-1.5 pt-1">
-              <label className="text-[11px] font-semibold text-slate-300">Rider Mobile Number or Name</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleVerifyLogin();
+              }}
+              className="space-y-3 pt-1"
+            >
+              <div>
+                <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                  Registered Mobile Number
+                </label>
+                <div className="relative">
+                  <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                   <input
+                    required
                     type="tel"
-                    placeholder="Enter phone or name"
+                    placeholder="e.g. 9876543210"
                     value={phoneInput}
                     onChange={(e) => {
-                      const val = e.target.value;
-                      setPhoneInput(val);
+                      setPhoneInput(e.target.value);
                       setLoginError(null);
-                      const digits = val.replace(/\D/g, '');
-                      if (digits.length >= 10 && allStaff.length > 0) {
-                        const matched = allStaff.find(s => {
-                          const m = (s.mobile || '').replace(/\D/g, '');
-                          return m && (m.endsWith(digits.slice(-10)) || digits.endsWith(m.slice(-10)));
-                        });
-                        if (matched) {
-                          setSelectedBoyId(matched.id);
-                          setLoginModalOpen(false);
-                        }
-                      }
                     }}
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
                   />
                 </div>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => {
-                    if (loading) return;
-                    setLoginError(null);
-                    const digits = phoneInput.replace(/\D/g, '');
-                    const queryStr = phoneInput.trim().toLowerCase();
-                    const matched = allStaff.find(s => {
-                      const m = (s.mobile || '').replace(/\D/g, '');
-                      if (digits.length >= 5 && m) {
-                        if (m.endsWith(digits.slice(-10)) || digits.endsWith(m.slice(-10))) return true;
-                      }
-                      if (s.name && queryStr && s.name.toLowerCase().includes(queryStr)) return true;
-                      return false;
-                    });
-                    if (matched) {
-                      setSelectedBoyId(matched.id);
-                      setLoginModalOpen(false);
-                    } else if (allStaff.length === 0) {
-                      setLoginError('Connecting to kitchen... please wait a moment or tap your name below once loaded.');
-                    } else {
-                      setLoginError('No rider found matching "' + phoneInput + '". Please tap your name from the list below, or verify with your kitchen manager.');
-                    }
-                  }}
-                  className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center gap-1"
-                >
-                  {loading ? <RefreshCw size={12} className="animate-spin" /> : null}
-                  <span>Login</span>
-                </button>
               </div>
-            </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-semibold text-slate-300">
+                    4-Digit Security PIN
+                  </label>
+                  <span className="text-[10px] text-amber-400 font-medium">Provided by Kitchen Owner</span>
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                  <input
+                    required
+                    type={showPin ? "text" : "password"}
+                    maxLength={4}
+                    inputMode="numeric"
+                    pattern="[0-9]{4}"
+                    placeholder="••••"
+                    value={pinInput}
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      setPinInput(digits);
+                      setLoginError(null);
+                    }}
+                    className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-sm font-mono tracking-widest text-center font-bold outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={verifying}
+                className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 mt-1"
+              >
+                {verifying ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin text-slate-950" />
+                    <span>Verifying PIN...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Verify & Access Route</span>
+                    <ArrowRight size={13} />
+                  </>
+                )}
+              </button>
+            </form>
 
             <div className="relative flex py-1 items-center">
               <div className="flex-grow border-t border-white/10"></div>
@@ -1734,7 +1967,7 @@ export const DriverPortal: React.FC = () => {
               <div className="flex-grow border-t border-white/10"></div>
             </div>
 
-            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
               {loading && (
                 <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
                   <RefreshCw size={14} className="animate-spin text-amber-400" />
@@ -1744,11 +1977,13 @@ export const DriverPortal: React.FC = () => {
               {!loading && allStaff.map(boy => (
                 <button
                   key={boy.id}
+                  type="button"
                   onClick={() => {
-                    setSelectedBoyId(boy.id);
-                    setLoginModalOpen(false);
+                    setPhoneInput(boy.mobile || '');
+                    setLoginError(null);
+                    showToast(`Selected ${boy.name}. Please enter your 4-digit PIN.`);
                   }}
-                  className={`w-full p-3 rounded-xl border text-left flex items-center justify-between transition-all ${
+                  className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
                     selectedBoyId === boy.id 
                       ? 'bg-amber-500/20 border-amber-500/50 text-white' 
                       : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
@@ -1758,13 +1993,13 @@ export const DriverPortal: React.FC = () => {
                     <div className="font-bold text-xs text-white">{boy.name}</div>
                     <div className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No contact number'}</div>
                   </div>
-                  <ChevronRight size={16} className="text-slate-400" />
+                  <Key size={14} className="text-amber-400" />
                 </button>
               ))}
               {!loading && allStaff.length === 0 && (
                 <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-center space-y-1">
-                  <p className="text-xs text-slate-300 font-medium">No riders registered in this kitchen.</p>
-                  <p className="text-[10px] text-slate-400">Please ask the kitchen owner to add delivery staff in Settings &gt; Staff.</p>
+                  <p className="text-xs text-slate-300 font-medium">No riders found in currently connected kitchen.</p>
+                  <p className="text-[10px] text-slate-400">Enter your mobile number & PIN above to auto-connect to your kitchen.</p>
                 </div>
               )}
             </div>

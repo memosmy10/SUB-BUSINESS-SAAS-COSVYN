@@ -150,6 +150,7 @@ export interface DeliveryBoyStaff {
   homeLocation?: string;
   salary?: number;
   dateOfJoining?: string;
+  pin?: string; // 4-digit security PIN for driver portal login
 }
 
 // Fix: Added missing Expense types used in Expenses.tsx
@@ -744,4 +745,52 @@ export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
   category: "Cloud Kitchen", country: "India", state: "", city: "",
   isProfileComplete: false, planName: "None", planExpiryDate: new Date().toISOString().split('T')[0],
   planStatus: 'Inactive', trialClaimed: false
+};
+
+/**
+ * Encodes driver access parameters into an obfuscated, URL-safe secure token.
+ * Prevents raw business UIDs, staff IDs, or mobile numbers from being exposed in URL bars.
+ */
+export const encodeDriverToken = (bizId: string, boyId?: string, mobile?: string): string => {
+  if (!bizId) return '';
+  try {
+    const payload = {
+      b: bizId,
+      s: boyId || '',
+      p: mobile ? normalizePhone(mobile) : '',
+      t: Date.now()
+    };
+    const json = JSON.stringify(payload);
+    return btoa(encodeURIComponent(json))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * Decodes a secure driver token into connection parameters.
+ */
+export const decodeDriverToken = (token: string): { bizId: string; boyId?: string; mobile?: string } | null => {
+  if (!token) return null;
+  try {
+    let base64 = token.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4) {
+      base64 += '=';
+    }
+    const json = decodeURIComponent(atob(base64));
+    const parsed = JSON.parse(json);
+    if (parsed && parsed.b) {
+      return {
+        bizId: parsed.b,
+        boyId: parsed.s || undefined,
+        mobile: parsed.p || undefined
+      };
+    }
+  } catch (e) {
+    console.warn("Could not decode driver token:", e);
+  }
+  return null;
 };

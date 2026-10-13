@@ -577,6 +577,24 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
   );
 };
 
+// Multi-browser route normalizer for HashRouter:
+// If opened in Safari, Chrome, or mobile webviews as /driver instead of /#/driver,
+// smoothly redirect preserving query params so it works in any browser.
+if (typeof window !== 'undefined') {
+  try {
+    const p = window.location.pathname;
+    if (p === '/driver' || p.startsWith('/driver/')) {
+      const search = window.location.search || '';
+      window.location.replace(`${window.location.origin}/#/driver${search}`);
+    } else if (p === '/manager' || p.startsWith('/manager/')) {
+      const search = window.location.search || '';
+      window.location.replace(`${window.location.origin}/#/manager${search}`);
+    }
+  } catch (e) {
+    console.warn("Route normalizer error:", e);
+  }
+}
+
 const App = () => {
   return (
     <ErrorBoundary>

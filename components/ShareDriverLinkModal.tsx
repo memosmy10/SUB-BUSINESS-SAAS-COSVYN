@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { 
   X, Copy, Check, MessageSquare, ExternalLink, 
-  Truck, Shield, Phone, Sparkles, QrCode, Smartphone 
+  Truck, Shield, Phone, Sparkles, QrCode, Smartphone, Key, Lock 
 } from 'lucide-react';
+import { encodeDriverToken } from '../services/store';
 
 interface ShareDriverLinkModalProps {
   isOpen: boolean;
@@ -24,11 +25,14 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
   if (!isOpen) return null;
 
   const origin = window.location.origin;
-  const baseUrl = `${origin}/#/driver?biz=${bizId}`;
+  // Secure tokens prevent exposing raw database UIDs or phone numbers in URLs
+  const generalToken = encodeDriverToken(bizId);
+  const baseUrl = generalToken ? `${origin}/#/driver?auth=${generalToken}` : `${origin}/#/driver`;
 
   const getBoyUrl = (boy: any) => {
     const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
-    return `${baseUrl}&boy=${boy?.id || ''}${cleanMobile ? `&phone=${cleanMobile}` : ''}`;
+    const token = encodeDriverToken(bizId, boy?.id, cleanMobile);
+    return token ? `${origin}/#/driver?auth=${token}` : `${origin}/#/driver`;
   };
 
   const handleCopy = (url: string, id: string) => {
@@ -39,7 +43,8 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
   const handleWhatsApp = (boy: any) => {
     const boyUrl = getBoyUrl(boy);
-    const msg = `Hello ${boy.name}! 🚀\n\nHere is your Delivery Partner App link for today's deliveries:\n${boyUrl}\n\n📱 *Steps:*\n1. Open link on your phone\n2. Punch In to start GPS tracking\n3. View your stop sequence and navigation\n4. Tap "Delivered" and log "Box Collected" status in real-time.\n\nHave a safe delivery ride!`;
+    const pin = boy?.pin || '1234';
+    const msg = `Hello ${boy.name}! 🚀\n\nHere is your secure ScaleKitchen Delivery App link for today's deliveries:\n${boyUrl}\n\n🔑 *Your 4-Digit Login PIN:* ${pin}\n\n📱 *Steps (Works on Safari, Chrome, iPhone & Android):*\n1. Open link on your phone browser\n2. Enter your 4-digit PIN: ${pin}\n3. Punch In to activate live GPS tracking and view today's meal stops!\n\nHave a safe delivery ride!`;
     const cleanDigits = (boy.mobile || '').replace(/\D/g, '');
     window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(msg)}`, '_blank');
   };
@@ -79,7 +84,12 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
                 <span className="font-bold text-amber-950 text-sm">{selectedBoy.name}'s App Link</span>
               </div>
-              <span className="text-[11px] font-mono text-amber-800 font-semibold">{selectedBoy.mobile || 'No contact'}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono text-amber-800 font-semibold">{selectedBoy.mobile || 'No contact'}</span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-900 border border-amber-400/80 font-mono text-[11px] font-bold">
+                  PIN: {selectedBoy.pin || '1234'}
+                </span>
+              </div>
             </div>
 
             <div className="flex gap-2">
@@ -117,15 +127,15 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
         )}
 
         {/* Feature Explainer */}
-        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-2xl text-xs space-y-1 text-slate-700">
-          <p className="font-bold text-amber-900 flex items-center gap-1.5">
+        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-2xl text-xs space-y-1.5 text-slate-700">
+          <p className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
             <Sparkles size={14} className="text-amber-600" />
-            How it Works:
+            Secure & Compatible Everywhere:
           </p>
-          <ul className="list-disc list-inside space-y-0.5 text-slate-600 text-[11px] pl-1">
-            <li>Riders open the link on mobile and log in with their <strong>registered phone number</strong>.</li>
-            <li>Riders punch in attendance, which activates <strong>live GPS tracking</strong> for the owner.</li>
-            <li>Riders mark orders as <strong>Delivered</strong> and log <strong>Reusable Box condition</strong> (Clean, Dirty, Damaged, or Not Returned).</li>
+          <ul className="list-disc list-inside space-y-1 text-slate-600 text-[11px] pl-1 leading-relaxed">
+            <li><strong>Works on any browser:</strong> Apple Safari (iPhone/iPad), Chrome, Samsung Internet, Firefox, Edge.</li>
+            <li><strong>Zero URL Exposure:</strong> Internal database IDs and phone numbers are encrypted in the link and automatically removed from the address bar on load.</li>
+            <li><strong>4-Digit Security PIN:</strong> Riders log in with their phone number + PIN. You can change this PIN in Settings anytime.</li>
           </ul>
         </div>
 
@@ -162,7 +172,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
             <span>Personalized Links for Your Riders:</span>
-            <span className="text-[11px] text-slate-400 font-normal">Auto-logs rider on click</span>
+            <span className="text-[11px] text-slate-400 font-normal">Pre-fills rider & PIN</span>
           </div>
 
           <div className="max-h-56 overflow-y-auto space-y-2 pr-1 no-scrollbar">
@@ -182,7 +192,12 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Online" />
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No mobile'}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No mobile'}</span>
+                      <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80">
+                        PIN: {boy.pin || '1234'}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">

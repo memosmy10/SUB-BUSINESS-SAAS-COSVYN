@@ -12,7 +12,7 @@ import {
   formatDateDDMMYYYY
 } from '../services/store';
 import { db } from '../services/firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 
 // --- Types ---
 interface Branch { 
@@ -45,6 +45,7 @@ interface DeliveryBoy {
   salary: number; 
   aadharNumber?: string;
   homeLocation?: string;
+  pin?: string;
 }
 
 interface CustomBoxType { 
@@ -111,6 +112,32 @@ const Settings = () => {
     }, (err) => console.warn("Error loading business logo in settings:", err));
     return () => unsub();
   }, [currentUser]);
+
+  // Auto-sync delivery boys to driver_auth_lookup & backfill default PIN if missing
+  useEffect(() => {
+    if (!currentUser || !deliveryBoys || deliveryBoys.length === 0) return;
+    deliveryBoys.forEach((boy) => {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone) {
+        const pin = boy.pin || '1234';
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+          bizId: currentUser.uid,
+          staffId: boy.id,
+          name: boy.name,
+          mobile: cleanPhone,
+          pin: pin,
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch((err) => console.warn("Driver lookup sync warn:", err));
+
+        if (!boy.pin) {
+          updateDoc(doc(db, 'businesses', currentUser.uid, 'staff', boy.id), {
+            pin: '1234'
+          }).catch(() => {});
+        }
+      }
+    });
+  }, [currentUser, deliveryBoys]);
 
   // Combine built-in standard box types with custom box types
   const allBoxTypes = useMemo(() => {
@@ -230,11 +257,39 @@ const Settings = () => {
 
   const handleSaveStaff = async (data: Omit<DeliveryBoy, 'id'>) => {
     if(!currentUser) return;
+    const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
+    const cleanPin = (data.pin || '').trim() || '1234';
+    const staffData = {
+      ...data,
+      pin: cleanPin,
+      updatedAt: new Date().toISOString()
+    };
+    
+    let staffId = editingItem?.id;
     if (editingItem) {
-      await updateItem(currentUser.uid, 'staff', editingItem.id, data);
+      await updateItem(currentUser.uid, 'staff', editingItem.id, staffData);
     } else {
-      await addItem(currentUser.uid, 'staff', data);
+      const addedDoc = await addItem(currentUser.uid, 'staff', staffData);
+      staffId = (addedDoc as any)?.id || '';
     }
+
+    // Sync to top-level driver_auth_lookup for universal multi-browser Phone + PIN login
+    if (cleanPhone) {
+      try {
+        await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+          bizId: currentUser.uid,
+          staffId: staffId || editingItem?.id || '',
+          name: data.name,
+          mobile: cleanPhone,
+          pin: cleanPin,
+          branchId: data.branchId || '',
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (err) {
+        console.warn("Could not sync driver_auth_lookup:", err);
+      }
+    }
+
     setActiveModal(null);
     setEditingItem(null);
   };
@@ -296,6 +351,19 @@ const Settings = () => {
 
   const handleDelete = async (collection: string, id: string) => {
     if(!currentUser || !window.confirm("Are you sure? This cannot be undone.")) return;
+    if (collection === 'staff') {
+      const boy = deliveryBoys.find(b => b.id === id);
+      if (boy?.mobile) {
+        const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+        if (cleanPhone) {
+          try {
+            await deleteDoc(doc(db, 'driver_auth_lookup', cleanPhone));
+          } catch (e) {
+            console.warn("Failed removing driver lookup:", e);
+          }
+        }
+      }
+    }
     await deleteItem(currentUser.uid, collection, id);
   };
 
@@ -512,12 +580,14 @@ const Settings = () => {
 
   // --- DELIVERY BOY MODAL (Includes Aadhar Number & Delivery Boy Home Location - Part 2) ---
   const DeliveryBoyModal = ({ initialData, onClose }: { initialData?: DeliveryBoy, onClose: () => void }) => {
+    const [showPin, setShowPin] = useState(false);
     const [formData, setFormData] = useState<Partial<DeliveryBoy>>({ 
       branchId: branches[0]?.id || '',
       dateOfJoining: new Date().toISOString().split('T')[0],
       salary: 15000,
       aadharNumber: '',
       homeLocation: '',
+      pin: initialData?.pin || '1234',
       ...initialData
     });
     
@@ -527,7 +597,8 @@ const Settings = () => {
         ...formData, 
         salary: Number(formData.salary) || 0,
         aadharNumber: formData.aadharNumber?.trim() || '',
-        homeLocation: formData.homeLocation?.trim() || ''
+        homeLocation: formData.homeLocation?.trim() || '',
+        pin: (formData.pin || '').trim() || '1234'
       } as any);
     };
     
@@ -597,6 +668,52 @@ const Settings = () => {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Salary (₹)</label>
                 <input required type="number" placeholder="Salary" value={formData.salary || ''} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, salary: Number(e.target.value)})} />
               </div>
+            </div>
+
+            {/* 4-Digit Access PIN for Delivery Boy Portal */}
+            <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                  <Key size={13} className="text-amber-600" />
+                  4-Digit App Access PIN <span className="text-rose-600">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
+                    setFormData({ ...formData, pin: randomPin });
+                  }}
+                  className="text-[11px] text-amber-700 hover:text-amber-900 font-semibold hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw size={11} /> Auto Generate
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  required
+                  type={showPin ? "text" : "password"}
+                  maxLength={4}
+                  pattern="[0-9]{4}"
+                  placeholder="e.g. 1234"
+                  value={formData.pin || ''}
+                  onChange={e => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+                    setFormData({ ...formData, pin: digits });
+                  }}
+                  className="w-full p-2.5 pr-10 border border-amber-300 rounded-xl bg-white text-slate-950 placeholder:text-slate-400 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm font-mono font-bold tracking-widest text-center shadow-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPin(!showPin)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                  title={showPin ? "Hide PIN" : "Show PIN"}
+                >
+                  {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              <p className="text-[10px] text-amber-800/90 leading-relaxed">
+                Riders must enter their registered mobile number + this 4-digit PIN to open their app. Whenever you update this PIN, the rider must use the updated one immediately.
+              </p>
             </div>
 
             <div className="pt-2">
@@ -1651,6 +1768,7 @@ const Settings = () => {
                 <th className="px-6 py-3">Partner Name</th>
                 <th className="px-6 py-3">Branch</th>
                 <th className="px-6 py-3">Contact</th>
+                <th className="px-6 py-3">App PIN</th>
                 <th className="px-6 py-3">Aadhar Number</th>
                 <th className="px-6 py-3">Home Location</th>
                 <th className="px-6 py-3">Salary</th>
@@ -1663,6 +1781,15 @@ const Settings = () => {
                   <td className="px-6 py-3.5 font-semibold text-slate-900">{d.name}</td>
                   <td className="px-6 py-3.5 font-medium">{branches.find(b => b.id === d.branchId)?.name || 'General'}</td>
                   <td className="px-6 py-3.5 font-mono text-slate-600">{d.mobile}</td>
+                  <td className="px-6 py-3.5">
+                    <span 
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-300 font-mono text-xs font-bold shadow-2xs"
+                      title="4-Digit PIN for rider app login"
+                    >
+                      <Key size={12} className="text-amber-600" />
+                      {d.pin || '1234'}
+                    </span>
+                  </td>
                   <td className="px-6 py-3.5 font-mono text-slate-600">
                     {d.aadharNumber || <span className="text-slate-300 font-sans italic">—</span>}
                   </td>
@@ -1678,7 +1805,7 @@ const Settings = () => {
                   </td>
                 </tr>
               ))}
-              {deliveryBoys.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-slate-400">No delivery partners assigned yet.</td></tr>}
+              {deliveryBoys.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-400">No delivery partners assigned yet.</td></tr>}
             </tbody>
           </table>
         </div>

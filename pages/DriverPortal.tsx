@@ -234,7 +234,20 @@ export const DriverPortal: React.FC = () => {
   const [selectedBoyId, setSelectedBoyId] = useState<string>(initialBoy);
   const [driverDisplayName, setDriverDisplayName] = useState<string>(initialName);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(initialBiz === 'demo');
-  const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(Boolean(auth.currentUser && !auth.currentUser.isAnonymous));
+  
+  // Kitchen Owner Preview: ONLY active if owner is logged in to Firebase AND NOT logged in as a delivery partner via PIN
+  const isDriverLoggedIn = Boolean(safeStorageGet('driver_is_logged_in') === 'true' || safeStorageGet('driver_auth_pin'));
+  const isOwnerPreviewParam = typeof window !== 'undefined' && (getParam('view') === 'preview' || getParam('preview') === 'true');
+  const isOwnerFirebaseAccount = Boolean(
+    auth.currentUser && 
+    !auth.currentUser.isAnonymous && 
+    auth.currentUser.email !== 'driver_session_system@scalekitchen.internal' &&
+    (!initialBiz || auth.currentUser.uid === initialBiz)
+  );
+  const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(
+    !isDriverLoggedIn && isOwnerFirebaseAccount && isOwnerPreviewParam
+  );
+
   const [loginError, setLoginError] = useState<string | null>(null);
   const [phoneInput, setPhoneInput] = useState<string>(initialPhone);
   const [pinInput, setPinInput] = useState<string>('');
@@ -244,8 +257,10 @@ export const DriverPortal: React.FC = () => {
   // If already authenticated with saved PIN, close login modal; otherwise prompt for 4-digit PIN
   const hasSavedPin = Boolean(safeStorageGet('driver_auth_pin'));
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(() => {
-    if (initialBiz === 'demo' || (auth.currentUser && !auth.currentUser.isAnonymous)) return false;
+    if (initialBiz === 'demo') return false;
     if (initialBoy && hasSavedPin) return false;
+    // Don't auto-open if in owner preview
+    if (!isDriverLoggedIn && isOwnerFirebaseAccount && isOwnerPreviewParam) return false;
     return true;
   });
 
@@ -264,8 +279,15 @@ export const DriverPortal: React.FC = () => {
   const [businessName, setBusinessName] = useState<string>('ScaleKitchen');
   const [logoUrl, setLogoUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [isShiftActive, setIsShiftActive] = useState(false);
-  const [punchInTime, setPunchInTime] = useState<string | null>(null);
+
+  // Shift & Attendance state: persists reliably across browser tab refreshes for today
+  const todayStr = getTodayStr();
+  const hasLocalActiveShift = safeStorageGet('driver_shift_active') === 'true' && safeStorageGet('driver_shift_date') === todayStr;
+  const [isShiftActive, setIsShiftActive] = useState<boolean>(hasLocalActiveShift);
+  const [punchInTime, setPunchInTime] = useState<string | null>(() => {
+    if (hasLocalActiveShift) return safeStorageGet('driver_punch_in_time') || null;
+    return null;
+  });
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [activeBoxModal, setActiveBoxModal] = useState<{ customer: GlobalCustomer; logKey: string } | null>(null);
@@ -284,7 +306,6 @@ export const DriverPortal: React.FC = () => {
     }, 4500);
   };
 
-  const todayStr = getTodayStr();
   const dayOfWeek = new Date().getDay();
   const watchIdRef = useRef<number | null>(null);
 
@@ -307,15 +328,24 @@ export const DriverPortal: React.FC = () => {
   // Universal Auth Synchronization for Delivery Boy App across all browsers
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
+      const isDriverSession = Boolean(safeStorageGet('driver_is_logged_in') === 'true' || safeStorageGet('driver_auth_pin'));
       if (user && !user.isAnonymous && user.email !== 'driver_session_system@scalekitchen.internal') {
-        setIsKitchenOwnerUser(true);
+        // Only show preview banner if owner explicitly requested preview AND is not logged in as driver
+        if (!isDriverSession && (getParam('view') === 'preview' || getParam('preview') === 'true')) {
+          setIsKitchenOwnerUser(true);
+        } else {
+          setIsKitchenOwnerUser(false);
+        }
         if (!bizId && !isDemoMode) {
           setBizId(user.uid);
         }
-      } else if (!user) {
-        ensureDriverAuth().catch((err) => {
-          console.warn("Driver session auth initialization:", err);
-        });
+      } else {
+        setIsKitchenOwnerUser(false);
+        if (!user) {
+          ensureDriverAuth().catch((err) => {
+            console.warn("Driver session auth initialization:", err);
+          });
+        }
       }
     });
 
@@ -398,8 +428,14 @@ export const DriverPortal: React.FC = () => {
         if (selectedBoyId) {
           const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
           if (found) {
-            setIsShiftActive(found.status === 'Online' && found.lastAttendanceDate === todayStr);
-            setPunchInTime(found.attendanceMarkedAt || null);
+            const hasLocalShift = safeStorageGet('driver_shift_active') === 'true' && safeStorageGet('driver_shift_date') === todayStr;
+            const isOnlineInDb = found.status === 'Online' && found.lastAttendanceDate === todayStr;
+            setIsShiftActive(isOnlineInDb || hasLocalShift);
+            if (found.attendanceMarkedAt) {
+              setPunchInTime(found.attendanceMarkedAt);
+            } else if (hasLocalShift && safeStorageGet('driver_punch_in_time')) {
+              setPunchInTime(safeStorageGet('driver_punch_in_time'));
+            }
 
             // ENFORCE UPDATED PIN: If owner updated PIN in Settings, rider must re-enter updated PIN
             const savedPin = safeStorageGet('driver_auth_pin');
@@ -492,6 +528,14 @@ export const DriverPortal: React.FC = () => {
           });
           setDeliveryLogs(prev => ({ ...prev, ...map }));
         }
+        // Listen to live driver attendance in manifest
+        if (data.driverAttendance && selectedBoyId && data.driverAttendance[selectedBoyId]) {
+          const att = data.driverAttendance[selectedBoyId];
+          if (att.lastAttendanceDate === todayStr && att.status === 'Online') {
+            setIsShiftActive(true);
+            if (att.attendanceMarkedAt) setPunchInTime(att.attendanceMarkedAt);
+          }
+        }
         setLoading(false);
       }
     }, (err) => console.warn("Global driver manifest stream notice:", err?.message));
@@ -507,6 +551,26 @@ export const DriverPortal: React.FC = () => {
       }
     }, (err) => console.warn("Global logs stream notice:", err?.message));
 
+    // 9. REAL-TIME DRIVER STATUS in global_features for active rider
+    let unsubscribeStatus = () => {};
+    if (selectedBoyId) {
+      const statusDocRef = doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`);
+      unsubscribeStatus = onSnapshot(statusDocRef, (snap) => {
+        if (snap.exists()) {
+          const sData = snap.data();
+          if (sData.lastAttendanceDate === todayStr && sData.status === 'Online') {
+            setIsShiftActive(true);
+            if (sData.attendanceMarkedAt) setPunchInTime(sData.attendanceMarkedAt);
+          } else if (sData.status === 'Offline') {
+            const hasLocalShift = safeStorageGet('driver_shift_active') === 'true' && safeStorageGet('driver_shift_date') === todayStr;
+            if (!hasLocalShift) {
+              setIsShiftActive(false);
+            }
+          }
+        }
+      }, () => {});
+    }
+
     return () => {
       unsubscribeBiz();
       unsubscribeStaff();
@@ -516,6 +580,7 @@ export const DriverPortal: React.FC = () => {
       unsubscribeLogs();
       unsubscribeManifest();
       unsubscribeGlobalLogs();
+      unsubscribeStatus();
     };
   }, [bizId, selectedBoyId, todayStr]);
 
@@ -558,6 +623,20 @@ export const DriverPortal: React.FC = () => {
     }
   }, [isShiftActive, bizId, selectedBoyId]);
 
+  // Safely sync driver display name when staff list loads without violating React render purity
+  useEffect(() => {
+    if (!selectedBoyId && !driverDisplayName) return;
+    const fromStaff = allStaff.find(s => 
+      s.id === selectedBoyId || 
+      (selectedBoyId && s.id?.toLowerCase() === selectedBoyId.toLowerCase()) ||
+      (driverDisplayName && s.name?.toLowerCase() === driverDisplayName.toLowerCase())
+    );
+    if (fromStaff?.name && fromStaff.name !== driverDisplayName) {
+      setDriverDisplayName(fromStaff.name);
+      safeStorageSet('driver_name', fromStaff.name);
+    }
+  }, [allStaff, selectedBoyId, driverDisplayName]);
+
   // Active delivery boy & their branch hub
   const currentBoy = useMemo(() => {
     const fromStaff = allStaff.find(s => 
@@ -565,13 +644,8 @@ export const DriverPortal: React.FC = () => {
       (selectedBoyId && s.id?.toLowerCase() === selectedBoyId.toLowerCase()) ||
       (driverDisplayName && s.name?.toLowerCase() === driverDisplayName.toLowerCase())
     );
-    if (fromStaff) {
-      if (fromStaff.name && fromStaff.name !== driverDisplayName) {
-        setDriverDisplayName(fromStaff.name);
-        safeStorageSet('driver_name', fromStaff.name);
-      }
-      return fromStaff;
-    }
+    if (fromStaff) return fromStaff;
+
     const name = driverDisplayName || safeStorageGet('driver_name') || safeStorageGet('driver_token_name');
     if (selectedBoyId || name) {
       return {
@@ -596,8 +670,8 @@ export const DriverPortal: React.FC = () => {
   // Quick helper to determine if a customer is assigned to this driver
   const isCustomerAssignedToRider = (c: any) => {
     if (showAllUnassigned) return true;
-    const boyId = selectedBoyId || currentBoy?.id || '';
-    const boyName = (currentBoy?.name || driverDisplayName || '').toLowerCase().trim();
+    const boyId = selectedBoyId || currentBoy?.id || safeStorageGet('driver_boy_id') || '';
+    const boyName = (currentBoy?.name || driverDisplayName || safeStorageGet('driver_name') || '').toLowerCase().trim();
     const boyPhone = (phoneInput || currentBoy?.mobile || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
 
     const cBoyId = String(c.deliveryBoyId || '').trim();
@@ -605,7 +679,7 @@ export const DriverPortal: React.FC = () => {
     const cBoyPhone = String(c.deliveryBoyPhone || c.deliveryBoyMobile || '').replace(/\D/g, '').slice(-10);
 
     // Exact ID match
-    if (boyId && cBoyId === boyId) return true;
+    if (boyId && (cBoyId === boyId || cBoyId.toLowerCase() === boyId.toLowerCase())) return true;
     // Name match (case-insensitive)
     if (boyName && (cBoyName === boyName || cBoyId.toLowerCase() === boyName)) return true;
     // Phone match
@@ -634,6 +708,20 @@ export const DriverPortal: React.FC = () => {
     });
     return counts;
   }, [customers, selectedBoyId, currentBoy, driverDisplayName, phoneInput, todayStr, plans, showAllUnassigned, allStaff.length]);
+
+  // Smart Session Switcher: Auto-switch to the meal session with scheduled deliveries if current session has 0
+  useEffect(() => {
+    if (customers.length === 0) return;
+    if (sessionStopCounts[selectedMeal] === 0) {
+      if (sessionStopCounts['Lunch'] > 0 && selectedMeal !== 'Lunch') {
+        setSelectedMeal('Lunch');
+      } else if (sessionStopCounts['Breakfast'] > 0 && selectedMeal !== 'Breakfast') {
+        setSelectedMeal('Breakfast');
+      } else if (sessionStopCounts['Dinner'] > 0 && selectedMeal !== 'Dinner') {
+        setSelectedMeal('Dinner');
+      }
+    }
+  }, [sessionStopCounts, selectedMeal, customers.length]);
 
   // Stops assigned to this delivery boy for the selected meal session
   // Grouped BY CUSTOMER (Stop-based Route)
@@ -879,12 +967,67 @@ export const DriverPortal: React.FC = () => {
 
   // Handle Attendance Punch In / Shift Start
   const handlePunchIn = async () => {
-    if (!bizId || !selectedBoyId) return;
+    if (!bizId || !selectedBoyId) {
+      showToast("⚠️ Missing rider credentials. Please log in with your PIN.");
+      setLoginModalOpen(true);
+      return;
+    }
 
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    // 1. Immediate optimistic shift activation & persistent local storage
+    setIsShiftActive(true);
+    setPunchInTime(timeStr);
+    safeStorageSet('driver_shift_active', 'true');
+    safeStorageSet('driver_shift_date', todayStr);
+    safeStorageSet('driver_punch_in_time', timeStr);
+    showToast(`✅ Shift started successfully at ${timeStr}! Attendance marked.`);
+
+    const cleanPhone = (phoneInput || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
+
+    // 2. Persist real-time driver status to global_features (accessible across all devices without restriction)
+    const statusPayload = {
+      bizId,
+      staffId: selectedBoyId,
+      riderName: currentBoy?.name || driverDisplayName || 'Rider',
+      mobile: cleanPhone,
+      status: 'Online',
+      lastAttendanceDate: todayStr,
+      attendanceMarkedAt: timeStr,
+      punchInTime: timeStr,
+      isShiftActive: true,
+      updatedAt: now.toISOString()
+    };
+
+    setDoc(doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`), statusPayload, { merge: true })
+      .catch(err => console.warn("Driver status sync notice:", err));
+
+    // Update manifest attendance registry so kitchen owner live fleet immediately sees rider Online
+    setDoc(doc(db, 'global_features', `driver_manifest_${bizId}`), {
+      driverAttendance: {
+        [selectedBoyId]: {
+          status: 'Online',
+          lastAttendanceDate: todayStr,
+          attendanceMarkedAt: timeStr,
+          punchInTime: timeStr,
+          isShiftActive: true,
+          updatedAt: now.toISOString()
+        }
+      }
+    }, { merge: true }).catch(err => console.warn("Driver manifest attendance sync notice:", err));
+
+    if (cleanPhone) {
+      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), {
+        status: 'Online',
+        lastAttendanceDate: todayStr,
+        attendanceMarkedAt: timeStr,
+        updatedAt: now.toISOString()
+      }, { merge: true }).catch(() => {});
+    }
+
+    // 3. Attempt direct write to staff subcollection (works if permissions permit)
     try {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      
       const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
       await updateDoc(boyDocRef, {
         status: 'Online',
@@ -892,27 +1035,34 @@ export const DriverPortal: React.FC = () => {
         attendanceMarkedAt: timeStr,
         updatedAt: now.toISOString()
       });
+    } catch (writeErr) {
+      console.warn("Direct staff attendance write notice (saved in global features):", writeErr);
+    }
 
-      setIsShiftActive(true);
-      setPunchInTime(timeStr);
+    // 4. Request GPS location fix in background without blocking shift start
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setCurrentCoords(coords);
 
-      // Trigger location prompt
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            setCurrentCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setDoc(doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`), {
+            currentLat: pos.coords.latitude,
+            currentLng: pos.coords.longitude,
+            lastLocationUpdate: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
+
+          try {
+            const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
             updateDoc(boyDocRef, {
               currentLat: pos.coords.latitude,
               currentLng: pos.coords.longitude,
               lastLocationUpdate: new Date().toISOString()
-            });
-          },
-          (err) => console.warn("GPS init:", err.message)
-        );
-      }
-    } catch (err) {
-      console.error("Punch in error:", err);
-      alert("Failed to mark attendance. Check your connection.");
+            }).catch(() => {});
+          } catch {}
+        },
+        (err) => console.warn("GPS init:", err.message)
+      );
     }
   };
 
@@ -921,19 +1071,42 @@ export const DriverPortal: React.FC = () => {
     if (!confirm("Are you sure you want to end your shift?")) return;
     if (!bizId || !selectedBoyId) return;
 
+    const now = new Date();
+    setIsShiftActive(false);
+    setPunchInTime(null);
+    safeStorageSet('driver_shift_active', 'false');
+    safeStorageSet('driver_punch_in_time', '');
+    showToast("🏁 Shift ended. Have a great rest!");
+
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
+    // Sync to global_features status
+    setDoc(doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`), {
+      status: 'Offline',
+      isShiftActive: false,
+      updatedAt: now.toISOString()
+    }, { merge: true }).catch(err => console.warn("Global status punch out notice:", err));
+
+    setDoc(doc(db, 'global_features', `driver_manifest_${bizId}`), {
+      driverAttendance: {
+        [selectedBoyId]: {
+          status: 'Offline',
+          isShiftActive: false,
+          updatedAt: now.toISOString()
+        }
+      }
+    }, { merge: true }).catch(err => console.warn("Manifest punch out notice:", err));
+
     try {
       const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
       await updateDoc(boyDocRef, {
         status: 'Offline',
-        updatedAt: new Date().toISOString()
+        updatedAt: now.toISOString()
       });
-
-      setIsShiftActive(false);
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
     } catch (err) {
-      console.error("Punch out error:", err);
+      console.warn("Direct punch out write notice:", err);
     }
   };
 
@@ -1182,6 +1355,28 @@ export const DriverPortal: React.FC = () => {
       console.warn("Driver session auth check:", e);
     }
 
+    const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string) => {
+      setIsKitchenOwnerUser(false);
+      safeStorageSet('driver_is_logged_in', 'true');
+      setDriverDisplayName(name);
+      safeStorageSet('driver_name', name);
+      safeStorageSet('driver_auth_pin', pin);
+      safeStorageSet('driver_phone', digits);
+      if (bId) {
+        setBizId(bId);
+        safeStorageSet('driver_biz_id', bId);
+      }
+      if (sId) {
+        setSelectedBoyId(sId);
+        safeStorageSet('driver_boy_id', sId);
+      }
+      if (brId) safeStorageSet('driver_branch_id', brId);
+      setLoginModalOpen(false);
+      setPinInput('');
+      setVerifying(false);
+      showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
+    };
+
     // 1. Check real-time universal directory in global_features (accessible across all browsers)
     try {
       const lookupRef = doc(db, 'global_features', `driver_auth_${digits}`);
@@ -1192,16 +1387,6 @@ export const DriverPortal: React.FC = () => {
         const expectedPin = String(lookupData.pin || '1234').trim();
         if (pin === expectedPin) {
           const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
-          if (lookupData.bizId) setBizId(lookupData.bizId);
-          if (lookupData.staffId) setSelectedBoyId(lookupData.staffId);
-          setDriverDisplayName(verifiedName);
-          safeStorageSet('driver_biz_id', lookupData.bizId || '');
-          safeStorageSet('driver_boy_id', lookupData.staffId || '');
-          safeStorageSet('driver_name', verifiedName);
-          safeStorageSet('driver_auth_pin', pin);
-          safeStorageSet('driver_phone', digits);
-          if (lookupData.branchId) safeStorageSet('driver_branch_id', lookupData.branchId);
-
           setAllStaff(prev => {
             if (prev.some(s => s.id === (lookupData.staffId || 'driver-1') || s.name === verifiedName)) return prev;
             return [
@@ -1218,10 +1403,7 @@ export const DriverPortal: React.FC = () => {
             ];
           });
 
-          setLoginModalOpen(false);
-          setPinInput('');
-          setVerifying(false);
-          showToast(`Welcome back, ${verifiedName}! Ready for today's deliveries.`);
+          handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId);
           return;
         } else {
           setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1242,22 +1424,7 @@ export const DriverPortal: React.FC = () => {
 
     if (tokenPhone && (digits === tokenPhone || tokenPhone.endsWith(digits) || digits.endsWith(tokenPhone))) {
       if (pin === tokenPin) {
-        if (tokenBiz) {
-          setBizId(tokenBiz);
-          safeStorageSet('driver_biz_id', tokenBiz);
-        }
-        if (tokenBoy) {
-          setSelectedBoyId(tokenBoy);
-          safeStorageSet('driver_boy_id', tokenBoy);
-        }
-        setDriverDisplayName(tokenName);
-        safeStorageSet('driver_name', tokenName);
-        safeStorageSet('driver_auth_pin', pin);
-        safeStorageSet('driver_phone', digits);
-        setLoginModalOpen(false);
-        setPinInput('');
-        setVerifying(false);
-        showToast(`Welcome back, ${tokenName}! Ready for today's deliveries.`);
+        handleLoginSuccess(tokenName, tokenBiz, tokenBoy);
         return;
       } else {
         setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1276,17 +1443,7 @@ export const DriverPortal: React.FC = () => {
       if (matched) {
         const expectedPin = String(matched.pin || '1234').trim();
         if (pin === expectedPin) {
-          setSelectedBoyId(matched.id);
-          setDriverDisplayName(matched.name);
-          safeStorageSet('driver_boy_id', matched.id);
-          safeStorageSet('driver_name', matched.name);
-          safeStorageSet('driver_auth_pin', pin);
-          safeStorageSet('driver_phone', digits);
-          if (bizId) safeStorageSet('driver_biz_id', bizId);
-          setLoginModalOpen(false);
-          setPinInput('');
-          setVerifying(false);
-          showToast(`Welcome back, ${matched.name}! Ready for today's deliveries.`);
+          handleLoginSuccess(matched.name, bizId, matched.id, matched.branchId);
           return;
         } else {
           setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1311,16 +1468,7 @@ export const DriverPortal: React.FC = () => {
         if (matched) {
           const expectedPin = String(matched.pin || '1234').trim();
           if (pin === expectedPin) {
-            setSelectedBoyId(matched.id);
-            setDriverDisplayName(matched.name);
-            safeStorageSet('driver_boy_id', matched.id);
-            safeStorageSet('driver_name', matched.name);
-            safeStorageSet('driver_auth_pin', pin);
-            safeStorageSet('driver_phone', digits);
-            setLoginModalOpen(false);
-            setPinInput('');
-            setVerifying(false);
-            showToast(`Welcome back, ${matched.name}! Ready for today's deliveries.`);
+            handleLoginSuccess(matched.name, bizId, matched.id, matched.branchId);
             return;
           } else {
             setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1342,18 +1490,7 @@ export const DriverPortal: React.FC = () => {
         const expectedPin = String(data.pin || '1234').trim();
         if (pin === expectedPin) {
           const legName = data.name || 'Partner';
-          if (data.bizId) setBizId(data.bizId);
-          if (data.staffId) setSelectedBoyId(data.staffId);
-          setDriverDisplayName(legName);
-          safeStorageSet('driver_biz_id', data.bizId || '');
-          safeStorageSet('driver_boy_id', data.staffId || '');
-          safeStorageSet('driver_name', legName);
-          safeStorageSet('driver_auth_pin', pin);
-          safeStorageSet('driver_phone', digits);
-          setLoginModalOpen(false);
-          setPinInput('');
-          setVerifying(false);
-          showToast(`Welcome back, ${legName}! Ready for today's deliveries.`);
+          handleLoginSuccess(legName, data.bizId, data.staffId);
           return;
         } else {
           setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
@@ -1548,22 +1685,26 @@ export const DriverPortal: React.FC = () => {
 
         {/* Right Corner: Driver Name Badge, Shift Action Button & Company / Business Logo */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* Driver Name in Top Right Corner */}
-          {(currentBoy?.name || driverDisplayName) && (
-            <div className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500/15 to-orange-500/15 border border-amber-500/35 text-amber-200 shadow-xs">
-              <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-[10px] sm:text-xs border border-amber-400/40 shrink-0">
-                {(currentBoy?.name || driverDisplayName || 'D').charAt(0).toUpperCase()}
+          {/* Driver Name in Top Right Corner - prominently displays rider identity */}
+          {Boolean(currentBoy?.name || driverDisplayName || safeStorageGet('driver_name') || safeStorageGet('driver_token_name')) && (() => {
+            const rawName = currentBoy?.name || driverDisplayName || safeStorageGet('driver_name') || safeStorageGet('driver_token_name') || 'Partner';
+            const displayName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+            return (
+              <div className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 text-amber-200 shadow-xs">
+                <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-[10px] sm:text-xs border border-amber-400/50 shrink-0">
+                  {displayName.charAt(0)}
+                </div>
+                <div className="text-left leading-none">
+                  <span className="block text-xs font-bold text-amber-100 truncate max-w-[75px] sm:max-w-[130px]">
+                    {displayName}
+                  </span>
+                  <span className="block text-[8px] sm:text-[9px] text-emerald-400 font-semibold mt-0.5">
+                    {isShiftActive ? '● Online' : '○ Standby'}
+                  </span>
+                </div>
               </div>
-              <div className="text-left leading-none">
-                <span className="block text-xs font-bold text-amber-100 truncate max-w-[70px] sm:max-w-[120px]">
-                  {currentBoy?.name || driverDisplayName}
-                </span>
-                <span className="block text-[8px] sm:text-[9px] text-emerald-400 font-semibold mt-0.5">
-                  {isShiftActive ? '● Online' : '○ Standby'}
-                </span>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {isShiftActive ? (
             <button 

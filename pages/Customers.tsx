@@ -1491,11 +1491,48 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    const currentBranchPlans = plans.filter((p:any) => p.branchId === formData.branchId);
    const currentBranchStaff = staff.filter((s:any) => s.branchId === formData.branchId);
 
+   // Natural 0-9, A-Z Sorting for all plans
+   const sortedBranchPlans = useMemo(() => {
+     return [...currentBranchPlans].sort((a: any, b: any) => {
+       const nameA = String(a.name || '').trim();
+       const nameB = String(b.name || '').trim();
+       return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+     });
+   }, [currentBranchPlans]);
+
+   // Searchable Plan Dropdown State
+   const [planSearchQuery, setPlanSearchQuery] = useState('');
+   const [isPlanDropdownOpen, setIsPlanDropdownOpen] = useState(false);
+   const planDropdownRef = useRef<HTMLDivElement>(null);
+
    useEffect(() => {
-     if (!newPlanForm.planId && currentBranchPlans.length > 0) {
-       setNewPlanForm(p => ({ ...p, planId: currentBranchPlans[0].id }));
+     const handleClickOutside = (e: MouseEvent) => {
+       if (planDropdownRef.current && !planDropdownRef.current.contains(e.target as Node)) {
+         setIsPlanDropdownOpen(false);
+       }
+     };
+     document.addEventListener('mousedown', handleClickOutside);
+     return () => document.removeEventListener('mousedown', handleClickOutside);
+   }, []);
+
+   const filteredBranchPlans = useMemo(() => {
+     const q = planSearchQuery.toLowerCase().trim();
+     if (!q) return sortedBranchPlans;
+     return sortedBranchPlans.filter((p: any) => 
+       String(p.name || '').toLowerCase().includes(q) ||
+       String(p.price || '').includes(q)
+     );
+   }, [sortedBranchPlans, planSearchQuery]);
+
+   const selectedPlanObject = useMemo(() => {
+     return sortedBranchPlans.find((p: any) => p.id === newPlanForm.planId);
+   }, [sortedBranchPlans, newPlanForm.planId]);
+
+   useEffect(() => {
+     if (!newPlanForm.planId && sortedBranchPlans.length > 0) {
+       setNewPlanForm(p => ({ ...p, planId: sortedBranchPlans[0].id }));
      }
-   }, [formData.branchId, currentBranchPlans]);
+   }, [formData.branchId, sortedBranchPlans]);
 
    const addPlan = () => {
       const selectedPlan = plans.find((p:any) => p.id === newPlanForm.planId);
@@ -1693,7 +1730,119 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                   <div className="space-y-2.5 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
                         <div><ModalLabel>Time</ModalLabel><select className="w-full p-2 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.mealTime} onChange={e => setNewPlanForm({...newPlanForm, mealTime: e.target.value as any})}><option value="Breakfast">Breakfast</option><option value="Lunch">Lunch</option><option value="Dinner">Dinner</option></select></div>
-                        <div className="md:col-span-2"><ModalLabel>Plan</ModalLabel><select className="w-full p-2 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.planId} onChange={e => setNewPlanForm({...newPlanForm, planId: e.target.value})}>{currentBranchPlans.map((p:any) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                        <div className="md:col-span-2 relative" ref={planDropdownRef}>
+                           <div className="flex items-center justify-between">
+                              <ModalLabel>Plan (0-9, A-Z) *</ModalLabel>
+                              <span className="text-[9px] text-primary-600 font-bold">
+                                 {sortedBranchPlans.length} plans
+                              </span>
+                           </div>
+
+                           {/* Interactive Combobox Trigger Button */}
+                           <button
+                              type="button"
+                              onClick={() => setIsPlanDropdownOpen(!isPlanDropdownOpen)}
+                              className="w-full p-2 border border-slate-200 hover:border-primary-400 bg-white rounded-xl font-bold text-xs flex items-center justify-between text-left transition-all shadow-2xs group focus:ring-2 focus:ring-primary-500 focus:outline-none"
+                           >
+                              <div className="flex items-center gap-1.5 truncate">
+                                 <span className="truncate text-slate-800">
+                                    {selectedPlanObject?.name || 'Select Plan...'}
+                                 </span>
+                                 {selectedPlanObject?.price && (
+                                    <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.2 rounded border border-emerald-200 shrink-0">
+                                       ₹{selectedPlanObject.price}
+                                    </span>
+                                 )}
+                              </div>
+                              <div className="flex items-center gap-1 text-slate-400 group-hover:text-primary-600 shrink-0 ml-1">
+                                 <Search size={12} className="opacity-70" />
+                                 <ChevronDown size={14} className={`transition-transform duration-200 ${isPlanDropdownOpen ? 'rotate-180 text-primary-600' : ''}`} />
+                              </div>
+                           </button>
+
+                           {/* Searchable Dropdown Popover */}
+                           {isPlanDropdownOpen && (
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 p-2 space-y-2 animate-in fade-in zoom-in-95">
+                                 {/* Search Input Box */}
+                                 <div className="relative">
+                                    <Search className="absolute left-2.5 top-2 text-slate-400" size={13} />
+                                    <input
+                                       type="text"
+                                       placeholder="Search plan (0-9, A-Z)..."
+                                       value={planSearchQuery}
+                                       onChange={e => setPlanSearchQuery(e.target.value)}
+                                       autoFocus
+                                       className="w-full pl-8 pr-7 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 focus:bg-white text-slate-800 placeholder:text-slate-400"
+                                    />
+                                    {planSearchQuery && (
+                                       <button
+                                          type="button"
+                                          onClick={() => setPlanSearchQuery('')}
+                                          className="absolute right-2 top-2 text-slate-400 hover:text-slate-700"
+                                       >
+                                          <X size={13} />
+                                       </button>
+                                    )}
+                                 </div>
+
+                                 {/* Helper indicator */}
+                                 <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 px-1">
+                                    <span>{filteredBranchPlans.length} matching</span>
+                                    <span>Sorted 0-9, A-Z</span>
+                                 </div>
+
+                                 {/* Scrollable list of plans */}
+                                 <div className="max-h-56 overflow-y-auto space-y-1 no-scrollbar pr-0.5">
+                                    {filteredBranchPlans.length > 0 ? (
+                                       filteredBranchPlans.map((p: any) => {
+                                          const isSelected = p.id === newPlanForm.planId;
+                                          return (
+                                             <button
+                                                key={p.id}
+                                                type="button"
+                                                onClick={() => {
+                                                   setNewPlanForm({ ...newPlanForm, planId: p.id });
+                                                   setIsPlanDropdownOpen(false);
+                                                }}
+                                                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
+                                                   isSelected 
+                                                      ? 'bg-primary-50 text-primary-900 border border-primary-200' 
+                                                      : 'hover:bg-slate-50 text-slate-700'
+                                                }`}
+                                             >
+                                                <div className="truncate flex-1 pr-2">
+                                                   <div className="flex items-center gap-1.5">
+                                                      <span className="truncate">{p.name}</span>
+                                                      {isSelected && <Check size={12} className="text-primary-600 shrink-0" />}
+                                                   </div>
+                                                   {p.numberOfDeliveryDays && (
+                                                      <span className="text-[10px] text-slate-400 block font-normal">
+                                                         {p.numberOfDeliveryDays} deliveries • {p.mealTime || 'Daily'}
+                                                      </span>
+                                                   )}
+                                                </div>
+                                                <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 shrink-0">
+                                                   ₹{p.price}
+                                                </span>
+                                             </button>
+                                          );
+                                       })
+                                    ) : (
+                                       <div className="py-4 text-center text-xs text-slate-400">
+                                          <p>No plans matching "{planSearchQuery}"</p>
+                                          <button
+                                             type="button"
+                                             onClick={() => setPlanSearchQuery('')}
+                                             className="text-primary-600 font-bold hover:underline text-[11px] mt-1"
+                                          >
+                                             Clear search filter
+                                          </button>
+                                       </div>
+                                    )}
+                                 </div>
+                              </div>
+                           )}
+                        </div>
                         <div><ModalLabel>Start Date</ModalLabel><input type="date" className="w-full p-2 border rounded-xl font-bold text-xs bg-white" value={newPlanForm.startDate} onChange={e => setNewPlanForm({...newPlanForm, startDate: e.target.value})} /></div>
                      </div>
 

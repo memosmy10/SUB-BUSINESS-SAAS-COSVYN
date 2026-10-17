@@ -5,6 +5,14 @@
 > **Folder:** `Knowme/`  
 > **System Name:** ScaleKitchen (Multi-Tenant Subscription Meal Management & Delivery Logistics OS)  
 > **Target Audience:** System Architects, Lead Engineers, Technical Founders, and Integration Partners  
+>
+> **Visual Architecture & Tech Stack Artifacts:**
+> - 🖼️ **Vector System Architecture Diagram:** [`ARCHITECTURE_DIAGRAM.svg`](./ARCHITECTURE_DIAGRAM.svg)
+> - ⚙️ **Vector Tech Stack & Tooling Flow Diagram:** [`TECH_STACK_ARCHITECTURE.svg`](./TECH_STACK_ARCHITECTURE.svg)
+> - 🌐 **Interactive System Architecture Viewer:** [`ARCHITECTURE_DIAGRAM.html`](./ARCHITECTURE_DIAGRAM.html)
+> - 🌐 **Interactive Tech Stack Viewer:** [`TECH_STACK_ARCHITECTURE.html`](./TECH_STACK_ARCHITECTURE.html)
+> - 📊 **Detailed Sequence & Interaction Flows:** [`ARCHITECTURE_DIAGRAM.md`](./ARCHITECTURE_DIAGRAM.md)
+> - 🛠️ **Detailed Tech Stack & Tooling Specification:** [`TECH_STACK_ARCHITECTURE.md`](./TECH_STACK_ARCHITECTURE.md)
 
 ---
 

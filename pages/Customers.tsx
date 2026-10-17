@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   RefreshCw, Plus, Store, Search, Calendar, X, 
-  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download
+  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download, Package
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, updateItem, getTargetBusinessId } from '../services/dbService';
@@ -1528,6 +1528,30 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
      return sortedBranchPlans.find((p: any) => p.id === newPlanForm.planId);
    }, [sortedBranchPlans, newPlanForm.planId]);
 
+   // Searchable Reusable Box Dropdown State
+   const [boxSearchQuery, setBoxSearchQuery] = useState('');
+   const [isBoxDropdownOpen, setIsBoxDropdownOpen] = useState(false);
+   const boxDropdownRef = useRef<HTMLDivElement>(null);
+
+   useEffect(() => {
+     const handleClickOutsideBox = (e: MouseEvent) => {
+       if (boxDropdownRef.current && !boxDropdownRef.current.contains(e.target as Node)) {
+         setIsBoxDropdownOpen(false);
+       }
+     };
+     document.addEventListener('mousedown', handleClickOutsideBox);
+     return () => document.removeEventListener('mousedown', handleClickOutsideBox);
+   }, []);
+
+   const filteredBoxTypes = useMemo(() => {
+     const q = boxSearchQuery.toLowerCase().trim();
+     if (!q) return availableBoxTypes;
+     return availableBoxTypes.filter((b: any) => 
+       String(b.name || '').toLowerCase().includes(q) ||
+       String(b.id || '').toLowerCase().includes(q)
+     );
+   }, [availableBoxTypes, boxSearchQuery]);
+
    useEffect(() => {
      if (!newPlanForm.planId && sortedBranchPlans.length > 0) {
        setNewPlanForm(p => ({ ...p, planId: sortedBranchPlans[0].id }));
@@ -1847,17 +1871,105 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                      </div>
 
                      <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end pt-1 border-t border-slate-100">
-                        <div className="md:col-span-6">
-                           <ModalLabel>Reusable Box Type (Eco / Tiffin Box)</ModalLabel>
-                           <select 
-                             className="w-full p-2 border rounded-xl font-semibold text-xs bg-white text-slate-800"
-                             value={newPlanForm.reusableBoxType}
-                             onChange={e => setNewPlanForm({...newPlanForm, reusableBoxType: e.target.value})}
+                        <div className="md:col-span-6 relative" ref={boxDropdownRef}>
+                           <div className="flex items-center justify-between">
+                              <ModalLabel>Reusable Box Type (Eco / Tiffin Box)</ModalLabel>
+                              <span className="text-[9px] text-primary-600 font-bold">
+                                 {availableBoxTypes.length} options
+                              </span>
+                           </div>
+
+                           {/* Interactive Combobox Trigger Button */}
+                           <button
+                              type="button"
+                              onClick={() => setIsBoxDropdownOpen(!isBoxDropdownOpen)}
+                              className="w-full p-2 border border-slate-200 hover:border-primary-400 bg-white rounded-xl font-bold text-xs flex items-center justify-between text-left transition-all shadow-2xs group focus:ring-2 focus:ring-primary-500 focus:outline-none"
                            >
-                             {availableBoxTypes.map((box: any) => (
-                               <option key={box.id || box.name} value={box.name || box.id}>{box.name}</option>
-                             ))}
-                           </select>
+                              <div className="flex items-center gap-1.5 truncate">
+                                 <Package size={13} className="text-amber-500 shrink-0" />
+                                 <span className="truncate text-slate-800">
+                                    {newPlanForm.reusableBoxType || 'Select Box Type...'}
+                                 </span>
+                              </div>
+                              <div className="flex items-center gap-1 text-slate-400 group-hover:text-primary-600 shrink-0 ml-1">
+                                 <Search size={12} className="opacity-70" />
+                                 <ChevronDown size={14} className={`transition-transform duration-200 ${isBoxDropdownOpen ? 'rotate-180 text-primary-600' : ''}`} />
+                              </div>
+                           </button>
+
+                           {/* Searchable Dropdown Popover */}
+                           {isBoxDropdownOpen && (
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 p-2 space-y-2 animate-in fade-in zoom-in-95">
+                                 {/* Search Input Box */}
+                                 <div className="relative">
+                                    <Search className="absolute left-2.5 top-2 text-slate-400" size={13} />
+                                    <input
+                                       type="text"
+                                       placeholder="Search box type (e.g. Dabba, Bento, Glass)..."
+                                       value={boxSearchQuery}
+                                       onChange={e => setBoxSearchQuery(e.target.value)}
+                                       autoFocus
+                                       className="w-full pl-8 pr-7 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 focus:bg-white text-slate-800 placeholder:text-slate-400"
+                                    />
+                                    {boxSearchQuery && (
+                                       <button
+                                          type="button"
+                                          onClick={() => setBoxSearchQuery('')}
+                                          className="absolute right-2 top-2 text-slate-400 hover:text-slate-700"
+                                       >
+                                          <X size={13} />
+                                       </button>
+                                    )}
+                                 </div>
+
+                                 {/* Helper indicator */}
+                                 <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 px-1">
+                                    <span>{filteredBoxTypes.length} types matching</span>
+                                    <span>Eco / Tiffin Inventory</span>
+                                 </div>
+
+                                 {/* Scrollable list of boxes */}
+                                 <div className="max-h-56 overflow-y-auto space-y-1 no-scrollbar pr-0.5">
+                                    {filteredBoxTypes.length > 0 ? (
+                                       filteredBoxTypes.map((box: any) => {
+                                          const isSelected = newPlanForm.reusableBoxType === (box.name || box.id);
+                                          return (
+                                             <button
+                                                key={box.id || box.name}
+                                                type="button"
+                                                onClick={() => {
+                                                   setNewPlanForm({ ...newPlanForm, reusableBoxType: box.name || box.id });
+                                                   setIsBoxDropdownOpen(false);
+                                                }}
+                                                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
+                                                   isSelected 
+                                                      ? 'bg-amber-50 text-amber-900 border border-amber-200' 
+                                                      : 'hover:bg-slate-50 text-slate-700'
+                                                }`}
+                                             >
+                                                <div className="flex items-center gap-2 truncate">
+                                                   <Package size={13} className={isSelected ? "text-amber-600 shrink-0" : "text-slate-400 shrink-0"} />
+                                                   <span className="truncate">{box.name}</span>
+                                                </div>
+                                                {isSelected && <Check size={12} className="text-amber-600 shrink-0" />}
+                                             </button>
+                                          );
+                                       })
+                                    ) : (
+                                       <div className="py-4 text-center text-xs text-slate-400">
+                                          <p>No box types matching "{boxSearchQuery}"</p>
+                                          <button
+                                             type="button"
+                                             onClick={() => setBoxSearchQuery('')}
+                                             className="text-primary-600 font-bold hover:underline text-[11px] mt-1"
+                                          >
+                                             Clear search filter
+                                          </button>
+                                       </div>
+                                    )}
+                                 </div>
+                              </div>
+                           )}
                         </div>
                         <div className="md:col-span-3">
                            <ModalLabel>Box Tag / ID (Optional)</ModalLabel>

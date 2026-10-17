@@ -7,12 +7,20 @@ import {
   ShoppingBag, Archive, MessageSquare, DollarSign, Receipt, 
   CreditCard, BarChart3, Settings as SettingsIcon, User, HelpCircle, Zap
 } from 'lucide-react';
-import { db, auth } from '../services/firebase';
+import { db, auth, managerLoginCallable } from '../services/firebase';
 import { 
   collection, query, getDocs, doc, setDoc, updateDoc, getDoc, onSnapshot 
 } from 'firebase/firestore';
-import { signInAnonymously } from 'firebase/auth';
+import { signInAnonymously, signInWithCustomToken } from 'firebase/auth';
 import { BranchManager, ALL_SAAS_PAGES, getTodayStr } from '../services/store';
+
+/**
+ * TEMPORARY MIGRATION FLAG:
+ * Kept strictly for backward compatibility during Phase 1 deployment transition.
+ * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
+ * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
+ */
+const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 
 // Import SaaS page components so managers can seamlessly access their permitted views
 import Dashboard from './Dashboard';
@@ -180,18 +188,61 @@ export const ManagerPortal: React.FC = () => {
     setAuthLoading(true);
 
     try {
-      // Query managers under businesses/{bizId}/managers
-      const mgrRef = collection(db, 'businesses', bizId, 'managers');
-      const snap = await getDocs(mgrRef);
+      let matched: BranchManager | null = null;
 
-      const managersList = snap.docs.map(d => ({ id: d.id, ...d.data() })) as BranchManager[];
-      const matched = managersList.find(
-        m => m.email?.trim().toLowerCase() === emailInput.trim().toLowerCase() && 
-             m.password === passwordInput
-      );
+      // 1. Primary: Server-verified Cloud Function callable with lockout enforcement
+      try {
+        const result = await managerLoginCallable({
+          email: emailInput.trim(),
+          password: passwordInput,
+          bizId: bizId.trim()
+        });
+
+        if (result?.data?.token) {
+          // Sign in with Firebase custom token granting manager claims
+          await signInWithCustomToken(auth, result.data.token);
+          matched = result.data.manager as unknown as BranchManager;
+        }
+      } catch (callableErr: any) {
+        const errorMsg = callableErr?.message || '';
+        const errorCode = callableErr?.code || '';
+
+        // Lockout or credential failure from server -> surface directly
+        if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
+          setAuthError(errorMsg);
+          setAuthLoading(false);
+          return;
+        }
+
+        if (ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
+          console.warn("[Migration Fallback] Callable managerLogin unavailable, falling back to client query:", callableErr);
+        } else {
+          setAuthError(errorMsg || 'Invalid email or password.');
+          setAuthLoading(false);
+          return;
+        }
+      }
+
+      // 2. Temporary Migration Fallback: client-side verification if Cloud Function is not yet deployed
+      if (!matched && ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
+        const mgrRef = collection(db, 'businesses', bizId, 'managers');
+        const snap = await getDocs(mgrRef);
+        const managersList = snap.docs.map(d => ({ id: d.id, ...d.data() })) as BranchManager[];
+        const legacyMatch = managersList.find(
+          m => m.email?.trim().toLowerCase() === emailInput.trim().toLowerCase() && 
+               m.password === passwordInput
+        );
+
+        if (!legacyMatch) {
+          setAuthError('Invalid email or password. Please verify credentials provided by kitchen owner.');
+          setAuthLoading(false);
+          return;
+        }
+        matched = legacyMatch;
+      }
 
       if (!matched) {
-        setAuthError('Invalid email or password. Please verify the credentials provided by the business owner.');
+        setAuthError('Invalid email or password.');
         setAuthLoading(false);
         return;
       }
@@ -205,7 +256,7 @@ export const ManagerPortal: React.FC = () => {
       const todayStr = getTodayStr();
       const now = new Date();
       const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const branchName = branches.find(b => b.id === matched.branchId)?.name || (matched.branchId === 'All' ? 'All Branches' : 'Main Branch');
+      const branchName = branches.find(b => b.id === matched?.branchId)?.name || (matched?.branchId === 'All' ? 'All Branches' : 'Main Branch');
 
       const logData = {
         id: logId,
@@ -239,7 +290,7 @@ export const ManagerPortal: React.FC = () => {
 
       // Re-filter branches in state to manager's assigned branch
       if (matched.branchId && matched.branchId !== 'All') {
-        setBranches(prev => prev.filter(b => b.id === matched.branchId || b.name === matched.branchId));
+        setBranches(prev => prev.filter(b => b.id === matched?.branchId || b.name === matched?.branchId));
       }
 
     } catch (err: any) {

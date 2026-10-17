@@ -7,9 +7,7 @@ import {
   browserSessionPersistence, 
   inMemoryPersistence, 
   indexedDBLocalPersistence,
-  GoogleAuthProvider,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword
+  GoogleAuthProvider
 } from "firebase/auth";
 import { initializeFirestore, memoryLocalCache, setLogLevel } from "firebase/firestore";
 
@@ -42,24 +40,43 @@ export const auth = (() => {
 
 export const googleProvider = new GoogleAuthProvider();
 
-// Universal session for Delivery Boy App across all browsers
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+// Initialize Firebase Functions for secure server-side callables
+export const functions = getFunctions(app);
+
+// Callable function instances
+export const driverLoginCallable = httpsCallable<
+  { phone: string; pin: string },
+  { token: string; driver: { name: string; bizId: string; staffId: string; branchId: string; mobile: string } }
+>(functions, 'driverLogin');
+
+export const managerLoginCallable = httpsCallable<
+  { email: string; password: string; bizId?: string },
+  { token: string; manager: { id: string; name: string; email: string; branchId: string; allowedPages: string[]; bizId: string } }
+>(functions, 'managerLogin');
+
+export const setDriverPinCallable = httpsCallable<
+  { bizId: string; staffId?: string; phone: string; pin: string; name?: string; branchId?: string; additionalData?: any },
+  { success: boolean; staffId: string }
+>(functions, 'setDriverPin');
+
+export const setManagerPasswordCallable = httpsCallable<
+  { bizId: string; managerId?: string; password: string; managerData: any },
+  { success: boolean; managerId: string }
+>(functions, 'setManagerPassword');
+
+export const migrateCredentialsCallable = httpsCallable<
+  Record<string, never>,
+  { success: boolean; migratedStaffCount: number; migratedManagersCount: number; migratedGlobalDriversCount: number }
+>(functions, 'migratePlaintextCredentials');
+
+/**
+ * @deprecated Legacy shared session removed in Phase 1 security hardening.
+ * Driver authentication is now handled via secure driverLogin callable returning custom tokens.
+ */
 export const ensureDriverAuth = async () => {
-  if (auth.currentUser) return auth.currentUser;
-  try {
-    const cred = await signInWithEmailAndPassword(auth, "driver_session_system@scalekitchen.internal", "DriverPass@9999");
-    return cred.user;
-  } catch (err: any) {
-    if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-      try {
-        const cred = await createUserWithEmailAndPassword(auth, "driver_session_system@scalekitchen.internal", "DriverPass@9999");
-        return cred.user;
-      } catch (createErr) {
-        console.warn("Could not create driver session user:", createErr);
-      }
-    }
-    console.warn("Driver session auth error:", err);
-    return null;
-  }
+  return auth.currentUser;
 };
 
 // Use memoryLocalCache to ensure clean in-memory state in iframe environments

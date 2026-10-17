@@ -11,9 +11,17 @@ import {
   INDIA_STATES, REUSABLE_BOX_TYPES, ALL_SAAS_PAGES, BranchManager, ManagerLogEntry,
   formatDateDDMMYYYY
 } from '../services/store';
-import { db } from '../services/firebase';
+import { db, setDriverPinCallable, setManagerPasswordCallable } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
+
+/**
+ * TEMPORARY MIGRATION FLAG:
+ * Kept strictly for backward compatibility during Phase 1 deployment transition.
+ * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
+ * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
+ */
+const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 
 // --- Types ---
 interface Branch { 
@@ -116,36 +124,30 @@ const Settings = () => {
     return () => unsub();
   }, [currentUser]);
 
-  // Auto-sync delivery boys to universal driver auth & backfill default PIN if missing
+  // Auto-sync delivery boys metadata to universal driver directory without exposing plaintext PIN
   useEffect(() => {
     if (!currentUser || !deliveryBoys || deliveryBoys.length === 0) return;
     deliveryBoys.forEach((boy) => {
       const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
       if (cleanPhone) {
-        const pin = (boy.pin || '1234').trim();
-        const payload = {
+        const payload: any = {
           bizId: currentUser.uid,
           staffId: boy.id,
           name: boy.name,
           mobile: cleanPhone,
-          pin: pin,
           branchId: boy.branchId || '',
           updatedAt: new Date().toISOString()
         };
+        // Propagate hash if available, never write plaintext PIN
+        if (boy.pinHash) {
+          payload.pinHash = boy.pinHash;
+        }
 
-        // Universal real-time auth in global_features (accessible across all devices & browsers)
         setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true })
           .catch((err) => console.warn("Global driver auth sync warn:", err));
 
-        // Legacy / local collection sync
         setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true })
           .catch(() => {});
-
-        if (!boy.pin) {
-          updateDoc(doc(db, 'businesses', currentUser.uid, 'staff', boy.id), {
-            pin: '1234'
-          }).catch(() => {});
-        }
       }
     });
   }, [currentUser, deliveryBoys]);
@@ -270,9 +272,11 @@ const Settings = () => {
     if(!currentUser) return;
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
     const cleanPin = (data.pin || '').trim() || '1234';
+    
+    // SECURITY (Phase 1): Exclude plaintext pin from client doc update
+    const { pin: _omitPin, ...staffFieldsWithoutPin } = data as any;
     const staffData = {
-      ...data,
-      pin: cleanPin,
+      ...staffFieldsWithoutPin,
       updatedAt: new Date().toISOString()
     };
     
@@ -284,8 +288,26 @@ const Settings = () => {
       staffId = (addedDoc as any)?.id || '';
     }
 
-    // Sync to universal driver auth for multi-browser Phone + PIN login
-    if (cleanPhone) {
+    // Call server-side callable to hash PIN securely and update pinHash (never writes plaintext PIN)
+    let callableSucceeded = false;
+    try {
+      await setDriverPinCallable({
+        bizId: currentUser.uid,
+        staffId: staffId || editingItem?.id || '',
+        phone: cleanPhone,
+        pin: cleanPin,
+        name: data.name,
+        branchId: data.branchId || '',
+        additionalData: staffData
+      });
+      callableSucceeded = true;
+    } catch (callableErr) {
+      console.warn("setDriverPin callable warning:", callableErr);
+    }
+
+    // TEMPORARY MIGRATION FALLBACK: Only used before Cloud Functions deployment
+    if (!callableSucceeded && ENABLE_LEGACY_CLIENT_AUTH_FALLBACK && cleanPhone) {
+      console.warn("[Migration Fallback] Writing temporary driver auth record until Cloud Functions are deployed.");
       const payload = {
         bizId: currentUser.uid,
         staffId: staffId || editingItem?.id || '',
@@ -295,16 +317,8 @@ const Settings = () => {
         branchId: data.branchId || '',
         updatedAt: new Date().toISOString()
       };
-      try {
-        await setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true });
-      } catch (err) {
-        console.warn("Could not sync global driver auth:", err);
-      }
-      try {
-        await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true });
-      } catch (err) {
-        console.warn("Could not sync driver_auth_lookup:", err);
-      }
+      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true }).catch(() => {});
+      setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
     }
 
     setActiveModal(null);
@@ -313,18 +327,49 @@ const Settings = () => {
 
   const handleSaveManager = async (data: Omit<BranchManager, 'id'>) => {
     if (!currentUser) return;
+    const rawPassword = (data as any).password;
+    // SECURITY (Phase 1): Remove plaintext password from client doc write
+    const { password: _omitPassword, ...managerFieldsWithoutPassword } = data as any;
+    let managerId = editingItem?.id;
+
     if (editingItem) {
       await updateItem(currentUser.uid, 'managers', editingItem.id, {
-        ...data,
+        ...managerFieldsWithoutPassword,
         updatedAt: new Date().toISOString()
       });
     } else {
-      await addItem(currentUser.uid, 'managers', {
-        ...data,
+      const addedDoc = await addItem(currentUser.uid, 'managers', {
+        ...managerFieldsWithoutPassword,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+      managerId = (addedDoc as any)?.id;
     }
+
+    // Call server-side callable to hash password securely and update passwordHash
+    let callableSucceeded = false;
+    if (rawPassword) {
+      try {
+        await setManagerPasswordCallable({
+          bizId: currentUser.uid,
+          managerId: managerId || editingItem?.id || '',
+          password: rawPassword,
+          managerData: managerFieldsWithoutPassword
+        });
+        callableSucceeded = true;
+      } catch (callableErr) {
+        console.warn("setManagerPassword callable warning:", callableErr);
+      }
+    }
+
+    // TEMPORARY MIGRATION FALLBACK: Only used before Cloud Functions deployment
+    if (!callableSucceeded && ENABLE_LEGACY_CLIENT_AUTH_FALLBACK && rawPassword && editingItem) {
+      console.warn("[Migration Fallback] Writing temporary manager password until Cloud Functions are deployed.");
+      await updateItem(currentUser.uid, 'managers', editingItem.id, {
+        password: rawPassword
+      }).catch(() => {});
+    }
+
     setActiveModal(null);
     setEditingItem(null);
   };

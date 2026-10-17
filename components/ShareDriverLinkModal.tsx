@@ -24,22 +24,24 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Auto-sync active drivers to global auth directory whenever modal opens
+  // Auto-sync active drivers to global auth directory whenever modal opens (preserves metadata, NEVER writes plaintext PIN)
   useEffect(() => {
     if (!isOpen || !bizId || !staff || staff.length === 0) return;
     staff.forEach((boy) => {
       const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
       if (cleanMobile) {
-        const pin = (boy?.pin || '1234').trim();
-        const payload = {
+        const payload: any = {
           bizId,
           staffId: boy.id,
           name: boy.name,
           mobile: cleanMobile,
-          pin,
           branchId: boy.branchId || '',
           updatedAt: new Date().toISOString()
         };
+        // Only propagate hash if available, never plaintext
+        if (boy.pinHash) {
+          payload.pinHash = boy.pinHash;
+        }
         setDoc(doc(db, 'global_features', `driver_auth_${cleanMobile}`), payload, { merge: true })
           .catch((err) => console.warn("Share modal driver auth sync:", err));
       }
@@ -54,9 +56,8 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
   const baseUrl = generalToken ? `${origin}/#/driver?auth=${generalToken}` : `${origin}/#/driver`;
 
   const getBoyUrl = (boy: any) => {
-    const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
-    const pin = (boy?.pin || '1234').trim();
-    const token = encodeDriverToken(bizId, boy?.id, cleanMobile, pin, boy?.name);
+    // SECURITY: Share link NEVER contains the PIN. Only bizId and staffId.
+    const token = encodeDriverToken(bizId, boy?.id);
     return token ? `${origin}/#/driver?auth=${token}` : `${origin}/#/driver`;
   };
 
@@ -68,8 +69,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
   const handleWhatsApp = (boy: any) => {
     const boyUrl = getBoyUrl(boy);
-    const pin = (boy?.pin || '1234').trim();
-    const msg = `Hello ${boy.name}! 🚀\n\nHere is your secure ScaleKitchen Delivery App link for today's deliveries:\n${boyUrl}\n\n🔑 *Your 4-Digit Login PIN:* ${pin}\n\n📱 *Steps (Works on Safari, Chrome, iPhone & Android):*\n1. Open link on your phone browser\n2. Enter your 4-digit PIN: ${pin}\n3. Punch In to activate live GPS tracking and view today's meal stops!\n\nHave a safe delivery ride!`;
+    const msg = `Hello ${boy.name}! 🚀\n\nHere is your ScaleKitchen Delivery App access link for today's deliveries:\n${boyUrl}\n\n📱 *Steps:*\n1. Open link on your phone browser\n2. Enter your registered mobile number and your security PIN\n3. Punch In to activate live route tracking and view today's meal stops!\n\nHave a safe delivery ride!`;
     const cleanDigits = (boy.mobile || '').replace(/\D/g, '');
     window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(msg)}`, '_blank');
   };

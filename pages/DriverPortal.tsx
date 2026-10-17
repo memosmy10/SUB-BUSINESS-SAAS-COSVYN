@@ -9,8 +9,16 @@ import {
 import { 
   collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc 
 } from 'firebase/firestore';
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { db, auth, ensureDriverAuth } from '../services/firebase';
+import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { db, auth, driverLoginCallable } from '../services/firebase';
+
+/**
+ * TEMPORARY MIGRATION FLAG:
+ * Kept strictly for backward compatibility during Phase 1 deployment transition.
+ * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
+ * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
+ */
+const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
@@ -328,8 +336,11 @@ export const DriverPortal: React.FC = () => {
   // Universal Auth Synchronization for Delivery Boy App across all browsers
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
-      const isDriverSession = Boolean(safeStorageGet('driver_is_logged_in') === 'true' || safeStorageGet('driver_auth_pin'));
-      if (user && !user.isAnonymous && user.email !== 'driver_session_system@scalekitchen.internal') {
+      const isDriverSession = Boolean(
+        safeStorageGet('driver_is_logged_in') === 'true' || 
+        user?.uid?.startsWith('driver_')
+      );
+      if (user && !user.isAnonymous && !user.uid.startsWith('driver_')) {
         // Only show preview banner if owner explicitly requested preview AND is not logged in as driver
         if (!isDriverSession && (getParam('view') === 'preview' || getParam('preview') === 'true')) {
           setIsKitchenOwnerUser(true);
@@ -341,11 +352,6 @@ export const DriverPortal: React.FC = () => {
         }
       } else {
         setIsKitchenOwnerUser(false);
-        if (!user) {
-          ensureDriverAuth().catch((err) => {
-            console.warn("Driver session auth initialization:", err);
-          });
-        }
       }
     });
 
@@ -1348,19 +1354,11 @@ export const DriverPortal: React.FC = () => {
     setVerifying(true);
     setLoginError(null);
 
-    // 0. Ensure background driver session auth is active
-    try {
-      await ensureDriverAuth();
-    } catch (e) {
-      console.warn("Driver session auth check:", e);
-    }
-
     const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string) => {
       setIsKitchenOwnerUser(false);
       safeStorageSet('driver_is_logged_in', 'true');
       setDriverDisplayName(name);
       safeStorageSet('driver_name', name);
-      safeStorageSet('driver_auth_pin', pin);
       safeStorageSet('driver_phone', digits);
       if (bId) {
         setBizId(bId);
@@ -1377,7 +1375,41 @@ export const DriverPortal: React.FC = () => {
       showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
     };
 
-    // 1. Check real-time universal directory in global_features (accessible across all browsers)
+    // 1. Primary: Server-verified Cloud Function callable with lockout enforcement & custom token
+    try {
+      const result = await driverLoginCallable({
+        phone: digits,
+        pin: pin
+      });
+
+      if (result?.data?.token) {
+        // Sign in with Firebase using per-driver custom token
+        await signInWithCustomToken(auth, result.data.token);
+        const driverInfo = result.data.driver;
+        handleLoginSuccess(driverInfo.name, driverInfo.bizId, driverInfo.staffId, driverInfo.branchId);
+        return;
+      }
+    } catch (callableErr: any) {
+      const errorMsg = callableErr?.message || '';
+      const errorCode = callableErr?.code || '';
+
+      // Surface server lockout (resource-exhausted) or failed attempts counter directly
+      if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
+        setLoginError(errorMsg);
+        setVerifying(false);
+        return;
+      }
+
+      if (ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
+        console.warn("[Migration Fallback] Callable driverLogin unavailable, falling back to temporary client verification:", callableErr);
+      } else {
+        setLoginError(errorMsg || "Invalid phone number or PIN.");
+        setVerifying(false);
+        return;
+      }
+    }
+
+    // 2. TEMPORARY MIGRATION FALLBACK: Only runs if Cloud Functions are not yet deployed
     try {
       const lookupRef = doc(db, 'global_features', `driver_auth_${digits}`);
       const lookupSnap = await getDoc(lookupRef);
@@ -1395,7 +1427,6 @@ export const DriverPortal: React.FC = () => {
                 id: lookupData.staffId || 'driver-1',
                 name: verifiedName,
                 mobile: digits,
-                pin: pin,
                 branchId: lookupData.branchId || '',
                 role: 'Delivery Boy',
                 status: 'Online'
@@ -1415,55 +1446,14 @@ export const DriverPortal: React.FC = () => {
       console.warn("Global driver auth lookup check (falling back to token/local):", err);
     }
 
-    // 2. Check decoded secure token in memory or storage (instant, zero-latency verification)
-    const tokenPhone = (decoded?.mobile || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
-    const tokenPin = (decoded?.pin || safeStorageGet('driver_token_pin') || '1234').trim();
-    const tokenBiz = decoded?.bizId || safeStorageGet('driver_biz_id') || bizId;
-    const tokenBoy = decoded?.boyId || safeStorageGet('driver_boy_id') || selectedBoyId;
-    const tokenName = decoded?.name || safeStorageGet('driver_token_name') || 'Partner';
-
-    if (tokenPhone && (digits === tokenPhone || tokenPhone.endsWith(digits) || digits.endsWith(tokenPhone))) {
-      if (pin === tokenPin) {
-        handleLoginSuccess(tokenName, tokenBiz, tokenBoy);
-        return;
-      } else {
-        setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-        setVerifying(false);
-        return;
-      }
-    }
-
-    // 3. Fallback: if allStaff is already loaded in memory
-    if (allStaff.length > 0) {
-      const matched = allStaff.find(s => {
-        const m = (s.mobile || '').replace(/\D/g, '');
-        return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-      });
-
-      if (matched) {
-        const expectedPin = String(matched.pin || '1234').trim();
-        if (pin === expectedPin) {
-          handleLoginSuccess(matched.name, bizId, matched.id, matched.branchId);
-          return;
-        } else {
-          setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-          setVerifying(false);
-          return;
-        }
-      }
-    }
-
-    // 4. Fallback: if bizId is present in URL or state, query staff collection directly
-    if (bizId) {
-      try {
-        const staffQuery = query(collection(db, 'businesses', bizId, 'staff'));
-        const snap = await getDocs(staffQuery);
-        const matched = snap.docs
-          .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-          .find(s => {
-            const m = (s.mobile || '').replace(/\D/g, '');
-            return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-          });
+    // 3. Additional Temporary Migration Fallbacks (only active during deployment transition)
+    if (ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
+      // Direct staff cache check
+      if (allStaff.length > 0) {
+        const matched = allStaff.find(s => {
+          const m = (s.mobile || '').replace(/\D/g, '');
+          return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+        });
 
         if (matched) {
           const expectedPin = String(matched.pin || '1234').trim();
@@ -1476,30 +1466,56 @@ export const DriverPortal: React.FC = () => {
             return;
           }
         }
-      } catch (e) {
-        console.warn("Direct staff query fallback check:", e);
       }
-    }
 
-    // 5. Fallback: Check legacy driver_auth_lookup collection
-    try {
-      const legacyRef = doc(db, 'driver_auth_lookup', digits);
-      const legacySnap = await getDoc(legacyRef);
-      if (legacySnap.exists()) {
-        const data = legacySnap.data();
-        const expectedPin = String(data.pin || '1234').trim();
-        if (pin === expectedPin) {
-          const legName = data.name || 'Partner';
-          handleLoginSuccess(legName, data.bizId, data.staffId);
-          return;
-        } else {
-          setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-          setVerifying(false);
-          return;
+      // Direct staff query
+      if (bizId) {
+        try {
+          const staffQuery = query(collection(db, 'businesses', bizId, 'staff'));
+          const snap = await getDocs(staffQuery);
+          const matched = snap.docs
+            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+            .find(s => {
+              const m = (s.mobile || '').replace(/\D/g, '');
+              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+            });
+
+          if (matched) {
+            const expectedPin = String(matched.pin || '1234').trim();
+            if (pin === expectedPin) {
+              handleLoginSuccess(matched.name, bizId, matched.id, matched.branchId);
+              return;
+            } else {
+              setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+              setVerifying(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Direct staff query fallback check:", e);
         }
       }
-    } catch (e) {
-      console.warn("Legacy driver lookup check:", e);
+
+      // Legacy driver_auth_lookup collection
+      try {
+        const legacyRef = doc(db, 'driver_auth_lookup', digits);
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists()) {
+          const data = legacySnap.data();
+          const expectedPin = String(data.pin || '1234').trim();
+          if (pin === expectedPin) {
+            const legName = data.name || 'Partner';
+            handleLoginSuccess(legName, data.bizId, data.staffId);
+            return;
+          } else {
+            setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
+            setVerifying(false);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("Legacy driver lookup check:", e);
+      }
     }
 
     setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);

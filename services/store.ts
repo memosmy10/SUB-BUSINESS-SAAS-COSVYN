@@ -749,23 +749,21 @@ export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
 
 /**
  * Encodes driver access parameters into an obfuscated, URL-safe secure token.
- * Prevents raw business UIDs, staff IDs, or mobile numbers from being exposed in URL bars.
+ * SECURITY (Phase 1): Tokens NEVER contain PIN or phone credentials.
+ * Contains only business ID and staff ID for routing. Drivers must authenticate with their PIN.
  */
 export const encodeDriverToken = (
   bizId: string, 
   boyId?: string, 
-  mobile?: string,
-  pin?: string,
-  name?: string
+  _mobile?: string,
+  _pin?: string,
+  _name?: string
 ): string => {
   if (!bizId) return '';
   try {
     const payload = {
       b: bizId,
       s: boyId || '',
-      p: mobile ? normalizePhone(mobile) : '',
-      pin: pin ? pin.trim() : '',
-      n: name || '',
       t: Date.now()
     };
     const json = JSON.stringify(payload);
@@ -780,6 +778,7 @@ export const encodeDriverToken = (
 
 /**
  * Decodes a secure driver token into connection parameters.
+ * SECURITY (Phase 1): Never extracts or yields a PIN from tokens.
  */
 export const decodeDriverToken = (token: string): { 
   bizId: string; 
@@ -800,9 +799,9 @@ export const decodeDriverToken = (token: string): {
       return {
         bizId: parsed.b,
         boyId: parsed.s || undefined,
-        mobile: parsed.p || undefined,
-        pin: parsed.pin || undefined,
-        name: parsed.n || undefined
+        mobile: undefined,
+        pin: undefined,
+        name: undefined
       };
     }
   } catch (e) {

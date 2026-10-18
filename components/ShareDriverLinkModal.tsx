@@ -24,29 +24,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Auto-sync active drivers to global auth directory whenever modal opens (preserves metadata, NEVER writes plaintext PIN)
-  useEffect(() => {
-    if (!isOpen || !bizId || !staff || staff.length === 0) return;
-    staff.forEach((boy) => {
-      const cleanMobile = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
-      if (cleanMobile) {
-        const payload: any = {
-          bizId,
-          staffId: boy.id,
-          name: boy.name,
-          mobile: cleanMobile,
-          branchId: boy.branchId || '',
-          updatedAt: new Date().toISOString()
-        };
-        // Only propagate hash if available, never plaintext
-        if (boy.pinHash) {
-          payload.pinHash = boy.pinHash;
-        }
-        setDoc(doc(db, 'global_features', `driver_auth_${cleanMobile}`), payload, { merge: true })
-          .catch((err) => console.warn("Share modal driver auth sync:", err));
-      }
-    });
-  }, [isOpen, bizId, staff]);
+  // Driver authentication is securely handled server-side via custom tokens and setDriverPinCallable.
 
   if (!isOpen) return null;
 

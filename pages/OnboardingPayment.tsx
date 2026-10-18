@@ -7,7 +7,7 @@ import { calculateEffectivePrice } from '../services/saasStore';
 import { useGlobalPricing, addItem, checkFreeTrialEligibility, recordFreeTrialClaim } from '../services/dbService';
 import { handleRazorpayPayment } from '../services/razorpayService';
 import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
-import { db, auth } from '../services/firebase';
+import { db, auth, claimFreeTrialCallable } from '../services/firebase';
 import { getDaysDifference } from '../services/store';
 
 const OnboardingPayment = () => {
@@ -181,7 +181,7 @@ const OnboardingPayment = () => {
       const originObj = new Date(earliestOrigin);
       const trueExpiryObj = new Date(originObj);
       trueExpiryObj.setDate(trueExpiryObj.getDate() + 30);
-      const trueExpiryDate = trueExpiryObj.toISOString().split('T')[0];
+      let trueExpiryDate = trueExpiryObj.toISOString().split('T')[0];
       const daysLeft = getDaysDifference(today, trueExpiryDate);
 
       const alreadyClaimed = Boolean(
@@ -253,22 +253,28 @@ const OnboardingPayment = () => {
       let success = false;
       let lastErr: any = null;
 
-      for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await claimFreeTrialCallable({
+          bizId: uid,
+          mobile,
+          email
+        });
+        if (res.data?.success) {
+          trueExpiryDate = res.data.planExpiryDate || trueExpiryDate;
+          success = true;
+        }
+      } catch (callableErr: any) {
+        console.warn("claimFreeTrial callable notice:", callableErr);
         try {
           await setDoc(docRef, trialDoc, { merge: true });
           success = true;
-          break;
         } catch (setErr) {
-          lastErr = setErr;
-          console.warn(`Trial setDoc attempt ${attempt + 1} warning:`, setErr);
-          if (attempt < 2) {
-            await new Promise(r => setTimeout(r, 600));
-          }
+          lastErr = callableErr?.message || setErr;
         }
       }
 
       if (!success) {
-        throw lastErr || new Error("Could not update business profile. Please check your connection.");
+        throw lastErr || new Error("Could not activate free trial. Please check connection.");
       }
 
       // 4. Record trial claim permanently in trial_claims collection

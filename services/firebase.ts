@@ -71,6 +71,21 @@ export const migrateCredentialsCallable = httpsCallable<
   { success: boolean; migratedStaffCount: number; migratedManagersCount: number; migratedGlobalDriversCount: number }
 >(functions, 'migratePlaintextCredentials');
 
+export const migrateDriverManifestsCallable = httpsCallable<
+  Record<string, never>,
+  { success: boolean; copiedManifests: number; copiedStatuses: number; copiedLogs: number }
+>(functions, 'migrateDriverManifests');
+
+export const claimFreeTrialCallable = httpsCallable<
+  { bizId?: string; mobile?: string; email?: string },
+  { success: boolean; planName: string; planStatus: string; planExpiryDate: string }
+>(functions, 'claimFreeTrial');
+
+export const deleteDriverCallable = httpsCallable<
+  { bizId: string; staffId: string; phone?: string },
+  { success: boolean }
+>(functions, 'deleteDriver');
+
 /**
  * @deprecated Legacy shared session removed in Phase 1 security hardening.
  * Driver authentication is now handled via secure driverLogin callable returning custom tokens.

@@ -505,62 +505,27 @@ export const DriverPortal: React.FC = () => {
       }
     }, (err) => console.warn("Driver biz profile err:", err?.message));
 
-    // 7. REAL-TIME UNIVERSAL DRIVER MANIFEST in global_features
-    // Accessible by all delivery boys across all browsers and devices without permission limits
-    const manifestDocRef = doc(db, 'global_features', `driver_manifest_${bizId}`);
-    const unsubscribeManifest = onSnapshot(manifestDocRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (Array.isArray(data.customers) && data.customers.length > 0) {
-          setCustomers(data.customers);
+    // 7. REAL-TIME DRIVER MANIFEST in per-tenant subcollection (businesses/{bizId}/driver_manifest/{staffId})
+    let unsubscribeManifest = () => {};
+    if (selectedBoyId) {
+      const manifestDocRef = doc(db, 'businesses', bizId, 'driver_manifest', selectedBoyId);
+      unsubscribeManifest = onSnapshot(manifestDocRef, (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (Array.isArray(data.customers) && data.customers.length > 0) setCustomers(data.customers);
+          if (Array.isArray(data.plans) && data.plans.length > 0) setPlans(data.plans);
+          if (Array.isArray(data.branches) && data.branches.length > 0) setBranches(data.branches);
+          if (data.businessName) setBusinessName(data.businessName);
+          if (data.logoUrl) setLogoUrl(data.logoUrl);
+          setLoading(false);
         }
-        if (Array.isArray(data.plans) && data.plans.length > 0) {
-          setPlans(data.plans);
-        }
-        if (Array.isArray(data.staff) && data.staff.length > 0) {
-          setAllStaff(data.staff);
-        }
-        if (Array.isArray(data.branches) && data.branches.length > 0) {
-          setBranches(data.branches);
-        }
-        if (data.businessName) setBusinessName(data.businessName);
-        if (data.logoUrl) setLogoUrl(data.logoUrl);
-        if (Array.isArray(data.deliveryLogs)) {
-          const map: Record<string, any> = {};
-          data.deliveryLogs.forEach((l: any) => {
-            if (l.date === todayStr) {
-              map[`${l.customerId}_${l.mealTime}`] = l;
-            }
-          });
-          setDeliveryLogs(prev => ({ ...prev, ...map }));
-        }
-        // Listen to live driver attendance in manifest
-        if (data.driverAttendance && selectedBoyId && data.driverAttendance[selectedBoyId]) {
-          const att = data.driverAttendance[selectedBoyId];
-          if (att.lastAttendanceDate === todayStr && att.status === 'Online') {
-            setIsShiftActive(true);
-            if (att.attendanceMarkedAt) setPunchInTime(att.attendanceMarkedAt);
-          }
-        }
-        setLoading(false);
-      }
-    }, (err) => console.warn("Global driver manifest stream notice:", err?.message));
+      }, (err) => console.warn("Driver manifest stream notice:", err?.message));
+    }
 
-    // 8. REAL-TIME TODAY'S DELIVERY LOGS in global_features
-    const globalLogsDocRef = doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`);
-    const unsubscribeGlobalLogs = onSnapshot(globalLogsDocRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.logs && typeof data.logs === 'object') {
-          setDeliveryLogs(prev => ({ ...prev, ...data.logs }));
-        }
-      }
-    }, (err) => console.warn("Global logs stream notice:", err?.message));
-
-    // 9. REAL-TIME DRIVER STATUS in global_features for active rider
+    // 8. REAL-TIME DRIVER STATUS in per-tenant subcollection (businesses/{bizId}/driver_status/{staffId})
     let unsubscribeStatus = () => {};
     if (selectedBoyId) {
-      const statusDocRef = doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`);
+      const statusDocRef = doc(db, 'businesses', bizId, 'driver_status', selectedBoyId);
       unsubscribeStatus = onSnapshot(statusDocRef, (snap) => {
         if (snap.exists()) {
           const sData = snap.data();
@@ -576,6 +541,8 @@ export const DriverPortal: React.FC = () => {
         }
       }, () => {});
     }
+
+    const unsubscribeGlobalLogs = () => {};
 
     return () => {
       unsubscribeBiz();
@@ -915,26 +882,6 @@ export const DriverPortal: React.FC = () => {
 
     if (bizId === 'demo') return;
 
-    // Always sync box status to global_features real-time logs
-    setDoc(doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`), {
-      date: todayStr,
-      bizId,
-      updatedAt: now.toISOString(),
-      logs: {
-        [`${customer.id}_${selectedMeal}`]: {
-          date: todayStr,
-          customerId: customer.id,
-          customerName: customer.name,
-          deliveryBoyId: selectedBoyId,
-          deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
-          mealTime: selectedMeal,
-          boxStatus: status,
-          boxNotes: note.trim(),
-          updatedAt: now.toISOString()
-        }
-      }
-    }, { merge: true }).catch(() => {});
-
     try {
       const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${customer.id}_${selectedMeal}`);
       await setDoc(logDocRef, {
@@ -1006,31 +953,19 @@ export const DriverPortal: React.FC = () => {
       updatedAt: now.toISOString()
     };
 
-    setDoc(doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`), statusPayload, { merge: true })
+    // 2. Persist real-time driver status to per-tenant subcollection (businesses/{bizId}/driver_status/{staffId})
+    setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), statusPayload, { merge: true })
       .catch(err => console.warn("Driver status sync notice:", err));
 
-    // Update manifest attendance registry so kitchen owner live fleet immediately sees rider Online
-    setDoc(doc(db, 'global_features', `driver_manifest_${bizId}`), {
-      driverAttendance: {
-        [selectedBoyId]: {
-          status: 'Online',
-          lastAttendanceDate: todayStr,
-          attendanceMarkedAt: timeStr,
-          punchInTime: timeStr,
-          isShiftActive: true,
-          updatedAt: now.toISOString()
-        }
-      }
+    // Update per-driver manifest document
+    setDoc(doc(db, 'businesses', bizId, 'driver_manifest', selectedBoyId), {
+      status: 'Online',
+      lastAttendanceDate: todayStr,
+      attendanceMarkedAt: timeStr,
+      punchInTime: timeStr,
+      isShiftActive: true,
+      updatedAt: now.toISOString()
     }, { merge: true }).catch(err => console.warn("Driver manifest attendance sync notice:", err));
-
-    if (cleanPhone) {
-      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), {
-        status: 'Online',
-        lastAttendanceDate: todayStr,
-        attendanceMarkedAt: timeStr,
-        updatedAt: now.toISOString()
-      }, { merge: true }).catch(() => {});
-    }
 
     // 3. Attempt direct write to staff subcollection (works if permissions permit)
     try {
@@ -1042,7 +977,7 @@ export const DriverPortal: React.FC = () => {
         updatedAt: now.toISOString()
       });
     } catch (writeErr) {
-      console.warn("Direct staff attendance write notice (saved in global features):", writeErr);
+      console.warn("Direct staff attendance write notice:", writeErr);
     }
 
     // 4. Request GPS location fix in background without blocking shift start
@@ -1052,7 +987,7 @@ export const DriverPortal: React.FC = () => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setCurrentCoords(coords);
 
-          setDoc(doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`), {
+          setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), {
             currentLat: pos.coords.latitude,
             currentLng: pos.coords.longitude,
             lastLocationUpdate: new Date().toISOString()
@@ -1088,22 +1023,18 @@ export const DriverPortal: React.FC = () => {
       navigator.geolocation.clearWatch(watchIdRef.current);
     }
 
-    // Sync to global_features status
-    setDoc(doc(db, 'global_features', `driver_status_${bizId}_${selectedBoyId}`), {
+    // Sync to per-tenant status subcollection
+    setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), {
       status: 'Offline',
       isShiftActive: false,
       updatedAt: now.toISOString()
-    }, { merge: true }).catch(err => console.warn("Global status punch out notice:", err));
+    }, { merge: true }).catch(err => console.warn("Per-tenant status punch out notice:", err));
 
-    setDoc(doc(db, 'global_features', `driver_manifest_${bizId}`), {
-      driverAttendance: {
-        [selectedBoyId]: {
-          status: 'Offline',
-          isShiftActive: false,
-          updatedAt: now.toISOString()
-        }
-      }
-    }, { merge: true }).catch(err => console.warn("Manifest punch out notice:", err));
+    setDoc(doc(db, 'businesses', bizId, 'driver_manifest', selectedBoyId), {
+      status: 'Offline',
+      isShiftActive: false,
+      updatedAt: now.toISOString()
+    }, { merge: true }).catch(err => console.warn("Per-tenant manifest punch out notice:", err));
 
     try {
       const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
@@ -1165,31 +1096,6 @@ export const DriverPortal: React.FC = () => {
     if (bizId === 'demo') {
       return;
     }
-
-    // Always sync to global_features real-time delivery logs
-    setDoc(doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`), {
-      date: todayStr,
-      bizId,
-      updatedAt: now.toISOString(),
-      logs: {
-        [`${stop.customer.id}_${selectedMeal}`]: {
-          date: todayStr,
-          customerId: stop.customer.id,
-          customerName: stop.customer.name,
-          deliveryBoyId: selectedBoyId,
-          deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
-          mealTime: selectedMeal,
-          status: currentStatus,
-          deliveredAt: currentStatus === 'Delivered' ? now.toISOString() : null,
-          reusableBoxEnabled: stop.customer.reusableBoxEnabled || false,
-          boxType: stop.customer.reusableBoxType || stop.primaryBoxType || 'None',
-          isDay2Plus: stop.isDay2Plus,
-          boxStatus: stop.logRecord?.boxStatus || (stop.customer.reusableBoxEnabled && stop.isDay2Plus ? 'Pending' : 'None'),
-          boxNotes: stop.logRecord?.boxNotes || '',
-          updatedAt: now.toISOString()
-        }
-      }
-    }, { merge: true }).catch(err => console.warn("Global logs sync notice:", err));
 
     try {
       const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${stop.customer.id}_${selectedMeal}`);
@@ -1272,26 +1178,6 @@ export const DriverPortal: React.FC = () => {
     if (bizId === 'demo') {
       return;
     }
-
-    // Always sync box recollection to global_features real-time logs
-    setDoc(doc(db, 'global_features', `driver_logs_${bizId}_${todayStr}`), {
-      date: todayStr,
-      bizId,
-      updatedAt: now.toISOString(),
-      logs: {
-        [`${customer.id}_${selectedMeal}`]: {
-          date: todayStr,
-          customerId: customer.id,
-          customerName: customer.name,
-          deliveryBoyId: selectedBoyId,
-          deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
-          mealTime: selectedMeal,
-          boxStatus: selectedBoxStatus,
-          boxNotes: boxNotes.trim(),
-          updatedAt: now.toISOString()
-        }
-      }
-    }, { merge: true }).catch(err => console.warn("Global box log sync notice:", err));
 
     try {
       const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${customer.id}_${selectedMeal}`);

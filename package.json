@@ -8,6 +8,8 @@
     "build": "vite build",
     "lint": "tsc",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:rules": "vitest run test/firestore-rules.test.ts",
     "postinstall": "node scripts/patch-firestore.cjs"
   },
   "dependencies": {
@@ -21,9 +23,11 @@
     "recharts": "^3.5.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^5.0.5"
   }
 }

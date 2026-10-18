@@ -11,7 +11,7 @@ import {
   INDIA_STATES, REUSABLE_BOX_TYPES, ALL_SAAS_PAGES, BranchManager, ManagerLogEntry,
   formatDateDDMMYYYY
 } from '../services/store';
-import { db, setDriverPinCallable, setManagerPasswordCallable } from '../services/firebase';
+import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
 
@@ -124,33 +124,7 @@ const Settings = () => {
     return () => unsub();
   }, [currentUser]);
 
-  // Auto-sync delivery boys metadata to universal driver directory without exposing plaintext PIN
-  useEffect(() => {
-    if (!currentUser || !deliveryBoys || deliveryBoys.length === 0) return;
-    deliveryBoys.forEach((boy) => {
-      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
-      if (cleanPhone) {
-        const payload: any = {
-          bizId: currentUser.uid,
-          staffId: boy.id,
-          name: boy.name,
-          mobile: cleanPhone,
-          branchId: boy.branchId || '',
-          updatedAt: new Date().toISOString()
-        };
-        // Propagate hash if available, never write plaintext PIN
-        if (boy.pinHash) {
-          payload.pinHash = boy.pinHash;
-        }
-
-        setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true })
-          .catch((err) => console.warn("Global driver auth sync warn:", err));
-
-        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true })
-          .catch(() => {});
-      }
-    });
-  }, [currentUser, deliveryBoys]);
+  // Driver directory sync is now securely handled server-side via setDriverPinCallable and Cloud Functions.
 
   // Combine built-in standard box types with custom box types
   const allBoxTypes = useMemo(() => {
@@ -415,20 +389,15 @@ const Settings = () => {
     if(!currentUser || !window.confirm("Are you sure? This cannot be undone.")) return;
     if (collection === 'staff') {
       const boy = deliveryBoys.find(b => b.id === id);
-      if (boy?.mobile) {
-        const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
-        if (cleanPhone) {
-          try {
-            await deleteDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`));
-          } catch (e) {
-            console.warn("Failed removing global driver auth:", e);
-          }
-          try {
-            await deleteDoc(doc(db, 'driver_auth_lookup', cleanPhone));
-          } catch (e) {
-            console.warn("Failed removing driver lookup:", e);
-          }
-        }
+      const cleanPhone = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
+      try {
+        await deleteDriverCallable({
+          bizId: currentUser.uid,
+          staffId: id,
+          phone: cleanPhone
+        });
+      } catch (e) {
+        console.warn("deleteDriver callable notice:", e);
       }
     }
     await deleteItem(currentUser.uid, collection, id);

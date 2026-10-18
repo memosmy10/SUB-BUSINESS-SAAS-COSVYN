@@ -111,6 +111,8 @@ export interface GlobalCustomer {
   amountPaid: number;
   planPrice: number; // Total price of all plans
   deliveryCharges: number;
+  discount?: number;
+  finalPayable?: number;
   pendingAmount: number;
   renewalCount: number;
   

@@ -960,6 +960,8 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
     });
     if (customer.notes) msg += `📝 Notes: ${customer.notes}\n\n`;
     if (customer.locationLink) msg += `📍 Location: ${customer.locationLink}\n\n`;
+    if (customer.deliveryCharges && Number(customer.deliveryCharges) > 0) msg += `🚚 Delivery: ₹${customer.deliveryCharges}\n`;
+    if (customer.discount && Number(customer.discount) > 0) msg += `🏷️ Discount Applied: ₹${customer.discount} OFF\n`;
     msg += `📍 Address: ${customer.address}\n💰 Total Pending: ₹${customer.pendingAmount}`;
     window.open(`https://wa.me/${(customer.mobile || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
   };
@@ -983,6 +985,24 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
                  </div>
               </div>
             )}
+            {customer.discount && Number(customer.discount) > 0 ? (
+              <div className="bg-emerald-50 border border-emerald-200/70 p-3 rounded-xl flex items-center gap-2">
+                 <span className="text-sm">🏷️</span>
+                 <div>
+                    <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Discount</p>
+                    <p className="text-xs font-bold text-emerald-700">₹{customer.discount} OFF</p>
+                 </div>
+              </div>
+            ) : null}
+            {customer.deliveryCharges && Number(customer.deliveryCharges) > 0 ? (
+              <div className="bg-slate-100 border border-slate-200 p-3 rounded-xl flex items-center gap-2">
+                 <span className="text-sm">🚚</span>
+                 <div>
+                    <p className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Delivery</p>
+                    <p className="text-xs font-bold text-slate-700">₹{customer.deliveryCharges}</p>
+                 </div>
+              </div>
+            ) : null}
             {customer.locationLink && (
               <a 
                 href={customer.locationLink.startsWith('http') ? customer.locationLink : `https://${customer.locationLink}`} 
@@ -1462,11 +1482,12 @@ const DAYS = [
 const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose, onSubmit, availableBoxTypes = REUSABLE_BOX_TYPES }: any) => {
    const [formData, setFormData] = useState<any>({
       branchId: branches[0]?.id || '', name: '', mobile: '', address: '', area: '', 
-      deliveryBoyId: '', amountPaid: 0, deliveryCharges: 0, activePlans: [], 
+      deliveryBoyId: '', amountPaid: 0, deliveryCharges: 0, discount: 0, activePlans: [], 
       highlightMark: 'None', notes: '', locationLink: '',
       isStarred: false,
       starredQuery: '',
-      ...initialData
+      ...initialData,
+      ...(isRenewal ? { amountPaid: 0, deliveryCharges: 0, discount: 0 } : {})
    });
 
    const [activePlans, setActivePlans] = useState<any[]>(isRenewal ? [] : (initialData?.activePlans || []));
@@ -1609,7 +1630,10 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    };
 
    const plansTotal = activePlans.reduce((sum, p) => sum + Number(p.price), 0);
-   const pendingAmount = Math.max(0, plansTotal + Number(formData.deliveryCharges) - Number(formData.amountPaid));
+   const deliveryCharges = Math.max(0, Number(formData.deliveryCharges) || 0);
+   const discount = Math.max(0, Number(formData.discount) || 0);
+   const finalPayable = Math.max(0, plansTotal + deliveryCharges - discount);
+   const pendingAmount = Math.max(0, finalPayable - (Number(formData.amountPaid) || 0));
 
    const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
@@ -1632,6 +1656,10 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
 
       onSubmit({ 
          ...formData, 
+         discount,
+         deliveryCharges,
+         amountPaid: Number(formData.amountPaid) || 0,
+         finalPayable,
          isStarred,
          starredQuery,
          activePlans, 
@@ -2140,9 +2168,47 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
 
                <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-3 shadow-xl">
                   <div className="flex justify-between text-xs uppercase font-bold text-slate-400"><span>Total Plans: ₹{plansTotal}</span><span>Delivery Charges (Optional ₹)</span></div>
-                  <input type="number" className="w-full p-2.5 bg-slate-800 border-none rounded-xl text-white font-bold text-sm outline-none" placeholder="Delivery Charges" value={formData.deliveryCharges} onChange={e => setFormData({...formData, deliveryCharges: e.target.value})} />
+                  <input type="number" className="w-full p-2.5 bg-slate-800 border-none rounded-xl text-white font-bold text-sm outline-none" placeholder="Delivery Charges" value={formData.deliveryCharges ?? ''} onChange={e => setFormData({...formData, deliveryCharges: e.target.value})} />
+                  
+                  {/* DISCOUNT (OPTIONAL ₹) - IN BETWEEN DELIVERY CHARGE AND TOTAL PAID */}
+                  <div className="flex justify-between items-center text-xs uppercase font-bold text-slate-400 pt-1">
+                     <span>Discount (Optional ₹)</span>
+                     {discount > 0 && (
+                        <span className="text-emerald-400 font-bold tracking-wide text-[11px]">-₹{discount} OFF</span>
+                     )}
+                  </div>
+                  <input 
+                     type="number" 
+                     min="0"
+                     className="w-full p-2.5 bg-slate-800 border-none rounded-xl text-white font-bold text-sm outline-none focus:ring-1 focus:ring-emerald-500/50" 
+                     placeholder="Discount Amount" 
+                     value={formData.discount === 0 ? '' : (formData.discount ?? '')} 
+                     onChange={e => setFormData({...formData, discount: e.target.value})} 
+                  />
+
+                  {/* PRICE TO BE PAID (DYNAMICALLY UPDATED) */}
+                  <div className="flex justify-between items-center bg-slate-800/80 border border-slate-700/60 px-3.5 py-2.5 rounded-xl text-xs my-1">
+                     <div className="flex items-center gap-2">
+                        <span className="uppercase font-bold text-slate-400 tracking-wider text-[11px]">Price to be Paid:</span>
+                        <span className="text-emerald-400 font-mono text-base font-black">₹{finalPayable}</span>
+                        {discount > 0 && (
+                           <span className="text-[10px] text-slate-400 font-medium">
+                              (₹{plansTotal} {deliveryCharges > 0 ? `+ ₹${deliveryCharges}` : ''} - ₹{discount})
+                           </span>
+                        )}
+                     </div>
+                     <button
+                        type="button"
+                        onClick={() => setFormData((prev: any) => ({ ...prev, amountPaid: finalPayable }))}
+                        className="text-[10px] uppercase font-bold tracking-wider bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition-all active:scale-95 cursor-pointer"
+                        title="Click to copy Price to be Paid into Total Paid"
+                     >
+                        Pay Full
+                     </button>
+                  </div>
+
                   <ModalLabel><span className="text-slate-400">Total Paid (₹) *</span></ModalLabel>
-                  <input required type="number" className="w-full p-2.5 bg-slate-800 border-none rounded-xl text-white font-bold text-lg outline-none" value={formData.amountPaid} onChange={e => setFormData({...formData, amountPaid: e.target.value})} />
+                  <input required type="number" className="w-full p-2.5 bg-slate-800 border-none rounded-xl text-white font-bold text-lg outline-none" value={formData.amountPaid ?? ''} onChange={e => setFormData({...formData, amountPaid: e.target.value})} />
                   <div className="flex justify-between items-center font-black pt-2 border-t border-white/10">
                      <span className="text-xs uppercase text-slate-400">Due Amount:</span>
                      <span className={`text-xl ${pendingAmount > 0 ? 'text-red-400' : 'text-green-400'}`}>₹{pendingAmount}</span>

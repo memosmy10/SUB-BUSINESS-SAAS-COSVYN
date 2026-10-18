@@ -107,15 +107,9 @@ export const ManagerPortal: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auto sign in anonymously for Firestore rules if unauthenticated
+  // Fetch Business Profile (Name and Logo) and branches once manager is authenticated
   useEffect(() => {
-    if (!auth.currentUser) {
-      signInAnonymously(auth).catch(err => console.warn("Manager anonymous auth:", err));
-    }
-  }, []);
-
-  // Fetch Business Profile (Name and Logo) and branches
-  useEffect(() => {
-    if (!bizId) return;
+    if (!bizId || !loggedInManager) return;
     localStorage.setItem('manager_biz_id', bizId);
 
     const bizDocRef = doc(db, 'businesses', bizId);

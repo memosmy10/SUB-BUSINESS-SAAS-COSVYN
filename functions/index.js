@@ -607,3 +607,235 @@ exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => 
     migratedGlobalDriversCount
   };
 });
+
+/**
+ * migrateDriverManifests (Phase 2)
+ * Admin-only callable that non-destructively copies legacy shared global_features driver data
+ * into per-tenant subcollections (businesses/{bizId}/driver_manifest/{staffId}, etc.)
+ */
+exports.migrateDriverManifests = onCall({ cors: true }, async (request) => {
+  const callerUid = request.auth?.uid;
+  const callerEmail = (request.auth?.token?.email || '').toLowerCase();
+  const isAdminUser = request.auth?.token?.admin === true || 
+    (request.auth?.token?.email_verified === true && [
+      'cosvynsolutions@gmail.com',
+      'admin@scalekitchen.in',
+      'memosmy10@gmail.com'
+    ].includes(callerEmail));
+
+  if (!callerUid || !isAdminUser) {
+    throw new HttpsError('permission-denied', 'Only Super Admins can execute Phase 2 data migration.');
+  }
+
+  const db = admin.firestore();
+  let copiedManifests = 0;
+  let copiedStatuses = 0;
+  let copiedLogs = 0;
+
+  const globalSnap = await db.collection('global_features').get();
+  for (const gDoc of globalSnap.docs) {
+    const docId = gDoc.id;
+    const data = gDoc.data();
+
+    // 1. Manifest
+    if (docId.startsWith('driver_manifest_')) {
+      const bizId = docId.replace('driver_manifest_', '');
+      if (bizId) {
+        for (const [key, value] of Object.entries(data)) {
+          if (typeof value === 'object' && value !== null) {
+            const staffId = value.staffId || value.boyId || value.id || key;
+            await db.collection('businesses').doc(bizId)
+              .collection('driver_manifest').doc(staffId)
+              .set({
+                ...value,
+                bizId,
+                staffId,
+                migratedFromGlobal: true,
+                migratedAt: admin.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+            copiedManifests++;
+          }
+        }
+      }
+    }
+
+    // 2. Status
+    if (docId.startsWith('driver_status_')) {
+      const parts = docId.replace('driver_status_', '').split('_');
+      const bizId = parts[0];
+      const staffId = parts.slice(1).join('_');
+      if (bizId && staffId) {
+        await db.collection('businesses').doc(bizId)
+          .collection('driver_status').doc(staffId)
+          .set({
+            ...data,
+            bizId,
+            staffId,
+            migratedFromGlobal: true,
+            migratedAt: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        copiedStatuses++;
+      }
+    }
+
+    // 3. Logs
+    if (docId.startsWith('driver_logs_')) {
+      const parts = docId.replace('driver_logs_', '').split('_');
+      const bizId = parts[0];
+      const date = parts.slice(1).join('_');
+      if (bizId) {
+        for (const [key, value] of Object.entries(data)) {
+          if (typeof value === 'object' && value !== null) {
+            const logId = value.id || `${date}_${key}`;
+            await db.collection('businesses').doc(bizId)
+              .collection('delivery_logs').doc(logId)
+              .set({
+                ...value,
+                bizId,
+                date: value.date || date,
+                migratedFromGlobal: true,
+                migratedAt: admin.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+            copiedLogs++;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    success: true,
+    copiedManifests,
+    copiedStatuses,
+    copiedLogs
+  };
+});
+
+/**
+ * claimFreeTrial (Phase 2)
+ * Server-authoritative activation of the 14-day free trial.
+ * Prevents client-side manipulation of plan fields or trial_claims documents.
+ */
+exports.claimFreeTrial = onCall({ cors: true }, async (request) => {
+  const callerUid = request.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'User must be signed in to claim free trial.');
+  }
+
+  const { bizId, mobile, email } = request.data || {};
+  const targetBizId = bizId || callerUid;
+
+  if (targetBizId !== callerUid && !request.auth?.token?.admin) {
+    throw new HttpsError('permission-denied', 'You can only claim free trial for your own business account.');
+  }
+
+  const db = admin.firestore();
+  const bizRef = db.collection('businesses').doc(targetBizId);
+  const bizSnap = await bizRef.get();
+
+  if (!bizSnap.exists) {
+    throw new HttpsError('not-found', 'Business profile not found.');
+  }
+
+  const bizData = bizSnap.data();
+  if (bizData.trialClaimed === true || bizData.planStatus === 'Active') {
+    throw new HttpsError('already-exists', 'Free trial has already been claimed for this business account.');
+  }
+
+  const normPhone = String(mobile || bizData.mobile || '').replace(/\D/g, '').slice(-10);
+  const normEmail = String(email || bizData.email || request.auth?.token?.email || '').trim().toLowerCase();
+
+  // Check trial_claims documents
+  const checks = [
+    db.collection('trial_claims').doc(`user_${targetBizId}`).get()
+  ];
+  if (normPhone && normPhone.length === 10) {
+    checks.push(db.collection('trial_claims').doc(`phone_${normPhone}`).get());
+  }
+  if (normEmail && normEmail.includes('@')) {
+    checks.push(db.collection('trial_claims').doc(`email_${normEmail}`).get());
+  }
+
+  const results = await Promise.all(checks);
+  for (const snap of results) {
+    if (snap.exists) {
+      throw new HttpsError(
+        'already-exists',
+        'Free trial has already been claimed using this account, phone number, or email address.'
+      );
+    }
+  }
+
+  const now = new Date();
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + 14);
+  const expiryIso = expiryDate.toISOString().split('T')[0];
+
+  const claimRecord = {
+    userId: targetBizId,
+    email: normEmail,
+    mobile: normPhone,
+    claimedAt: now.toISOString(),
+    expiryDate: expiryIso,
+    durationDays: 14
+  };
+
+  const batch = db.batch();
+  batch.set(db.collection('trial_claims').doc(`user_${targetBizId}`), claimRecord);
+  if (normPhone && normPhone.length === 10) {
+    batch.set(db.collection('trial_claims').doc(`phone_${normPhone}`), claimRecord);
+  }
+  if (normEmail && normEmail.includes('@')) {
+    batch.set(db.collection('trial_claims').doc(`email_${normEmail}`), claimRecord);
+  }
+
+  batch.update(bizRef, {
+    planName: 'Free Trial',
+    planStatus: 'Active',
+    planExpiryDate: expiryIso,
+    trialClaimed: true,
+    trialStartDate: now.toISOString(),
+    trialDurationDays: 14,
+    updatedAt: now.toISOString()
+  });
+
+  await batch.commit();
+
+  return {
+    success: true,
+    planName: 'Free Trial',
+    planStatus: 'Active',
+    planExpiryDate: expiryIso
+  };
+});
+
+/**
+ * deleteDriver (Phase 2)
+ * Server-authoritative driver deletion that removes lookup and status records.
+ */
+exports.deleteDriver = onCall({ cors: true }, async (request) => {
+  const callerUid = request.auth?.uid;
+  const { bizId, staffId, phone } = request.data || {};
+
+  if (!callerUid || (callerUid !== bizId && !request.auth?.token?.admin)) {
+    throw new HttpsError('permission-denied', 'Only the business owner or admin can delete drivers.');
+  }
+
+  const db = admin.firestore();
+  const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
+
+  if (cleanPhone) {
+    await db.collection('driver_auth_lookup').doc(cleanPhone).delete().catch(() => {});
+    await db.collection('global_features').doc(`driver_auth_${cleanPhone}`).delete().catch(() => {});
+  }
+
+  if (bizId && staffId) {
+    await db.collection('businesses').doc(bizId).collection('staff').doc(staffId).delete().catch(() => {});
+    await db.collection('businesses').doc(bizId).collection('driver_manifest').doc(staffId).delete().catch(() => {});
+    await db.collection('businesses').doc(bizId).collection('driver_status').doc(staffId).delete().catch(() => {});
+  }
+
+  return { success: true };
+});
+
+

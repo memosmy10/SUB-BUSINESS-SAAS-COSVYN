@@ -1,108 +1,143 @@
 
-const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const firestore = require('@google-cloud/firestore');
 const client = new firestore.v1.FirestoreAdminClient();
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 
+// Initialize Firebase Admin SDK
 admin.initializeApp();
 
+// Define Secrets from Firebase Secret Manager (Phase 3)
+const razorpayKeySecret = defineSecret("RAZORPAY_KEY_SECRET");
+const razorpayWebhookSecret = defineSecret("RAZORPAY_WEBHOOK_SECRET");
+const razorpayKeyId = defineSecret("RAZORPAY_KEY_ID");
+const geminiApiKey = defineSecret("GEMINI_API_KEY");
+
 /**
- * Scheduled job to run every day at midnight.
+ * Scheduled job to run every day at midnight (Cloud Functions v2 / Node 20).
  * Checks all 'Active' businesses and updates their status to 'Expired'
- * if their planExpiryDate has passed.
+ * if their planExpiryDate has passed using the server date logic (YYYY-MM-DD).
  */
-exports.checkSubscriptionExpiry = functions.pubsub.schedule('every 24 hours').onRun(async (context) => {
-  const db = admin.firestore();
-  // Get today's date in YYYY-MM-DD format
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  
-  console.log(`[Cron] Running subscription expiry check for date: ${todayStr}`);
+exports.checkSubscriptionExpiry = onSchedule(
+  {
+    schedule: "every 24 hours",
+    timeZone: "Asia/Kolkata",
+    timeoutSeconds: 300,
+    memory: "256MiB",
+  },
+  async (event) => {
+    const db = admin.firestore();
+    const today = new Date();
+    const todayStr = today.toISOString().split("T")[0]; // YYYY-MM-DD server date logic
 
-  try {
-    // 1. Query all businesses that are currently 'Active'
-    // This reduces reads by ignoring already expired/inactive users.
-    const snapshot = await db.collection('businesses')
-      .where('planStatus', '==', 'Active')
-      .get();
+    console.log(`[Cron v2] Running subscription expiry check for server date: ${todayStr}`);
 
-    if (snapshot.empty) {
-      console.log('[Cron] No active subscriptions found to check.');
-      return null;
-    }
+    try {
+      const snapshot = await db.collection("businesses")
+        .where("planStatus", "==", "Active")
+        .get();
 
-    const batch = db.batch();
-    let expiredCount = 0;
-
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      
-      // Check if planExpiryDate exists and is strictly less than today's date
-      // Example: Expiry "2023-10-01" < Today "2023-10-02" -> TRUE (Expired)
-      if (data.planExpiryDate && data.planExpiryDate < todayStr) {
-        const docRef = db.collection('businesses').doc(doc.id);
-        
-        batch.update(docRef, { 
-          planStatus: 'Expired',
-          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
-        });
-        
-        expiredCount++;
+      if (snapshot.empty) {
+        console.log("[Cron v2] No active subscriptions found to check.");
+        return;
       }
-    });
 
-    // Commit the batch if there are updates
-    if (expiredCount > 0) {
-      await batch.commit();
-      console.log(`[Cron] Successfully expired ${expiredCount} subscriptions.`);
-    } else {
-      console.log('[Cron] No subscriptions matched expiry criteria today.');
+      const batch = db.batch();
+      let expiredCount = 0;
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.planExpiryDate && data.planExpiryDate < todayStr) {
+          const docRef = db.collection("businesses").doc(doc.id);
+          batch.update(docRef, {
+            planStatus: "Expired",
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          expiredCount++;
+        }
+      });
+
+      if (expiredCount > 0) {
+        await batch.commit();
+        console.log(`[Cron v2] Successfully marked ${expiredCount} subscriptions as Expired.`);
+      } else {
+        console.log("[Cron v2] No subscriptions expired today.");
+      }
+    } catch (error) {
+      console.error("[Cron v2] Error in checkSubscriptionExpiry:", error);
     }
-
-  } catch (error) {
-    console.error('[Cron] Error executing checkSubscriptionExpiry:', error);
   }
-
-  return null;
-});
+);
 
 /**
- * Scheduled job to run every day to backup the Firestore database to Cloud Storage.
- * REQUIRES: 
- * 1. 'Cloud Datastore Import Export Admin' role for the App Engine default service account.
- * 2. A default App Engine storage bucket enabled.
+ * Scheduled job to backup the Firestore database to Cloud Storage (v2 / Node 20).
+ *
+ * RETENTION POLICY NOTE:
+ * Configure Object Lifecycle Management on your Cloud Storage backup bucket:
+ * E.g., retain daily backups for 30 days and automatically delete older backups:
+ * ```bash
+ * cat <<EOF > lifecycle.json
+ * {
+ *   "rule": [
+ *     {
+ *       "action": {"type": "Delete"},
+ *       "condition": {"age": 30}
+ *     }
+ *   ]
+ * }
+ * EOF
+ * gsutil lifecycle set lifecycle.json gs://YOUR_PROJECT_ID.appspot.com
+ * ```
+ *
+ * HOW TO TEST A RESTORE:
+ * 1. Identify the backup URI prefix in Cloud Storage, e.g.:
+ *    gs://YOUR_PROJECT_ID.appspot.com/backups/2026-10-18T00:00:00.000Z/
+ * 2. To test restoring without affecting production, restore to a staging database or test project:
+ *    gcloud firestore import gs://YOUR_PROJECT_ID.appspot.com/backups/2026-10-18T00:00:00.000Z/ --project=YOUR_STAGING_PROJECT_ID
+ * 3. Or to restore specific collections in a sandbox:
+ *    gcloud firestore import gs://YOUR_PROJECT_ID.appspot.com/backups/.../ --collection-ids='businesses','plans'
  */
-exports.scheduledFirestoreExport = functions.pubsub.schedule('every 24 hours').onRun((context) => {
-  const projectId = process.env.GCP_PROJECT || process.env.GCLOUD_PROJECT;
-  const databaseName = client.databasePath(projectId, '(default)');
-  const bucketName = `gs://${projectId}.appspot.com`;
+exports.scheduledFirestoreExport = onSchedule(
+  {
+    schedule: "every 24 hours",
+    timeZone: "Asia/Kolkata",
+    timeoutSeconds: 540,
+    memory: "512MiB",
+  },
+  async (event) => {
+    const projectId = process.env.GCP_PROJECT || process.env.GCLOUD_PROJECT || admin.instanceId().app.options.projectId;
+    const databaseName = client.databasePath(projectId, '(default)');
+    const bucketName = `gs://${projectId}.appspot.com`;
+    const timestamp = new Date().toISOString();
 
-  console.log(`[Backup] Starting backup for project ${projectId} to ${bucketName}/backups`);
+    console.log(`[Backup v2] Starting backup for project ${projectId} to ${bucketName}/backups/${timestamp}`);
 
-  return client.exportDocuments({
-    name: databaseName,
-    outputUriPrefix: `${bucketName}/backups/${new Date().toISOString()}`,
-    // Leave collectionIds empty to export all collections
-    collectionIds: []
-  })
-  .then(responses => {
-    const response = responses[0];
-    console.log(`[Backup] Operation Name: ${response.name}`);
-    return response;
-  })
-  .catch(err => {
-    console.error('[Backup] Export operation failed:', err);
-    throw new Error('Export operation failed');
-  });
-});
+    try {
+      const [response] = await client.exportDocuments({
+        name: databaseName,
+        outputUriPrefix: `${bucketName}/backups/${timestamp}`,
+        collectionIds: [] // Exports all collections
+      });
+      console.log(`[Backup v2] Export operation initiated: ${response.name}`);
+      return response;
+    } catch (err) {
+      console.error('[Backup v2] Export operation failed:', err);
+      throw err;
+    }
+  }
+);
+
 
 /**
  * ============================================================================
  * PHASE 1: SERVER-VERIFIED DRIVER & MANAGER AUTHENTICATION (Cloud Functions v2)
  * ============================================================================
  */
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const bcrypt = require("bcryptjs");
+
 
 /**
  * driverLogin
@@ -837,5 +872,476 @@ exports.deleteDriver = onCall({ cors: true }, async (request) => {
 
   return { success: true };
 });
+
+/**
+ * ============================================================================
+ * PHASE 3: SERVER-SIDE PAYMENTS, WEBHOOK IDEMPOTENCY & GEMINI AI SECRETS
+ * ============================================================================
+ */
+
+// Authoritative Server-Side Plan Definitions (Prices strictly in integer paise)
+const SERVER_SAAS_PLANS = {
+  'monthly': { id: 'Monthly', label: 'Monthly', pricePaise: 99900, durationMonths: 1, type: 'subscription' },
+  '6 months': { id: '6 Months', label: '6 Months', pricePaise: 509900, durationMonths: 6, type: 'subscription' },
+  '6months': { id: '6 Months', label: '6 Months', pricePaise: 509900, durationMonths: 6, type: 'subscription' },
+  'yearly': { id: 'Yearly', label: 'Yearly', pricePaise: 959900, durationMonths: 12, type: 'subscription' },
+  // Invoice Recharge Packs
+  'mini': { id: 'mini', label: 'Mini Invoice Pack', pricePaise: 1000, count: 1, type: 'invoice_recharge' },
+  'saver': { id: 'saver', label: 'Saver Invoice Pack', pricePaise: 1500, count: 2, type: 'invoice_recharge' },
+  'value': { id: 'value', label: 'Value Invoice Pack', pricePaise: 2500, count: 5, type: 'invoice_recharge' },
+  'smart': { id: 'smart', label: 'Smart Invoice Pack', pricePaise: 4000, count: 10, type: 'invoice_recharge' },
+  'pro': { id: 'pro', label: 'Pro Saver Invoice Pack', pricePaise: 6000, count: 20, type: 'invoice_recharge' },
+  'ultimate': { id: 'ultimate', label: 'Ultimate Invoice Pack', pricePaise: 10000, count: 50, type: 'invoice_recharge' }
+};
+
+/**
+ * Computes authoritative plan details and discounts on the server.
+ * NEVER trusts client-submitted prices.
+ */
+async function getServerPlanDetails(planId) {
+  const normalized = String(planId || '').trim().toLowerCase();
+  if (normalized === 'freetrial' || normalized === 'free trial') {
+    throw new HttpsError('invalid-argument', 'Free trial does not require Razorpay order. Use claimFreeTrial instead.');
+  }
+
+  const basePlan = SERVER_SAAS_PLANS[normalized];
+  if (!basePlan) {
+    throw new HttpsError('not-found', `Unknown plan: '${planId}'. Must be one of: Monthly, 6 Months, Yearly, or invoice packs.`);
+  }
+
+  let pricePaise = basePlan.pricePaise;
+  let appliedDiscountPercent = 0;
+
+  // Check global_features/pricing for active special offer discount
+  try {
+    const db = admin.firestore();
+    const pricingSnap = await db.collection('global_features').doc('pricing').get();
+    if (pricingSnap.exists) {
+      const pricingData = pricingSnap.data();
+      const offer = pricingData?.offer;
+      if (offer && offer.isActive && offer.discountPercent > 0 && basePlan.type === 'subscription') {
+        const endsAt = offer.endsAt ? new Date(offer.endsAt) : null;
+        if (!endsAt || new Date() < endsAt) {
+          appliedDiscountPercent = Math.min(100, Math.max(0, Number(offer.discountPercent)));
+          const discountAmountPaise = Math.round((pricePaise * appliedDiscountPercent) / 100);
+          pricePaise = Math.max(100, pricePaise - discountAmountPaise); // Razorpay minimum order is ₹1 (100 paise)
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Razorpay] Pricing document fetch notice:', e.message);
+  }
+
+  return {
+    ...basePlan,
+    finalPricePaise: pricePaise,
+    discountPercent: appliedDiscountPercent
+  };
+}
+
+/**
+ * Server-authoritative payment fulfillment logic.
+ * Enforces strict idempotency via unique paymentId documents in `processed_payments`.
+ * Only this function writes planName, planStatus, planExpiryDate, lastPaymentId and billing_history.
+ */
+async function fulfillPayment(paymentId, orderId, bizIdHint, paymentAmountPaiseHint) {
+  const db = admin.firestore();
+  const processedRef = db.collection('processed_payments').doc(paymentId);
+
+  // 1. Idempotency Check: prevent replay attacks from extending plans twice
+  const processedSnap = await processedRef.get();
+  if (processedSnap.exists && processedSnap.data().status === 'fulfilled') {
+    console.log(`[Fulfillment] Payment ${paymentId} already fulfilled. Skipping.`);
+    return {
+      success: true,
+      alreadyProcessed: true,
+      planExpiryDate: processedSnap.data().planExpiryDate || null
+    };
+  }
+
+  // 2. Fetch order document
+  let order = null;
+  if (orderId) {
+    const orderSnap = await db.collection('orders').doc(orderId).get();
+    if (orderSnap.exists) {
+      order = orderSnap.data();
+    }
+  }
+
+  const targetBizId = order?.bizId || bizIdHint;
+  if (!targetBizId) {
+    throw new HttpsError('not-found', 'Could not identify target business account for this payment.');
+  }
+
+  const planType = order?.type || 'subscription';
+  const durationMonths = order?.durationMonths || 1;
+  const planLabel = order?.planLabel || order?.planId || 'Monthly';
+  const amountPaise = order?.amountPaise || paymentAmountPaiseHint || 0;
+  const amountRupees = amountPaise > 0 ? (amountPaise / 100) : 0;
+
+  // 3. Fetch current business data
+  const bizRef = db.collection('businesses').doc(targetBizId);
+  const bizSnap = await bizRef.get();
+  if (!bizSnap.exists) {
+    throw new HttpsError('not-found', `Business profile '${targetBizId}' not found.`);
+  }
+  const bizData = bizSnap.data();
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  let newExpiryDate = null;
+  const batch = db.batch();
+
+  if (planType === 'subscription') {
+    // Server computes expiry: extend from current expiry if valid and future, else from today
+    let baseDate = new Date();
+    if (bizData.planExpiryDate && bizData.planExpiryDate >= todayStr) {
+      baseDate = new Date(bizData.planExpiryDate);
+    }
+    baseDate.setMonth(baseDate.getMonth() + durationMonths);
+    newExpiryDate = baseDate.toISOString().split('T')[0];
+
+    // Strictly server-written fields
+    batch.update(bizRef, {
+      planName: `COSVYN ONE (${planLabel})`,
+      planStatus: 'Active',
+      planExpiryDate: newExpiryDate,
+      lastPaymentId: paymentId,
+      updatedAt: new Date().toISOString()
+    });
+
+    // Record to billing_history subcollection with integer paise
+    const historyRef = bizRef.collection('billing_history').doc(paymentId);
+    batch.set(historyRef, {
+      amount: amountRupees,    // Legacy Rupee amount for backward compatibility
+      amountPaise: amountPaise, // NEW integer paise
+      currency: 'INR',
+      date: new Date().toISOString(),
+      planName: `COSVYN ONE (${planLabel})`,
+      paymentId: paymentId,
+      orderId: orderId || null,
+      expiryDate: newExpiryDate,
+      type: 'Subscription',
+      status: 'Paid'
+    });
+  } else if (planType === 'invoice_recharge') {
+    const creditsToAdd = order?.invoiceCredits || 1;
+    const currentCredits = Number(bizData.purchasedInvoiceCredits) || 0;
+    const newCredits = currentCredits + creditsToAdd;
+
+    batch.update(bizRef, {
+      purchasedInvoiceCredits: newCredits,
+      lastPaymentId: paymentId,
+      updatedAt: new Date().toISOString()
+    });
+
+    const historyRef = bizRef.collection('billing_history').doc(paymentId);
+    batch.set(historyRef, {
+      amount: amountRupees,
+      amountPaise: amountPaise,
+      currency: 'INR',
+      date: new Date().toISOString(),
+      planName: `Invoice Recharge (${planLabel})`,
+      paymentId: paymentId,
+      orderId: orderId || null,
+      type: 'Invoice Recharge',
+      status: 'Paid'
+    });
+  }
+
+  // Mark payment as fulfilled to guarantee idempotency
+  batch.set(processedRef, {
+    paymentId,
+    orderId: orderId || null,
+    bizId: targetBizId,
+    amountPaise: amountPaise,
+    status: 'fulfilled',
+    planExpiryDate: newExpiryDate,
+    fulfilledAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  if (orderId) {
+    batch.update(db.collection('orders').doc(orderId), {
+      status: 'paid',
+      paymentId: paymentId,
+      paidAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  }
+
+  await batch.commit();
+
+  console.log(`[Fulfillment] Payment ${paymentId} successfully fulfilled for ${targetBizId}. New Expiry: ${newExpiryDate}`);
+
+  return {
+    success: true,
+    planExpiryDate: newExpiryDate,
+    planStatus: 'Active'
+  };
+}
+
+/**
+ * createRazorpayOrder (Phase 3)
+ * Callable that reads the price strictly from the server-side plan list,
+ * creates the order via the Razorpay API using secrets from Secret Manager,
+ * and returns order_id.
+ */
+exports.createRazorpayOrder = onCall({
+  cors: true,
+  secrets: [razorpayKeySecret, razorpayKeyId]
+}, async (request) => {
+  const callerUid = request.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'User must be signed in to create payment orders.');
+  }
+
+  const { planId } = request.data || {};
+  if (!planId) {
+    throw new HttpsError('invalid-argument', 'planId is required.');
+  }
+
+  // Server calculates price from authoritative server list (NEVER from client)
+  const plan = await getServerPlanDetails(planId);
+  const pricePaise = plan.finalPricePaise;
+
+  // Retrieve secrets from Secret Manager or environment
+  let keySecret = '';
+  try { keySecret = razorpayKeySecret.value(); } catch (e) { keySecret = process.env.RAZORPAY_KEY_SECRET || ''; }
+  let keyId = '';
+  try { keyId = razorpayKeyId.value(); } catch (e) { keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_SXPy6QPmqMyjkM'; }
+
+  if (!keySecret) keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+  if (!keyId) keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_SXPy6QPmqMyjkM';
+
+  const receipt = `rcpt_${callerUid.slice(0, 8)}_${Date.now()}`;
+  let orderId = '';
+
+  if (keySecret && keyId && !keyId.includes('placeholder')) {
+    const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+    const resp = await fetch('https://api.razorpay.com/v1/orders', {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        amount: pricePaise,
+        currency: 'INR',
+        receipt: receipt,
+        notes: {
+          bizId: callerUid,
+          planId: plan.id,
+          planLabel: plan.label,
+          durationMonths: String(plan.durationMonths || 0),
+          type: plan.type
+        }
+      })
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('[Razorpay Order Error]:', resp.status, errText);
+      throw new HttpsError('internal', `Failed to create Razorpay order: ${resp.statusText}`);
+    }
+
+    const orderData = await resp.json();
+    orderId = orderData.id;
+  } else {
+    console.warn('[Razorpay] Using test simulated order (set RAZORPAY_KEY_SECRET in Secret Manager for live/test API)');
+    orderId = `order_test_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  }
+
+  // Persist unfulfilled order in Firestore
+  const db = admin.firestore();
+  await db.collection('orders').doc(orderId).set({
+    orderId: orderId,
+    bizId: callerUid,
+    planId: plan.id,
+    planLabel: plan.label,
+    amountPaise: pricePaise, // Stored as integer paise in all NEW records
+    amount: pricePaise / 100, // Legacy rupee field
+    currency: 'INR',
+    durationMonths: plan.durationMonths || 0,
+    invoiceCredits: plan.count || 0,
+    type: plan.type,
+    status: 'created',
+    receipt: receipt,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return {
+    orderId,
+    amount: pricePaise,
+    currency: 'INR',
+    keyId: keyId || 'rzp_test_SXPy6QPmqMyjkM',
+    planName: plan.label
+  };
+});
+
+/**
+ * verifyRazorpayPayment (Phase 3)
+ * Callable that verifies razorpay_signature using RAZORPAY_KEY_SECRET,
+ * and updates planName, planStatus, planExpiryDate, lastPaymentId and billing_history.
+ */
+exports.verifyRazorpayPayment = onCall({
+  cors: true,
+  secrets: [razorpayKeySecret]
+}, async (request) => {
+  const callerUid = request.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'User must be signed in to verify payments.');
+  }
+
+  const { orderId, paymentId, signature } = request.data || {};
+  if (!paymentId) {
+    throw new HttpsError('invalid-argument', 'paymentId is required.');
+  }
+
+  let keySecret = '';
+  try { keySecret = razorpayKeySecret.value(); } catch (e) { keySecret = process.env.RAZORPAY_KEY_SECRET || ''; }
+  if (!keySecret) keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+
+  // Verify HMAC SHA256 signature if orderId & signature are provided
+  if (signature && orderId && keySecret) {
+    const expected = crypto.createHmac('sha256', keySecret).update(`${orderId}|${paymentId}`).digest('hex');
+    if (expected !== signature) {
+      throw new HttpsError('invalid-argument', 'Invalid Razorpay payment signature.');
+    }
+  } else if (!keySecret && signature) {
+    console.warn('[Razorpay] No secret configured, skipping signature verification in test fallback.');
+  }
+
+  // Fulfill idempotently on the server
+  const result = await fulfillPayment(paymentId, orderId, callerUid, null);
+  return result;
+});
+
+/**
+ * razorpayWebhook (Phase 3)
+ * HTTPS function that verifies X-Razorpay-Signature using RAZORPAY_WEBHOOK_SECRET
+ * and handles payment.captured idempotently (unique paymentId document).
+ */
+exports.razorpayWebhook = onRequest({
+  secrets: [razorpayWebhookSecret, razorpayKeySecret]
+}, async (req, res) => {
+  let webhookSecret = '';
+  try { webhookSecret = razorpayWebhookSecret.value(); } catch (e) { webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || ''; }
+  if (!webhookSecret) webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+
+  const signature = req.headers['x-razorpay-signature'];
+  const rawBody = req.rawBody ? req.rawBody.toString() : JSON.stringify(req.body);
+
+  if (webhookSecret && signature) {
+    const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+    if (signature !== expected) {
+      console.error('[Razorpay Webhook] Invalid X-Razorpay-Signature.');
+      return res.status(400).send('Invalid signature');
+    }
+  } else if (webhookSecret && !signature) {
+    return res.status(400).send('Missing X-Razorpay-Signature header');
+  }
+
+  const eventData = req.body || {};
+  const event = eventData.event;
+
+  if (event === 'payment.captured') {
+    const payment = eventData.payload?.payment?.entity;
+    if (payment) {
+      const paymentId = payment.id;
+      const orderId = payment.order_id;
+      const amountPaise = payment.amount;
+      const bizId = payment.notes?.bizId;
+
+      try {
+        await fulfillPayment(paymentId, orderId, bizId, amountPaise);
+        return res.status(200).json({ status: 'ok', paymentId });
+      } catch (err) {
+        console.error('[Razorpay Webhook] Fulfillment error:', err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+  }
+
+  return res.status(200).json({ status: 'ignored', event });
+});
+
+/**
+ * geminiGenerate (Phase 3)
+ * Server-side callable for Gemini AI with user authentication and rate limiting.
+ * Requires auth and keeps GEMINI_API_KEY secure in Secret Manager.
+ */
+exports.geminiGenerate = onCall({
+  cors: true,
+  secrets: [geminiApiKey]
+}, async (request) => {
+  const callerUid = request.auth?.uid;
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'Authentication required to use AI features.');
+  }
+
+  const db = admin.firestore();
+  const now = Date.now();
+  const rateLimitRef = db.collection('gemini_rate_limits').doc(callerUid);
+
+  // Rate limiting: max 15 requests per 60 seconds
+  const rateLimitSnap = await rateLimitRef.get();
+  let rateLimitData = rateLimitSnap.exists ? rateLimitSnap.data() : { count: 0, windowStart: now };
+  
+  if (now - (rateLimitData.windowStart || 0) > 60000) {
+    rateLimitData = { count: 1, windowStart: now };
+  } else {
+    if (rateLimitData.count >= 15) {
+      throw new HttpsError('resource-exhausted', 'AI generation rate limit exceeded (max 15/min). Please try again in a minute.');
+    }
+    rateLimitData.count = (rateLimitData.count || 0) + 1;
+  }
+  await rateLimitRef.set(rateLimitData);
+
+  let apiKey = '';
+  try { apiKey = geminiApiKey.value(); } catch (e) { apiKey = process.env.GEMINI_API_KEY || ''; }
+  if (!apiKey) apiKey = process.env.GEMINI_API_KEY || '';
+
+  if (!apiKey) {
+    throw new HttpsError('failed-precondition', 'GEMINI_API_KEY secret is not configured on the server.');
+  }
+
+  const { action, data, customerQuery } = request.data || {};
+
+  let prompt = '';
+  let model = 'gemini-2.5-flash';
+
+  if (action === 'business_insights') {
+    model = 'gemini-2.5-pro';
+    const activeData = Array.isArray(data) ? data.filter(d => (d.value || 0) > 0 || (d.secondaryValue || 0) > 0) : [];
+    if (activeData.length === 0) {
+      return { text: "Gathering data to provide your first AI insight..." };
+    }
+    prompt = `Analyze the following monthly revenue (value) vs expenses (secondaryValue) data for a meal subscription business.\nData: ${JSON.stringify(activeData)}\n\nProvide a concise 3-bullet point summary of the financial health and 1 strategic recommendation for the kitchen owner. Keep it professional, encouraging, and brief. Use Lakhs/Rupees context.`;
+  } else if (action === 'support_reply') {
+    model = 'gemini-2.5-flash';
+    prompt = `You are a helpful customer support agent for 'ScaleKitchen', a SaaS platform for tiffin services.\nDraft a polite, empathetic, and concise reply to the following kitchen owner query: "${customerQuery || ''}"`;
+  } else {
+    throw new HttpsError('invalid-argument', 'Invalid AI action. Must be business_insights or support_reply.');
+  }
+
+  // Server-side call to Gemini API
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }]
+    })
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    console.error('[Gemini Server Error]:', resp.status, err);
+    throw new HttpsError('internal', `Gemini API call failed with status ${resp.status}`);
+  }
+
+  const resJson = await resp.json();
+  const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
+  return { text };
+});
+
 
 

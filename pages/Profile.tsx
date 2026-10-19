@@ -14,6 +14,7 @@ import { doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { calculateEffectivePrice } from '../services/saasStore';
 import { useGlobalPricing, useStreamCollection, addItem } from '../services/dbService';
 import { handleRazorpayPayment } from '../services/razorpayService';
+import { getAmountInRupees } from '../services/moneyUtils';
 
 const Profile = () => {
   const { currentUser } = useAuth();
@@ -130,38 +131,12 @@ const Profile = () => {
     }
   };
 
-  const handleRenewalSuccess = async (paymentId: string, planDurationMonths: number, planName: string, amountPaid: number) => {
+  const handleRenewalSuccess = async (paymentId: string, planDurationMonths: number, planName: string, result: any) => {
     if (!currentUser) return;
     
     try {
-      // Logic: Extend the CURRENT expiry date by X months
-      // If current expiry is in the past, use TODAY as base
-      const currentExpiry = new Date(profile.planExpiryDate);
-      const today = new Date();
-      
-      const baseDate = currentExpiry > today ? currentExpiry : today;
-      baseDate.setMonth(baseDate.getMonth() + planDurationMonths);
-      
-      const newExpiryDate = baseDate.toISOString().split('T')[0];
-
-      await updateDoc(doc(db, 'businesses', currentUser.uid), {
-        planName: `COSVYN ONE (${planName})`,
-        planStatus: 'Active',
-        planExpiryDate: newExpiryDate,
-        lastPaymentId: paymentId,
-        updatedAt: new Date().toISOString()
-      });
-
-      // Add to History
-      await addItem(currentUser.uid, 'billing_history', {
-        amount: amountPaid,
-        date: new Date().toISOString(),
-        planName: planName,
-        paymentId: paymentId,
-        expiryDate: newExpiryDate,
-        type: 'Renewal',
-        status: 'Paid'
-      });
+      // Server already atomically computed new expiry date, updated business profile, and recorded billing history
+      const newExpiryDate = result?.planExpiryDate || profile.planExpiryDate;
 
       // Update local state immediately
       setProfile(prev => ({
@@ -176,7 +151,8 @@ const Profile = () => {
 
     } catch (e) {
       console.error("Renewal Update Failed:", e);
-      alert("Payment successful but database update failed. Contact Support.");
+      alert("Subscription renewed on server.");
+      setIsRenewModalOpen(false);
     }
   };
 
@@ -452,7 +428,7 @@ const Profile = () => {
                                   <div className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {item.paymentId || 'N/A'}</div>
                                </td>
                                <td className="px-4 py-3 text-right">
-                                  <div className="font-bold text-slate-900">₹{item.amount?.toLocaleString()}</div>
+                                  <div className="font-bold text-slate-900">₹{getAmountInRupees(item).toLocaleString('en-IN')}</div>
                                   <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider inline-block mt-1">
                                      Paid
                                   </span>
@@ -538,16 +514,16 @@ const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
      setProcessing(true);
      
      handleRazorpayPayment({
-        amount: effectivePrice,
+        planId: selectedPlan.id,
         planName: selectedPlan.label + " Renewal",
         userEmail: profile.email,
         userContact: profile.mobile,
         businessName: profile.businessName,
-        onSuccess: (pid) => {
+        onSuccess: (result: any) => {
            setProcessing(false);
-           onSuccess(pid, selectedPlan.durationMonths, selectedPlan.label, effectivePrice);
+           onSuccess(result.paymentId, selectedPlan.durationMonths, selectedPlan.label, result);
         },
-        onFailure: (err) => {
+        onFailure: (err: any) => {
            console.log("Renewal Cancelled/Failed", err);
            setProcessing(false);
         }

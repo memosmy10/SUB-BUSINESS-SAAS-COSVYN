@@ -23,8 +23,10 @@ import {
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
   getCustomerScheduledPlansForSession, isPlanActiveOnDate, formatDateDDMMYYYY,
-  decodeDriverToken, normalizePhone
+  decodeDriverToken, normalizePhone, isReusableBoxType
 } from '../services/store';
+import { buildWhatsAppUrl, getDeliveryArrivalMessage } from '../services/messageTemplates';
+
 
 // Sample demo data for instant preview or offline testing
 const DEMO_STAFF: DeliveryBoyStaff[] = [
@@ -557,23 +559,48 @@ export const DriverPortal: React.FC = () => {
     };
   }, [bizId, selectedBoyId, todayStr]);
 
-  // GPS Watcher when shift is active
+  // GPS Watcher when shift is active (Module 4)
   useEffect(() => {
     if (isShiftActive && navigator.geolocation) {
+      let lastWrittenMs = 0;
+
       const updateLocation = (pos: GeolocationPosition) => {
-        const { latitude, longitude } = pos.coords;
+        const { latitude, longitude, accuracy } = pos.coords;
         setCurrentCoords({ lat: latitude, lng: longitude });
         setGpsError(null);
 
-        // Update driver doc in Firestore
+        const nowMs = Date.now();
+        // Throttle Firestore writes to at most once per 10 seconds to protect database & battery
+        if (nowMs - lastWrittenMs < 10000) {
+          return;
+        }
+        lastWrittenMs = nowMs;
+
+        // Update driver live location in Firestore across driver_status and staff
         if (bizId && selectedBoyId) {
+          const locPayload = {
+            currentLat: latitude,
+            currentLng: longitude,
+            accuracy: accuracy || null,
+            lastLocationUpdate: new Date().toISOString(),
+            status: 'Online',
+            isShiftActive: true,
+            updatedAt: new Date().toISOString()
+          };
+
+          // 1. Update per-tenant driver_status (authoritative real-time fleet stream)
+          setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), locPayload, { merge: true })
+            .catch(err => console.warn("Driver status GPS sync err:", err));
+
+          // 2. Update staff doc in staff subcollection
           const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
           updateDoc(boyDocRef, {
             currentLat: latitude,
             currentLng: longitude,
             lastLocationUpdate: new Date().toISOString(),
-            status: 'Online'
-          }).catch(err => console.warn("GPS update err:", err));
+            status: 'Online',
+            updatedAt: new Date().toISOString()
+          }).catch(err => console.warn("Staff GPS update err:", err));
         }
       };
 
@@ -584,13 +611,14 @@ export const DriverPortal: React.FC = () => {
       navigator.geolocation.getCurrentPosition(updateLocation, handleError, { enableHighAccuracy: true });
       watchIdRef.current = navigator.geolocation.watchPosition(updateLocation, handleError, {
         enableHighAccuracy: true,
-        maximumAge: 15000,
+        maximumAge: 10000,
         timeout: 20000
       });
 
       return () => {
         if (watchIdRef.current !== null) {
           navigator.geolocation.clearWatch(watchIdRef.current);
+          watchIdRef.current = null;
         }
       };
     }
@@ -737,14 +765,16 @@ export const DriverPortal: React.FC = () => {
           // Check if Customer is on Day 2+ for reusable box
           const isDay2Plus = isCustomerDeliveryDay2Plus(c, todayStr);
 
-          // Box variants breakdown
+          // Box variants breakdown (Module 5)
           const boxVariantMap: Record<string, { count: number; boxType: string; isStarred: boolean }> = {};
           scheduledPlans.forEach(p => {
             const variantKey = p.planName || 'Standard Meal';
+            const rawBox = p.reusableBoxType || c.reusableBoxType;
+            const effectiveBox = isReusableBoxType(rawBox) ? rawBox : 'Disposable';
             if (!boxVariantMap[variantKey]) {
               boxVariantMap[variantKey] = {
                 count: 0,
-                boxType: p.reusableBoxType || c.reusableBoxType || 'Stainless Steel 3-Tier Dabba',
+                boxType: effectiveBox,
                 isStarred: Boolean(p.isStarred)
               };
             }
@@ -752,12 +782,11 @@ export const DriverPortal: React.FC = () => {
             if (p.isStarred) boxVariantMap[variantKey].isStarred = true;
           });
 
-          const primaryBoxType = scheduledPlans.find(p => p.reusableBoxType && p.reusableBoxType !== 'None')?.reusableBoxType || 
-                                 c.reusableBoxType || 
-                                 'Stainless Steel 3-Tier Dabba';
-
-          // In dabba delivery, every stop tracks tiffin box recollection by default
-          const isReusableApplicable = true;
+          // Conditional return-box status based on box type (Module 5)
+          const configuredReusable = scheduledPlans.find(p => p.reusableBoxType && isReusableBoxType(p.reusableBoxType))?.reusableBoxType || 
+                                     (isReusableBoxType(c.reusableBoxType) ? c.reusableBoxType : null);
+          const primaryBoxType = configuredReusable || 'Disposable';
+          const isReusableApplicable = isReusableBoxType(primaryBoxType);
 
           const isStarred = Boolean(
             c.isStarred || 
@@ -918,7 +947,7 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
-  // Handle Attendance Punch In / Shift Start
+  // Handle Attendance Punch In / Shift Start (Module 4)
   const handlePunchIn = async () => {
     if (!bizId || !selectedBoyId) {
       showToast("⚠️ Missing rider credentials. Please log in with your PIN.");
@@ -928,6 +957,7 @@ export const DriverPortal: React.FC = () => {
 
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const sessionId = `${todayStr}_${selectedBoyId}`;
     
     // 1. Immediate optimistic shift activation & persistent local storage
     setIsShiftActive(true);
@@ -939,7 +969,7 @@ export const DriverPortal: React.FC = () => {
 
     const cleanPhone = (phoneInput || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
 
-    // 2. Persist real-time driver status to global_features (accessible across all devices without restriction)
+    // 2. Persist real-time driver status (authoritative for live fleet tracking)
     const statusPayload = {
       bizId,
       staffId: selectedBoyId,
@@ -950,12 +980,35 @@ export const DriverPortal: React.FC = () => {
       attendanceMarkedAt: timeStr,
       punchInTime: timeStr,
       isShiftActive: true,
+      currentLat: currentCoords?.lat || null,
+      currentLng: currentCoords?.lng || null,
+      lastLocationUpdate: now.toISOString(),
       updatedAt: now.toISOString()
     };
 
-    // 2. Persist real-time driver status to per-tenant subcollection (businesses/{bizId}/driver_status/{staffId})
     setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), statusPayload, { merge: true })
       .catch(err => console.warn("Driver status sync notice:", err));
+
+    // 3. Persist persistent session record in businesses/{bizId}/driver_sessions/{sessionId}
+    const sessionPayload = {
+      sessionId,
+      staffId: selectedBoyId,
+      driverName: currentBoy?.name || driverDisplayName || 'Rider',
+      mobile: cleanPhone,
+      branchId: currentBoy?.branchId || '',
+      date: todayStr,
+      startTime: now.toISOString(),
+      punchInTime: timeStr,
+      endTime: null,
+      durationMinutes: 0,
+      status: 'Active',
+      initialLat: currentCoords?.lat || null,
+      initialLng: currentCoords?.lng || null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString()
+    };
+    setDoc(doc(db, 'businesses', bizId, 'driver_sessions', sessionId), sessionPayload, { merge: true })
+      .catch(err => console.warn("Driver session write notice:", err));
 
     // Update per-driver manifest document
     setDoc(doc(db, 'businesses', bizId, 'driver_manifest', selectedBoyId), {
@@ -967,20 +1020,22 @@ export const DriverPortal: React.FC = () => {
       updatedAt: now.toISOString()
     }, { merge: true }).catch(err => console.warn("Driver manifest attendance sync notice:", err));
 
-    // 3. Attempt direct write to staff subcollection (works if permissions permit)
+    // 4. Update staff document
     try {
       const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
       await updateDoc(boyDocRef, {
         status: 'Online',
         lastAttendanceDate: todayStr,
         attendanceMarkedAt: timeStr,
+        punchInTime: timeStr,
+        isShiftActive: true,
         updatedAt: now.toISOString()
       });
     } catch (writeErr) {
       console.warn("Direct staff attendance write notice:", writeErr);
     }
 
-    // 4. Request GPS location fix in background without blocking shift start
+    // 5. Request initial GPS location fix
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -990,6 +1045,12 @@ export const DriverPortal: React.FC = () => {
           setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), {
             currentLat: pos.coords.latitude,
             currentLng: pos.coords.longitude,
+            lastLocationUpdate: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
+
+          setDoc(doc(db, 'businesses', bizId, 'driver_sessions', sessionId), {
+            initialLat: pos.coords.latitude,
+            initialLng: pos.coords.longitude,
             lastLocationUpdate: new Date().toISOString()
           }, { merge: true }).catch(() => {});
 
@@ -1007,12 +1068,13 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
-  // Handle Shift End
+  // Handle Shift End (Module 4)
   const handlePunchOut = async () => {
     if (!confirm("Are you sure you want to end your shift?")) return;
     if (!bizId || !selectedBoyId) return;
 
     const now = new Date();
+    const sessionId = `${todayStr}_${selectedBoyId}`;
     setIsShiftActive(false);
     setPunchInTime(null);
     safeStorageSet('driver_shift_active', 'false');
@@ -1021,25 +1083,50 @@ export const DriverPortal: React.FC = () => {
 
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
     }
 
-    // Sync to per-tenant status subcollection
+    // Calculate session duration
+    let durationMins = 0;
+    try {
+      const sessionSnap = await getDoc(doc(db, 'businesses', bizId, 'driver_sessions', sessionId));
+      if (sessionSnap.exists() && sessionSnap.data().startTime) {
+        const startMs = new Date(sessionSnap.data().startTime).getTime();
+        durationMins = Math.max(1, Math.round((now.getTime() - startMs) / 60000));
+      }
+    } catch (e) {}
+
+    // 1. Finalize driver session in driver_sessions
+    setDoc(doc(db, 'businesses', bizId, 'driver_sessions', sessionId), {
+      status: 'Completed',
+      endTime: now.toISOString(),
+      punchOutTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      durationMinutes: durationMins,
+      finalLat: currentCoords?.lat || null,
+      finalLng: currentCoords?.lng || null,
+      updatedAt: now.toISOString()
+    }, { merge: true }).catch(err => console.warn("Driver session end write notice:", err));
+
+    // 2. Sync to per-tenant driver_status subcollection
     setDoc(doc(db, 'businesses', bizId, 'driver_status', selectedBoyId), {
       status: 'Offline',
       isShiftActive: false,
       updatedAt: now.toISOString()
     }, { merge: true }).catch(err => console.warn("Per-tenant status punch out notice:", err));
 
+    // 3. Update driver_manifest
     setDoc(doc(db, 'businesses', bizId, 'driver_manifest', selectedBoyId), {
       status: 'Offline',
       isShiftActive: false,
       updatedAt: now.toISOString()
     }, { merge: true }).catch(err => console.warn("Per-tenant manifest punch out notice:", err));
 
+    // 4. Update staff document
     try {
       const boyDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
       await updateDoc(boyDocRef, {
         status: 'Offline',
+        isShiftActive: false,
         updatedAt: now.toISOString()
       });
     } catch (err) {
@@ -1047,7 +1134,7 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
-  // Mark Delivery Status
+  // Mark Delivery Status (Module 4 & 5)
   const handleToggleDelivered = async (stop: any) => {
     if (!bizId) return;
 
@@ -1061,17 +1148,18 @@ export const DriverPortal: React.FC = () => {
     const logKey = stop.logKey;
     const currentStatus = stop.isDelivered ? 'Pending' : 'Delivered';
     const now = new Date();
+    const hasReusableBox = isReusableBoxType(stop.primaryBoxType);
 
-    // 2. Reusable box status check: If marking as Delivered, rider MUST first update the returned box status!
-    if (currentStatus === 'Delivered') {
+    // 2. Reusable box status check: ONLY applies if customer has configured a REUSABLE container!
+    // If packaging is Disposable, bypass this check completely.
+    if (currentStatus === 'Delivered' && hasReusableBox) {
       const activeBoxStatus = deliveryLogs[logKey]?.boxStatus || stop.logRecord?.boxStatus;
-      const hasReusableBox = stop.primaryBoxType && stop.primaryBoxType !== 'None';
       
       const isBoxStatusRecorded = activeBoxStatus && 
         activeBoxStatus !== 'Pending' && 
         activeBoxStatus !== 'None';
 
-      if (hasReusableBox && !isBoxStatusRecorded) {
+      if (!isBoxStatusRecorded) {
         showToast("📦 Please update the returned box status (Clean, Unclean, Damaged, or Missing) below before marking this order as delivered!", stop.customer.id);
         return;
       }
@@ -1103,20 +1191,25 @@ export const DriverPortal: React.FC = () => {
         date: todayStr,
         customerId: stop.customer.id,
         customerName: stop.customer.name,
+        branchId: stop.customer.branchId || currentBoy?.branchId || '',
         deliveryBoyId: selectedBoyId,
         deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
         mealTime: selectedMeal,
         status: currentStatus,
         deliveredAt: currentStatus === 'Delivered' ? now.toISOString() : null,
-        reusableBoxEnabled: stop.customer.reusableBoxEnabled || false,
-        boxType: stop.customer.reusableBoxType || stop.primaryBoxType || 'None',
+        reusableBoxEnabled: hasReusableBox,
+        boxType: stop.primaryBoxType || 'Disposable',
         isDay2Plus: stop.isDay2Plus,
-        boxStatus: stop.logRecord?.boxStatus || (stop.customer.reusableBoxEnabled && stop.isDay2Plus ? 'Pending' : 'None'),
+        boxStatus: hasReusableBox 
+          ? (stop.logRecord?.boxStatus || 'Pending') 
+          : 'Disposable',
         boxNotes: stop.logRecord?.boxNotes || '',
+        currentLat: currentCoords?.lat || null,
+        currentLng: currentCoords?.lng || null,
         updatedAt: now.toISOString()
       }, { merge: true });
     } catch (err) {
-      console.warn("Direct delivery log write notice (synced to global logs):", err);
+      console.warn("Direct delivery log write notice:", err);
     }
   };
 
@@ -1843,7 +1936,7 @@ export const DriverPortal: React.FC = () => {
 
                   {/* Delivery Status Checkbox */}
                   {(() => {
-                    const hasReusableBox = primaryBoxType && primaryBoxType !== 'None';
+                    const hasReusableBox = isReusableBoxType(primaryBoxType);
                     const isBoxStatusRecorded = boxStatus && boxStatus !== 'Pending' && boxStatus !== 'None';
                     const isBlockedByShift = !isShiftActive;
                     const isBlockedByBox = !isDelivered && hasReusableBox && !isBoxStatusRecorded;
@@ -1987,7 +2080,7 @@ export const DriverPortal: React.FC = () => {
                     </a>
 
                     <a
-                      href={`https://wa.me/91${customer.mobile.replace(/\D/g, '')}?text=${encodeURIComponent(`Hi ${customer.name}, your ${selectedMeal} meal is arriving shortly from ScaleKitchen!`)}`}
+                      href={buildWhatsAppUrl(customer.mobile, getDeliveryArrivalMessage(customer.name, selectedMeal, businessName))}
                       target="_blank"
                       rel="noreferrer"
                       className="py-2 px-2.5 bg-green-500/20 hover:bg-green-500/30 text-green-300 border border-green-500/30 rounded-xl text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95"
@@ -1997,13 +2090,13 @@ export const DriverPortal: React.FC = () => {
                     </a>
                   </div>
                 </div>
-
-                {/* REUSABLE BOX RECOLLECTION / RETURN SECTION (Always accessible) */}
-                <div className={`mt-2.5 pt-2.5 border-t border-white/10 space-y-2 p-2.5 rounded-xl transition-all duration-300 ${
-                  highlightedStopId === customer.id 
-                    ? 'bg-amber-500/20 border-2 border-amber-400 ring-4 ring-amber-400/40 shadow-xl' 
-                    : ''
-                }`}>
+                {/* REUSABLE BOX RECOLLECTION / RETURN SECTION (Module 5: Only for Reusable Containers) */}
+                {isReusableApplicable ? (
+                  <div className={`mt-2.5 pt-2.5 border-t border-white/10 space-y-2 p-2.5 rounded-xl transition-all duration-300 ${
+                    highlightedStopId === customer.id 
+                      ? 'bg-amber-500/20 border-2 border-amber-400 ring-4 ring-amber-400/40 shadow-xl' 
+                      : ''
+                  }`}>
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1.5">
                       <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px]">
@@ -2118,6 +2211,14 @@ export const DriverPortal: React.FC = () => {
                     </p>
                   )}
                 </div>
+                ) : (
+                  <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      <Package size={13} className="text-slate-500" />
+                      <span>Disposable Packaging • No container recollection required</span>
+                    </span>
+                  </div>
+                )}
 
                 {/* LAST STOP: Direct Back to Branch Button inside stop card */}
                 {idx === stops.length - 1 && (

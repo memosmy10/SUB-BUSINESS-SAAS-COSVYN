@@ -86,6 +86,23 @@ export const deleteDriverCallable = httpsCallable<
   { success: boolean }
 >(functions, 'deleteDriver');
 
+// Phase 3: Server-side Payment Callables
+export const createRazorpayOrderCallable = httpsCallable<
+  { planId: string },
+  { orderId: string; amount: number; currency: string; keyId: string; planName: string }
+>(functions, 'createRazorpayOrder');
+
+export const verifyRazorpayPaymentCallable = httpsCallable<
+  { orderId?: string; paymentId: string; signature?: string },
+  { success: boolean; planExpiryDate?: string; planStatus?: string; alreadyProcessed?: boolean }
+>(functions, 'verifyRazorpayPayment');
+
+// Phase 3: Server-side Gemini AI Callable
+export const geminiGenerateCallable = httpsCallable<
+  { action: 'business_insights' | 'support_reply'; data?: any; customerQuery?: string },
+  { text: string }
+>(functions, 'geminiGenerate');
+
 /**
  * @deprecated Legacy shared session removed in Phase 1 security hardening.
  * Driver authentication is now handled via secure driverLogin callable returning custom tokens.

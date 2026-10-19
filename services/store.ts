@@ -170,6 +170,7 @@ export interface GlobalExpense {
   category: string;
   title: string;
   description?: string;
+  vendor?: string;
   paymentStatus: 'Paid' | 'Pending';
   paymentMethod: string;
   amount: number;
@@ -177,6 +178,26 @@ export interface GlobalExpense {
   createdAt?: string;
   updatedAt?: string;
 }
+
+/**
+ * Checks whether a configured box type represents a reusable box container.
+ * Returns false for disposable packaging (e.g. 'None', 'Disposable', paper trays, or empty).
+ */
+export const isReusableBoxType = (boxType?: string | null): boolean => {
+  if (!boxType) return false;
+  const normalized = boxType.trim().toLowerCase();
+  if (
+    normalized === 'none' ||
+    normalized === 'disposable' ||
+    normalized.includes('disposable') ||
+    normalized.includes('paper meal tray') ||
+    normalized === ''
+  ) {
+    return false;
+  }
+  return true;
+};
+
 
 // Fix: Added missing InventoryItem type used in Inventory.tsx
 export interface InventoryItem {

@@ -491,4 +491,62 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       }));
     });
   });
+
+  // =========================================================================
+  // PHASE 3: PAYMENT ORDERS & BILLING HISTORY SECURITY LOCKDOWN
+  // =========================================================================
+  describe('Phase 3: Payments & Billing Security Rules', () => {
+    it('Owner CANNOT write directly to billing_history (write blocked, only Cloud Functions Admin SDK can write)', async () => {
+      const ownerDb = testEnv.authenticatedContext('biz_a').firestore();
+      await assertFails(setDoc(doc(ownerDb, 'businesses/biz_a/billing_history/pay_fake_123'), {
+        amount: 999,
+        planName: 'COSVYN ONE (Monthly)',
+        status: 'Paid'
+      }));
+    });
+
+    it('Owner CAN read their own billing_history', async () => {
+      // Seed billing history via admin
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'businesses/biz_a/billing_history/pay_real_123'), {
+          amount: 999,
+          amountPaise: 99900,
+          planName: 'COSVYN ONE (Monthly)',
+          status: 'Paid'
+        });
+      });
+
+      const ownerDb = testEnv.authenticatedContext('biz_a').firestore();
+      await assertSucceeds(getDoc(doc(ownerDb, 'businesses/biz_a/billing_history/pay_real_123')));
+    });
+
+    it('Client CANNOT write to orders or processed_payments directly', async () => {
+      const ownerDb = testEnv.authenticatedContext('biz_a').firestore();
+      await assertFails(setDoc(doc(ownerDb, 'orders/order_fake_123'), {
+        amountPaise: 100,
+        bizId: 'biz_a'
+      }));
+      await assertFails(setDoc(doc(ownerDb, 'processed_payments/pay_fake_123'), {
+        status: 'fulfilled',
+        bizId: 'biz_a'
+      }));
+    });
+
+    it('Client CAN read their own order document', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'orders/order_biz_a_123'), {
+          bizId: 'biz_a',
+          amountPaise: 99900,
+          status: 'created'
+        });
+      });
+
+      const ownerDb = testEnv.authenticatedContext('biz_a').firestore();
+      await assertSucceeds(getDoc(doc(ownerDb, 'orders/order_biz_a_123')));
+
+      // Other owner cannot read biz_a order
+      const otherDb = testEnv.authenticatedContext('biz_b').firestore();
+      await assertFails(getDoc(doc(otherDb, 'orders/order_biz_a_123')));
+    });
+  });
 });

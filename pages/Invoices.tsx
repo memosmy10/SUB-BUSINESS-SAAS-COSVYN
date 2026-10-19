@@ -8,6 +8,7 @@ import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { handleRazorpayPayment } from '../services/razorpayService';
 import { formatDateDDMMYYYY } from '../services/store';
+import { getInvoiceShareMessage, buildWhatsAppUrl } from '../services/messageTemplates';
 
 type ThemeColor = 'black' | 'blue' | 'purple' | 'teal' | 'green' | 'amber' | 'orange' | 'red';
 
@@ -264,13 +265,48 @@ const Invoices = () => {
     }));
   };
 
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+
+  const handleDownloadPDF = (skipDeduct = false) => {
+    if (!checkCredits()) return false;
+    if (!invoiceRef.current) return false;
+    const element = invoiceRef.current;
+    const opt = {
+      margin: [10, 10, 10, 10],
+      filename: `${invoiceData.invoiceNo || 'Invoice'}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    try {
+      // @ts-ignore
+      window.html2pdf().from(element).set(opt).save();
+      if (!skipDeduct) deductCredit();
+      return true;
+    } catch (e) {
+      console.warn("PDF export err:", e);
+      return false;
+    }
+  };
+
   const handleWhatsAppShare = () => {
-    const msg = `*Invoice from ${invoiceData.from.company}*\n\n` +
-      `Invoice No: ${invoiceData.invoiceNo}\n` +
-      `Amount Due: ₹${totals.grandTotal.toLocaleString()}\n` +
-      `Due Date: ${formatDateDDMMYYYY(invoiceData.dueDate)}\n\n` +
-      `Thank you for your business!`;
-    const url = `https://wa.me/${sharePhone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`;
+    if (!checkCredits()) return;
+
+    // 1. Download PDF invoice directly to device so user can easily attach it
+    handleDownloadPDF(true);
+    deductCredit();
+
+    // 2. Format WhatsApp message informing client of invoice & attached PDF
+    const msg = getInvoiceShareMessage(
+      invoiceData.invoiceNo,
+      totals.grandTotal,
+      invoiceData.dueDate,
+      invoiceData.from.company,
+      true
+    );
+    const url = buildWhatsAppUrl(sharePhone, msg);
+    
+    setShareNotice("Invoice PDF downloaded! Attach it in the WhatsApp chat that opened.");
     window.open(url, '_blank');
   };
 
@@ -288,22 +324,6 @@ const Invoices = () => {
     window.location.href = `mailto:${shareEmail}?subject=${subject}&body=${body}`;
   };
 
-  const handleDownloadPDF = () => {
-    if (!checkCredits()) return;
-    if (!invoiceRef.current) return;
-    const element = invoiceRef.current;
-    const opt = {
-      margin: 10,
-      filename: `${invoiceData.invoiceNo}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-    // @ts-ignore
-    window.html2pdf().from(element).set(opt).save();
-    deductCredit();
-  };
-
   const handlePrint = () => {
     if (!checkCredits()) return;
     window.print();
@@ -314,30 +334,16 @@ const Invoices = () => {
     if (!currentUser || !businessData) return;
     
     handleRazorpayPayment({
-      amount: plan.price,
+      planId: plan.id,
       planName: `Invoice Recharge - ${plan.name}`,
       userEmail: currentUser.email || '',
       userContact: businessData.mobile || '',
       businessName: businessData.businessName,
-      onSuccess: async (paymentId) => {
-        const docRef = doc(db, 'businesses', currentUser.uid);
+      onSuccess: async () => {
         const currentCredits = businessData.purchasedInvoiceCredits || 0;
         const newCredits = currentCredits + plan.count;
         
-        await updateDoc(docRef, { 
-          purchasedInvoiceCredits: newCredits,
-          lastRechargePlan: plan.name 
-        });
-
-        await addItem(currentUser.uid, 'billing_history', {
-          amount: plan.price,
-          date: new Date().toISOString(),
-          planName: `Invoice Recharge (${plan.name})`,
-          paymentId: paymentId,
-          type: 'Invoice Recharge',
-          status: 'Paid'
-        });
-
+        // Update local state (server already updated database and recorded billing history)
         setBusinessData({ ...businessData, purchasedInvoiceCredits: newCredits, lastRechargePlan: plan.name });
         setIsRechargeModalOpen(false);
         setIsLimitReached(false);
@@ -452,7 +458,7 @@ const Invoices = () => {
         
         {/* LEFT: INVOICE CANVAS */}
         <div ref={invoiceRef} className="xl:col-span-8 bg-white rounded-2xl border border-slate-200/90 shadow-glass overflow-hidden print-area">
-          <div className="p-8 md:p-12 space-y-6 min-w-[750px]">
+          <div className="p-6 sm:p-8 space-y-6 w-full max-w-[720px] mx-auto">
             
             {/* Header Row */}
             <div className="flex justify-between items-start">
@@ -478,8 +484,36 @@ const Invoices = () => {
                 <h2 className="text-5xl font-black text-slate-100 uppercase tracking-tighter mb-4">Invoice</h2>
                 <div className="space-y-1">
                   <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Invoice#</span><EditableInput value={invoiceData.invoiceNo} onChange={v => setInvoiceData({...invoiceData, invoiceNo: v})} className="text-right font-black text-slate-900 w-28" /></div>
-                  <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Date</span><input type="date" value={invoiceData.invoiceDate} onChange={e => setInvoiceData({...invoiceData, invoiceDate: e.target.value})} className="text-right text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer" /><span className="text-[10px] text-slate-500 font-mono font-bold">({formatDateDDMMYYYY(invoiceData.invoiceDate)})</span></div>
-                  <div className="flex items-center justify-end gap-3"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Due Date</span><input type="date" value={invoiceData.dueDate} onChange={e => setInvoiceData({...invoiceData, dueDate: e.target.value})} className="text-right text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer" /><span className="text-[10px] text-slate-500 font-mono font-bold">({formatDateDDMMYYYY(invoiceData.dueDate)})</span></div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Date</span>
+                    <div className="relative flex items-center">
+                      <span className="text-right text-xs font-bold text-slate-800 font-mono">
+                        {formatDateDDMMYYYY(invoiceData.invoiceDate)}
+                      </span>
+                      <input 
+                        type="date" 
+                        value={invoiceData.invoiceDate} 
+                        onChange={e => setInvoiceData({...invoiceData, invoiceDate: e.target.value})} 
+                        className="absolute inset-0 opacity-0 cursor-pointer no-print w-full h-full" 
+                        title="Click to edit date"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Due Date</span>
+                    <div className="relative flex items-center">
+                      <span className="text-right text-xs font-bold text-slate-800 font-mono">
+                        {formatDateDDMMYYYY(invoiceData.dueDate)}
+                      </span>
+                      <input 
+                        type="date" 
+                        value={invoiceData.dueDate} 
+                        onChange={e => setInvoiceData({...invoiceData, dueDate: e.target.value})} 
+                        className="absolute inset-0 opacity-0 cursor-pointer no-print w-full h-full" 
+                        title="Click to edit due date"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -811,6 +845,12 @@ const Invoices = () => {
                  <button onClick={() => setIsShareModalOpen(false)} className="text-slate-400 hover:text-red-500"><X size={24}/></button>
               </div>
               <div className="space-y-6">
+                 {shareNotice && (
+                   <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                      <Check size={16} className="text-emerald-600 shrink-0" />
+                      <span>{shareNotice}</span>
+                   </div>
+                 )}
                  <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-left block">WhatsApp Number</label>
                     <div className="flex gap-2">
@@ -818,8 +858,18 @@ const Invoices = () => {
                           <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
                           <input type="tel" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20" placeholder="e.g. 9876543210" value={sharePhone} onChange={(e) => setSharePhone(e.target.value)} />
                        </div>
-                       <button onClick={() => { if(checkCredits()) { handleWhatsAppShare(); deductCredit(); setIsShareModalOpen(false); } }} className="bg-emerald-500 hover:bg-emerald-600 text-white p-3 rounded-xl shadow-lg transition-all active:scale-90"><MessageSquare size={20} fill="currentColor" /></button>
+                       <button 
+                         onClick={handleWhatsAppShare} 
+                         className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg transition-all active:scale-90 flex items-center gap-1.5 font-bold text-xs"
+                         title="Download invoice and share via WhatsApp"
+                       >
+                         <MessageSquare size={16} fill="currentColor" />
+                         <span>Share & Attach</span>
+                       </button>
                     </div>
+                    <p className="text-[11px] text-slate-500 text-left font-medium leading-relaxed">
+                      💡 Clicking share automatically downloads the official PDF invoice onto your device and prepares the WhatsApp message so you can immediately attach the PDF in chat.
+                    </p>
                  </div>
                  <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-left block">Email Address</label>

@@ -11,8 +11,13 @@ import {
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
   REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber, formatDateDDMMYYYY
 } from '../services/store';
-import { doc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, collection, query, where, getDocs, writeBatch, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { 
+  getSubscriptionSummaryMessage, 
+  getCustomerPlanStatusMessage, 
+  buildWhatsAppUrl 
+} from '../services/messageTemplates';
 
 const StatCard = ({ title, value, textColor = "text-slate-900", icon: Icon }: any) => (
   <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass flex flex-col justify-between min-h-[110px] hover:shadow-glass-hover transition-all">
@@ -48,6 +53,19 @@ const Customers = () => {
   const { data: deliveryLogs = [] } = useStreamCollection<any>('delivery_logs');
 
   const isLoading = l1 || l2 || l3 || l4;
+  const [businessName, setBusinessName] = useState<string>('Your Kitchen');
+  const effectiveBizId = getTargetBusinessId(currentUser?.uid);
+
+  useEffect(() => {
+    if (!effectiveBizId) return;
+    const unsub = onSnapshot(doc(db, 'businesses', effectiveBizId), (snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.businessName) setBusinessName(d.businessName);
+      }
+    });
+    return () => unsub();
+  }, [effectiveBizId]);
 
   // Combine standard and custom box types from settings
   const availableBoxTypes = useMemo(() => {
@@ -893,7 +911,8 @@ const StatusFilter = ({ value, onChange }: { value: string, onChange: (val: stri
 };
 
 const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { customer: GlobalCustomer, plans: any[], deliveryLogs?: any[], onClose: () => void }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, businessData } = useAuth();
+  const businessName = businessData?.businessName;
   const [isLoggingBox, setIsLoggingBox] = useState(false);
   const [boxLogForm, setBoxLogForm] = useState({
     mealTime: (customer.activePlans?.[0]?.mealTime || 'Lunch') as 'Breakfast' | 'Lunch' | 'Dinner',
@@ -951,19 +970,15 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
   };
 
   const handleShareAll = () => {
-    let msg = `*Subscription Summary: ${customer.name}*\n\n`;
     const activePlans = customer.activePlans || [];
-    activePlans.forEach(p => {
-      const planConfig = plans.find(pc => pc.id === p.planId);
-      const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || [], p.pauses || []);
-      msg += `🍴 *${p.mealTime} Plan* ${p.isStarred ? '⭐ (Spl Req)' : ''}\nPlan: ${p.planName}\nExpiry: ${formatDateDDMMYYYY(p.endDate)}\nDeliveries Left: ${left}\n\n`;
-    });
-    if (customer.notes) msg += `📝 Notes: ${customer.notes}\n\n`;
-    if (customer.locationLink) msg += `📍 Location: ${customer.locationLink}\n\n`;
-    if (customer.deliveryCharges && Number(customer.deliveryCharges) > 0) msg += `🚚 Delivery: ₹${customer.deliveryCharges}\n`;
-    if (customer.discount && Number(customer.discount) > 0) msg += `🏷️ Discount Applied: ₹${customer.discount} OFF\n`;
-    msg += `📍 Address: ${customer.address}\n💰 Total Pending: ₹${customer.pendingAmount}`;
-    window.open(`https://wa.me/${(customer.mobile || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const msg = getSubscriptionSummaryMessage(
+      customer,
+      activePlans,
+      plans,
+      calculateRemainingDeliveries,
+      businessName
+    );
+    window.open(buildWhatsAppUrl(customer.mobile, msg), '_blank');
   };
 
   const activePlans = customer.activePlans || [];
@@ -1244,7 +1259,8 @@ const CustomerExpansion = ({ customer, plans, deliveryLogs, onClose }: { custome
 };
 
 const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, isPast }: { plan: SubscribedPlan, planConfig: any, customer: GlobalCustomer, planIndex: number, allPlansConfig: any[], isPast?: boolean }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, businessData } = useAuth();
+  const businessName = businessData?.businessName;
   const [selectedDateToCount, setSelectedDateToCount] = useState<string | null>(null);
   const weekdays = planConfig?.weekdays || plan.weekdays || [1,2,3,4,5,6];
 
@@ -1349,8 +1365,18 @@ const PlanTimeline = ({ plan, planConfig, customer, planIndex, allPlansConfig, i
   const pending = Math.max(0, totalDays - delivered);
 
   const handleSharePlan = () => {
-    const msg = `*${plan.mealTime} Status - ScaleKitchen*\n\nHello ${customer.name},\nYour ${plan.mealTime} subscription (${plan.planName}) status:\n✅ Delivered: ${delivered}/${totalDays}\n⏳ Pending: ${pending}\n⏸ Paused: ${userPaused + branchPaused} days\n📅 Expiry: ${formatDateDDMMYYYY(plan.endDate)}\n\nThank you!`;
-    window.open(`https://wa.me/${(customer.mobile || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const msg = getCustomerPlanStatusMessage(
+      customer.name,
+      plan.mealTime,
+      plan.planName,
+      delivered,
+      totalDays,
+      pending,
+      userPaused + branchPaused,
+      plan.endDate,
+      businessName
+    );
+    window.open(buildWhatsAppUrl(customer.mobile, msg), '_blank');
   };
 
   return (
@@ -1496,7 +1522,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
      planId: '', 
      startDate: getTodayStr(),
      isStarred: false,
-     reusableBoxType: availableBoxTypes[1]?.name || 'Stainless Steel 3-Tier Dabba',
+     reusableBoxType: availableBoxTypes[0]?.name || 'None',
      boxTagOrNumber: '',
      boxDeposit: 0
    });
@@ -1504,7 +1530,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    const [isCustomPlanOpen, setIsCustomPlanOpen] = useState(false);
    const [customPlanForm, setCustomPlanForm] = useState({
      name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false,
-     reusableBoxType: availableBoxTypes[1]?.name || 'Stainless Steel 3-Tier Dabba',
+     reusableBoxType: availableBoxTypes[0]?.name || 'None',
      boxTagOrNumber: '',
      boxDeposit: 0
    });
@@ -1625,7 +1651,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
       setIsCustomPlanOpen(false);
       setCustomPlanForm({ 
         name: '', price: '', totalDeliveries: 26, weekdays: [1,2,3,4,5,6], mealTime: 'Lunch', quantity: 1, startDate: getTodayStr(), isStarred: false,
-        reusableBoxType: 'Stainless Steel 3-Tier Dabba', boxTagOrNumber: '', boxDeposit: 0 
+        reusableBoxType: availableBoxTypes[0]?.name || 'None', boxTagOrNumber: '', boxDeposit: 0 
       });
    };
 

@@ -4,6 +4,8 @@ import {
   UserCheck, Shield, Phone, Sparkles, Key, Mail, Building
 } from 'lucide-react';
 import { BranchManager } from '../services/store';
+import { useAuth } from '../contexts/AuthContext';
+import { getManagerPortalShareMessage, buildWhatsAppUrl } from '../services/messageTemplates';
 
 interface ShareManagerLinkModalProps {
   isOpen: boolean;
@@ -22,6 +24,7 @@ export const ShareManagerLinkModal: React.FC<ShareManagerLinkModalProps> = ({
   selectedManager,
   branches
 }) => {
+  const { businessData } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -37,8 +40,16 @@ export const ShareManagerLinkModal: React.FC<ShareManagerLinkModalProps> = ({
 
   const handleWhatsApp = (manager: BranchManager) => {
     const branchName = branches.find(b => b.id === manager.branchId)?.name || 'All Branches';
-    const msg = `Hello ${manager.name}! 👨‍🍳\n\nHere are your ScaleKitchen Manager Portal login credentials for ${branchName}:\n\n🔗 *Manager App Link:*\n${baseUrl}\n\n🔑 *Login Credentials:*\n• *Email:* ${manager.email}\n• *Password:* ${manager.password}\n\n📌 *Permissions Enabled:* ${manager.allowedPages?.length || 0} modules\n\nPlease log in to manage orders, inventory, and kitchen dispatch for your assigned branch.`;
-    window.open(`https://wa.me/${(manager.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const msg = getManagerPortalShareMessage(
+      manager.name,
+      branchName,
+      baseUrl,
+      manager.email,
+      manager.password,
+      manager.allowedPages?.length || 0,
+      businessData?.businessName
+    );
+    window.open(buildWhatsAppUrl(manager.mobile, msg), '_blank');
   };
 
   const activeManagerList = selectedManager ? [selectedManager] : managers;

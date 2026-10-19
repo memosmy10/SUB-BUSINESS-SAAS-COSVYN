@@ -10,20 +10,38 @@ import {
   getCustomerBoxHealth, getCustomerUncollectedBoxesCount, 
   BoxRecollectionStatus, getTodayStr, formatDateDDMMYYYY 
 } from '../services/store';
-import { doc, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { getReusableBoxReminderMessage, buildWhatsAppUrl } from '../services/messageTemplates';
 
 interface ReusableBoxTrackerProps {
   customers: GlobalCustomer[];
   currentUser: any;
   todayStr: string;
+  businessName?: string;
 }
 
 export const ReusableBoxTracker: React.FC<ReusableBoxTrackerProps> = ({
   customers,
   currentUser,
-  todayStr
+  todayStr,
+  businessName
 }) => {
+  const [internalBizName, setInternalBizName] = useState<string>(businessName || 'Your Kitchen');
+
+  React.useEffect(() => {
+    if (businessName) {
+      setInternalBizName(businessName);
+      return;
+    }
+    if (!currentUser?.uid) return;
+    const unsub = onSnapshot(doc(db, 'businesses', currentUser.uid), snap => {
+      if (snap.exists() && snap.data().businessName) {
+        setInternalBizName(snap.data().businessName);
+      }
+    });
+    return () => unsub();
+  }, [businessName, currentUser]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'All' | 'WithBoxes' | 'Overdue' | 'Issues'>('All');
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -149,8 +167,8 @@ export const ReusableBoxTracker: React.FC<ReusableBoxTrackerProps> = ({
 
   const handleSendReminder = (customer: any) => {
     const boxName = customer.boxType || 'Reusable Tiffin Box';
-    const msg = `Hello ${customer.name}! 👋\n\nGentle reminder from ScaleKitchen: You currently have *${customer.uncollectedCount} ${boxName}* with you.\n\nKindly hand it over to our delivery partner during today's meal delivery. Thank you for supporting eco-friendly packaging! 🍱🌿`;
-    window.open(`https://wa.me/${(customer.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+    const msg = getReusableBoxReminderMessage(customer.name, customer.uncollectedCount, boxName, internalBizName);
+    window.open(buildWhatsAppUrl(customer.mobile, msg), '_blank');
   };
 
   return (

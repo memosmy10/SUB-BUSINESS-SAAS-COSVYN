@@ -194,114 +194,35 @@ const OnboardingPayment = () => {
 
       if (alreadyClaimed) {
         // SECURITY GUARD: User has ALREADY activated a Free Trial previously!
-        // We MUST NOT calculate a new 30-day window!
-        if (daysLeft >= 0) {
-          // Still within the original 30-day trial period; restore the true expiry date without extending
-          await updateDoc(doc(db, 'businesses', uid), {
-            planName: 'Free Trial',
-            planStatus: 'Active',
-            planExpiryDate: trueExpiryDate,
-            trialStartDate: earliestOrigin,
-            trialOriginalStartDate: earliestOrigin,
-            trialExpiryDate: trueExpiryDate,
-            trialOriginalExpiryDate: trueExpiryDate,
-            trialClaimed: true,
-            updatedAt: new Date().toISOString()
-          });
-          navigate('/app/dashboard');
-          return;
-        } else {
-          // Trial has already elapsed (30 days are over)
-          await updateDoc(doc(db, 'businesses', uid), {
-            planStatus: 'Expired'
-          });
-          setIsTrialEligible(false);
-          setTrialError("Your one-time 30-day Free Trial has ended. Please subscribe to continue.");
-          setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0]?.id || 'monthly');
-          setActivating(false);
-          return;
-        }
+        setIsTrialEligible(false);
+        setTrialError("Your one-time Free Trial was already activated or has expired. Please subscribe to continue.");
+        setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0]?.id || 'monthly');
+        setActivating(false);
+        return;
       }
 
-      // 2. First-time brand new trial claim
+      // 2. First-time brand new trial claim via server callable (Cloud Functions Admin SDK)
       const email = currentData.email || businessData?.email || currentUser?.email || auth.currentUser?.email || '';
       const mobile = currentData.mobile || businessData?.mobile || '';
-      const businessName = currentData.businessName || businessData?.businessName || currentUser?.displayName || 'My Kitchen';
-      const ownerName = currentData.ownerName || businessData?.ownerName || currentUser?.displayName || '';
 
-      // 3. Save trial with tamper-proof trialClaimed flag and immutable trialStartDate
-      const docRef = doc(db, 'businesses', uid);
-      const trialDoc = {
-        ...currentData,
-        planName: 'Free Trial',
-        planStatus: 'Active',
-        planExpiryDate: trueExpiryDate,
-        trialClaimed: true,
-        trialStartDate: earliestOrigin,
-        trialOriginalStartDate: earliestOrigin,
-        trialExpiryDate: trueExpiryDate,
-        trialOriginalExpiryDate: trueExpiryDate,
-        ownerName: ownerName,
-        email: email,
-        mobile: mobile,
-        businessName: businessName,
-        category: currentData.category || businessData?.category || 'Tiffin Service',
-        updatedAt: new Date().toISOString(),
-        createdAt: currentData.createdAt || businessData?.createdAt || new Date().toISOString()
-      };
-
-      let success = false;
-      let lastErr: any = null;
-
-      try {
-        const res = await claimFreeTrialCallable({
-          bizId: uid,
-          mobile,
-          email
-        });
-        if (res.data?.success) {
-          trueExpiryDate = res.data.planExpiryDate || trueExpiryDate;
-          success = true;
-        }
-      } catch (callableErr: any) {
-        console.warn("claimFreeTrial callable notice:", callableErr);
-        try {
-          await setDoc(docRef, trialDoc, { merge: true });
-          success = true;
-        } catch (setErr) {
-          lastErr = callableErr?.message || setErr;
-        }
-      }
-
-      if (!success) {
-        throw lastErr || new Error("Could not activate free trial. Please check connection.");
-      }
-
-      // 4. Record trial claim permanently in trial_claims collection
-      recordFreeTrialClaim(uid, email, mobile, earliestOrigin).catch(claimErr => {
-        console.warn("Trial claim record notice:", claimErr);
+      const res = await claimFreeTrialCallable({
+        bizId: uid,
+        mobile,
+        email
       });
 
-      // 5. Add to billing history as "Trial" (non-blocking)
-      addItem(uid, 'billing_history', {
-        amount: 0,
-        date: new Date().toISOString(),
-        planName: 'Free Trial',
-        paymentId: 'TRIAL_ACTIVATION',
-        expiryDate: trueExpiryDate,
-        type: 'Trial',
-        status: 'Active'
-      }).catch(billingErr => {
-        console.warn("Billing history record notice:", billingErr);
-      });
+      if (!res.data?.success) {
+        throw new Error("Could not activate free trial on the server.");
+      }
 
-      // 6. Update local session cache so components immediately know the account is Active
+      // Update local session cache so components immediately know the account is Active
       try {
         const stored = localStorage.getItem('scalekitchen_auth_session');
         if (stored) {
           const parsed = JSON.parse(stored);
           parsed.planStatus = 'Active';
           parsed.planName = 'Free Trial';
+          parsed.planExpiryDate = res.data.planExpiryDate;
           parsed.trialClaimed = true;
           localStorage.setItem('scalekitchen_auth_session', JSON.stringify(parsed));
         }
@@ -318,51 +239,31 @@ const OnboardingPayment = () => {
     }
   };
 
-  const activateSubscription = async (paymentId: string, plan: any, amountPaid: number) => {
+  const activateSubscription = async (paymentId: string, plan: any, result: any) => {
     const uid = getActiveUid();
     if (!uid) return;
     setActivating(true);
 
     try {
-      // 1. Calculate Expiry Date based on plan duration
-      const now = new Date();
-      now.setMonth(now.getMonth() + plan.durationMonths);
-      const newExpiryDate = now.toISOString().split('T')[0];
+      // Server already computed expiry and wrote planName, planStatus, planExpiryDate, lastPaymentId & billing_history
+      // Update local session cache immediately
+      try {
+        const stored = localStorage.getItem('scalekitchen_auth_session');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          parsed.planStatus = 'Active';
+          parsed.planName = `COSVYN ONE (${plan.label})`;
+          if (result?.planExpiryDate) parsed.planExpiryDate = result.planExpiryDate;
+          localStorage.setItem('scalekitchen_auth_session', JSON.stringify(parsed));
+        }
+      } catch (e) {}
 
-      const email = businessData?.email || currentUser?.email || auth.currentUser?.email || '';
-      const mobile = businessData?.mobile || '';
-
-      // 2. Update Firestore immediately with setDoc merge
-      const docRef = doc(db, 'businesses', uid);
-      await setDoc(docRef, {
-        planName: `COSVYN ONE (${plan.label})`,
-        planStatus: 'Active',
-        planExpiryDate: newExpiryDate,
-        lastPaymentId: paymentId,
-        email: email,
-        mobile: mobile,
-        businessName: businessData?.businessName || 'My Kitchen',
-        updatedAt: new Date().toISOString(),
-        createdAt: businessData?.createdAt || new Date().toISOString()
-      }, { merge: true });
-
-      // 3. Add to Billing History (CRITICAL FIX: This ensures it shows on Profile)
-      await addItem(uid, 'billing_history', {
-        amount: amountPaid,
-        date: new Date().toISOString(),
-        planName: `COSVYN ONE (${plan.label})`,
-        paymentId: paymentId,
-        expiryDate: newExpiryDate,
-        type: 'Activation',
-        status: 'Paid'
-      });
-
-      // 4. Navigate to Dashboard
+      // Navigate to Dashboard
       navigate('/app/dashboard');
     } catch (error) {
-      console.error("Activation Failed:", error);
-      alert("Payment successful but activation failed. Please contact support.");
-      setActivating(false);
+      console.error("Activation Completion Failed:", error);
+      alert("Subscription activated on server. Redirecting to dashboard...");
+      navigate('/app/dashboard');
     }
   };
 
@@ -372,8 +273,6 @@ const OnboardingPayment = () => {
     const selectedPlan = plans.find(p => p.id === selectedPlanId);
     if (!selectedPlan) return;
 
-    const amount = calculateEffectivePrice(selectedPlan.price, offer);
-
     // Fetch user details for prefill if needed (optional, using auth defaults)
     const email = currentUser.email || "";
     const mobile = ""; 
@@ -381,16 +280,16 @@ const OnboardingPayment = () => {
     setLoading(true);
 
     handleRazorpayPayment({
-      amount: amount,
+      planId: selectedPlan.id,
       planName: selectedPlan.label,
       userEmail: email,
       userContact: mobile,
       businessName: currentUser.displayName || "Business Owner",
-      onSuccess: (paymentId) => {
+      onSuccess: (result: any) => {
         setLoading(false);
-        activateSubscription(paymentId, selectedPlan, amount);
+        activateSubscription(result.paymentId, selectedPlan, result);
       },
-      onFailure: (error) => {
+      onFailure: (error: any) => {
         setLoading(false);
         console.log("Payment Cancelled/Failed", error);
       }

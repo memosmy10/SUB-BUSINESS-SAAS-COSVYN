@@ -108,6 +108,26 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // PHASE 3: PAYMENT ORDERS & SECRETS (Cloud Functions Admin SDK ONLY)
+    // =========================================================================
+
+    // Orders collection: read-only for order owner or admin, writeable only by Admin/Cloud Functions
+    match /orders/{orderId} {
+      allow read: if isAdmin() || (request.auth != null && resource.data.bizId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    // Processed payments: idempotency lock for webhooks and callables (Functions Admin SDK ONLY)
+    match /processed_payments/{paymentId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Gemini rate limits: internal to Cloud Functions
+    match /gemini_rate_limits/{uid} {
+      allow read, write: if isAdmin();
+    }
+
+    // =========================================================================
     // MULTI-TENANT BUSINESS DATA (Tenant Path: /businesses/{userId}/**)
     // =========================================================================
 
@@ -253,11 +273,14 @@ service cloud.firestore {
       match /payments/{paymentId} {
         allow read, write: if isOwner(userId) || isAdmin();
       }
+      // Phase 3: Client write access to billing_history is revoked.
+      // Only Cloud Functions using Admin SDK (and Super Admins) may write billing_history.
       match /billing_history/{docId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isAdmin();
       }
       match /expenses/{expenseId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
       match /inventory/{itemId} {
         allow read, write: if isOwner(userId) || isAdmin();

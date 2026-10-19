@@ -4,9 +4,9 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid 
 } from 'recharts';
-import { Plus, Receipt, Loader2, X, Trash2, ShoppingBag, Edit2, Store, Download, Calendar, ChevronDown } from 'lucide-react';
+import { Plus, Receipt, Loader2, X, Trash2, ShoppingBag, Edit2, Store, Download, Calendar, ChevronDown, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem, deleteItem } from '../services/dbService';
+import { useStreamCollection, addItem, updateItem, deleteItem, getTargetBusinessId } from '../services/dbService';
 import { GlobalExpense, ExpenseItem, formatDateDDMMYYYY } from '../services/store';
 
 const EXPENSE_CATEGORIES = ['Food', 'Salaries', 'Packaging', 'Rent', 'Marketing', 'Transportation', 'Others'];
@@ -48,6 +48,31 @@ const Expenses = () => {
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [expenses]);
 
+  // Summary KPI Calculations
+  const totalLifetimeOutflow = useMemo(() => {
+    return expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  }, [expenses]);
+
+  const currentMonthOutflow = useMemo(() => {
+    const now = new Date();
+    const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return expenses
+      .filter(e => e.date?.startsWith(currentMonthPrefix))
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  }, [expenses]);
+
+  const foodPurchases = useMemo(() => {
+    return expenses
+      .filter(e => e.category === 'Food')
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  }, [expenses]);
+
+  const pendingBills = useMemo(() => {
+    return expenses
+      .filter(e => e.paymentStatus === 'Pending')
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  }, [expenses]);
+
   // Derived Data
   const filteredExpenses = useMemo(() => {
     return expenses.filter(e => {
@@ -87,7 +112,7 @@ const Expenses = () => {
     if (filteredExpenses.length === 0) return alert("No expenses to export.");
 
     // CSV Header
-    const headers = ["Date", "Branch", "Category", "Title", "Amount", "Status", "Method", "Description", "Items Count"];
+    const headers = ["Date", "Branch", "Category", "Title", "Vendor", "Amount", "Status", "Method", "Description", "Items Count"];
     
     // CSV Rows
     const rows = filteredExpenses.map(e => {
@@ -97,6 +122,7 @@ const Expenses = () => {
         `"${branchName}"`,
         `"${e.category}"`,
         `"${e.title}"`,
+        `"${e.vendor || ''}"`,
         e.amount,
         `"${e.paymentStatus}"`,
         `"${e.paymentMethod}"`,
@@ -117,29 +143,89 @@ const Expenses = () => {
     document.body.removeChild(link);
   };
 
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const handleAddOrEditExpense = async (data: any) => {
-    if(!currentUser) return;
-    if (editingExpense) {
-        await updateItem(currentUser.uid, 'expenses', editingExpense.id, data);
-    } else {
-        await addItem(currentUser.uid, 'expenses', data);
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz) {
+      setSaveError("No active business account found. Please log in again.");
+      return;
     }
-    setIsModalOpen(false);
-    setEditingExpense(null);
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      // Clean and sanitize all fields (CRITICAL: Firestore rejects undefined values)
+      const cleanData: any = {
+        branchId: data.branchId || branches[0]?.id || 'main',
+        date: data.date || new Date().toISOString().split('T')[0],
+        category: data.category || 'Food',
+        title: String(data.title || '').trim(),
+        vendor: String(data.vendor || '').trim(),
+        description: String(data.description || '').trim(),
+        amount: Math.max(0, Number(data.amount) || 0),
+        paymentStatus: data.paymentStatus || 'Paid',
+        paymentMethod: data.paymentMethod || 'UPI',
+        items: Array.isArray(data.items) && data.items.length > 0
+          ? data.items.map((it: any) => ({
+              name: String(it.name || '').trim(),
+              quantity: Number(it.quantity) || 1,
+              unit: String(it.unit || 'kg'),
+              amount: Number(it.amount) || 0
+            }))
+          : [],
+        updatedAt: new Date().toISOString()
+      };
+
+      if (!cleanData.title) {
+        throw new Error("Expense title / purpose is required.");
+      }
+      if (cleanData.amount <= 0) {
+        throw new Error("Total amount must be greater than ₹0.");
+      }
+
+      if (editingExpense) {
+        await updateItem(effectiveBiz, 'expenses', editingExpense.id, cleanData);
+      } else {
+        cleanData.createdAt = new Date().toISOString();
+        await addItem(effectiveBiz, 'expenses', cleanData);
+      }
+
+      setIsModalOpen(false);
+      setEditingExpense(null);
+      setSaveError(null);
+    } catch (err: any) {
+      console.error("Expense save failed:", err);
+      const cleanMsg = (err?.message || "Failed to save expense. Please check connection.")
+        .replace(/^Firebase:\s*/i, '')
+        .trim();
+      setSaveError(cleanMsg);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDeleteExpense = async (id: string) => {
-    if(!currentUser || !window.confirm("Delete this expense record?")) return;
-    await deleteItem(currentUser.uid, 'expenses', id);
+    const effectiveBiz = getTargetBusinessId(currentUser?.uid);
+    if (!effectiveBiz || !window.confirm("Delete this expense record?")) return;
+    try {
+      await deleteItem(effectiveBiz, 'expenses', id);
+    } catch (err: any) {
+      alert("Failed to delete expense: " + err.message);
+    }
   };
 
   const openAddModal = () => {
      setEditingExpense(null);
+     setSaveError(null);
      setIsModalOpen(true);
   };
 
   const openEditModal = (expense: GlobalExpense) => {
      setEditingExpense(expense);
+     setSaveError(null);
      setIsModalOpen(true);
   };
 
@@ -210,6 +296,65 @@ const Expenses = () => {
         </div>
       </div>
 
+      {/* 4 Summary KPI Metric Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Lifetime Outflow */}
+        <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Lifetime Outflow</span>
+            <div className="w-8 h-8 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
+              <Receipt size={16} />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-display text-slate-900">
+            ₹{totalLifetimeOutflow.toLocaleString('en-IN')}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 font-medium">{expenses.length} total entries recorded</p>
+        </div>
+
+        {/* Card 2: This Month */}
+        <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">This Month</span>
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <Calendar size={16} />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-display text-slate-900">
+            ₹{currentMonthOutflow.toLocaleString('en-IN')}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 font-medium">Outflow for current calendar month</p>
+        </div>
+
+        {/* Card 3: Food & Groceries */}
+        <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Food & Ingredients</span>
+            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <ShoppingBag size={16} />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-display text-slate-900">
+            ₹{foodPurchases.toLocaleString('en-IN')}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 font-medium">Raw ingredients & grocery spend</p>
+        </div>
+
+        {/* Card 4: Pending Bills */}
+        <div className="glass-card p-4 sm:p-5 rounded-2xl border border-white/80 shadow-glass">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pending Bills</span>
+            <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+              <AlertCircle size={16} />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-display text-slate-900">
+            ₹{pendingBills.toLocaleString('en-IN')}
+          </div>
+          <p className="text-[10px] text-rose-500 mt-1 font-medium">Unsettled vendor & supplier bills</p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
          {/* Category Breakdown */}
          <div className="glass-card p-6 rounded-2xl border border-white/80 shadow-glass h-80 flex flex-col">
@@ -253,7 +398,14 @@ const Expenses = () => {
                {filteredExpenses.map((e: any, i) => (
                   <div key={i} className="flex justify-between items-center py-2.5 border-b border-slate-100 last:border-0 hover:bg-slate-50/70 px-2.5 -mx-2.5 rounded-xl transition-colors group cursor-default">
                      <div className="flex-1 min-w-0 pr-3">
-                        <div className="font-semibold text-slate-800 text-xs truncate">{e.title || e.category}</div>
+                        <div className="font-semibold text-slate-800 text-xs truncate flex items-center gap-2">
+                           <span className="truncate">{e.title || e.category}</span>
+                           {e.vendor && (
+                              <span className="bg-amber-50 text-amber-800 border border-amber-200/80 px-1.5 py-0.2 rounded text-[10px] font-semibold shrink-0">
+                                 Vendor: {e.vendor}
+                              </span>
+                           )}
+                        </div>
                         <div className="text-[11px] text-slate-400 font-medium mt-0.5 flex items-center gap-2">
                            <span>{formatDateDDMMYYYY(e.date)}</span>
                            {e.items && e.items.length > 0 && (
@@ -335,6 +487,8 @@ const Expenses = () => {
          <AddExpenseModal 
             branches={branches} 
             initialData={editingExpense} 
+            isSaving={isSaving}
+            saveError={saveError}
             onClose={() => setIsModalOpen(false)} 
             onSubmit={handleAddOrEditExpense} 
          />
@@ -345,15 +499,16 @@ const Expenses = () => {
 
 // --- MODALS ---
 
-const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
+const AddExpenseModal = ({ branches, initialData, isSaving, saveError, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState({
-      branchId: branches[0]?.id || '', 
-      date: new Date().toISOString().split('T')[0], 
-      category: 'Food', 
-      title: '', 
-      description: '',
-      paymentStatus: 'Paid',
-      paymentMethod: 'UPI',
+      branchId: initialData?.branchId || branches[0]?.id || '', 
+      date: initialData?.date || new Date().toISOString().split('T')[0], 
+      category: initialData?.category || 'Food', 
+      title: initialData?.title || '', 
+      vendor: initialData?.vendor || '',
+      description: initialData?.description || '',
+      paymentStatus: initialData?.paymentStatus || 'Paid',
+      paymentMethod: initialData?.paymentMethod || 'UPI',
       ...initialData,
       amount: initialData ? String(initialData.amount) : '', 
    });
@@ -361,6 +516,13 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
    // Line Items State
    const [items, setItems] = useState<ExpenseItem[]>(initialData?.items || []);
    const [newItem, setNewItem] = useState({ name: '', quantity: '', unit: 'kg', price: '' });
+
+   // Update branchId if branches load after modal is mounted
+   useEffect(() => {
+     if (!formData.branchId && branches.length > 0) {
+       setFormData(prev => ({ ...prev, branchId: branches[0].id }));
+     }
+   }, [branches, formData.branchId]);
 
    // Update total amount when items change
    useEffect(() => {
@@ -376,7 +538,7 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
       const quantity = parseFloat(newItem.quantity) || 1;
       
       setItems([...items, {
-         name: newItem.name,
+         name: newItem.name.trim(),
          quantity,
          unit: newItem.unit,
          amount
@@ -394,10 +556,33 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
 
    const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
+      
+      // Auto-include pending line item if name & price are typed
+      let finalItems = [...items];
+      if (newItem.name.trim() && newItem.price) {
+        const amt = parseFloat(newItem.price) || 0;
+        const qty = parseFloat(newItem.quantity) || 1;
+        if (amt > 0) {
+          finalItems.push({
+            name: newItem.name.trim(),
+            quantity: qty,
+            unit: newItem.unit,
+            amount: amt
+          });
+        }
+      }
+
+      const totalAmount = finalItems.length > 0
+        ? finalItems.reduce((sum, item) => sum + item.amount, 0)
+        : Number(formData.amount);
+
       onSubmit({
          ...formData,
-         amount: Number(formData.amount),
-         items: items.length > 0 ? items : undefined
+         title: formData.title.trim(),
+         vendor: formData.vendor.trim(),
+         description: formData.description.trim(),
+         amount: totalAmount,
+         items: finalItems.length > 0 ? finalItems : undefined
       });
    };
 
@@ -409,8 +594,15 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
                   <h3 className="text-xl font-bold font-display text-slate-900">{initialData ? 'Edit Expense Record' : 'Record New Expense'}</h3>
                   <p className="text-xs text-slate-500 mt-0.5">Log operational kitchen outlays and vendor bills</p>
                </div>
-               <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={20}/></button>
+               <button onClick={onClose} disabled={isSaving} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors disabled:opacity-50"><X size={20}/></button>
             </div>
+
+            {saveError && (
+               <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span className="font-semibold">{saveError}</span>
+               </div>
+            )}
             
             <form onSubmit={handleSubmit} className="space-y-5">
                
@@ -434,16 +626,21 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
                   </div>
                </div>
 
-               {/* Middle Section: Details */}
-               <div className="grid grid-cols-1 gap-3.5">
+               {/* Middle Section: Details with Vendor */}
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
                      <ModalLabel>Title / Purpose</ModalLabel>
                      <input required placeholder="e.g. Weekly Market Run / Fresh Produce" className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
                   </div>
                   <div>
-                     <ModalLabel>Description (Optional)</ModalLabel>
-                     <input placeholder="Supplier name, bill reference, or notes..." className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+                     <ModalLabel>Vendor / Supplier (Optional)</ModalLabel>
+                     <input placeholder="e.g. Metro Wholesale, Sharma Dairy..." className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.vendor} onChange={e => setFormData({...formData, vendor: e.target.value})} />
                   </div>
+               </div>
+
+               <div>
+                  <ModalLabel>Description (Optional)</ModalLabel>
+                  <input placeholder="Bill invoice number, payment reference, or kitchen notes..." className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-800 font-medium text-xs outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
                </div>
 
                {/* Line Items Section */}
@@ -555,9 +752,14 @@ const AddExpenseModal = ({ branches, initialData, onClose, onSubmit }: any) => {
                </div>
 
                <div className="grid grid-cols-2 gap-3 pt-3">
-                  <button type="button" onClick={onClose} className="py-2.5 border border-slate-200 rounded-xl font-medium text-slate-600 hover:bg-slate-50 transition-colors text-xs">Cancel</button>
-                  <button type="submit" className="py-2.5 bg-primary-600 text-white rounded-xl font-semibold shadow-sm hover:bg-primary-700 transition-all active:scale-95 text-xs">
-                     {initialData ? 'Update Expense' : 'Save Expense'}
+                  <button type="button" onClick={onClose} disabled={isSaving} className="py-2.5 border border-slate-200 rounded-xl font-medium text-slate-600 hover:bg-slate-50 transition-colors text-xs disabled:opacity-50">Cancel</button>
+                  <button 
+                     type="submit" 
+                     disabled={isSaving} 
+                     className="py-2.5 bg-primary-600 text-white rounded-xl font-semibold shadow-sm hover:bg-primary-700 transition-all active:scale-95 text-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                     {isSaving && <Loader2 size={14} className="animate-spin" />}
+                     <span>{isSaving ? 'Saving...' : initialData ? 'Update Expense' : 'Save Expense'}</span>
                   </button>
                </div>
             </form>

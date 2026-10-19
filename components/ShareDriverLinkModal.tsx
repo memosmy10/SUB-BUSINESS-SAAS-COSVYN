@@ -4,6 +4,8 @@ import {
   Truck, Shield, Phone, Sparkles, QrCode, Smartphone, Key, Lock 
 } from 'lucide-react';
 import { encodeDriverToken } from '../services/store';
+import { useAuth } from '../contexts/AuthContext';
+import { getDriverAppShareMessage, buildWhatsAppUrl } from '../services/messageTemplates';
 import { db } from '../services/firebase';
 import { doc, setDoc } from 'firebase/firestore';
 
@@ -22,6 +24,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
   staff,
   selectedBoy
 }) => {
+  const { businessData } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Driver authentication is securely handled server-side via custom tokens and setDriverPinCallable.
@@ -47,9 +50,8 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
   const handleWhatsApp = (boy: any) => {
     const boyUrl = getBoyUrl(boy);
-    const msg = `Hello ${boy.name}! 🚀\n\nHere is your ScaleKitchen Delivery App access link for today's deliveries:\n${boyUrl}\n\n📱 *Steps:*\n1. Open link on your phone browser\n2. Enter your registered mobile number and your security PIN\n3. Punch In to activate live route tracking and view today's meal stops!\n\nHave a safe delivery ride!`;
-    const cleanDigits = (boy.mobile || '').replace(/\D/g, '');
-    window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(msg)}`, '_blank');
+    const msg = getDriverAppShareMessage(boy.name, boyUrl, businessData?.businessName);
+    window.open(buildWhatsAppUrl(boy.mobile, msg), '_blank');
   };
 
   return (

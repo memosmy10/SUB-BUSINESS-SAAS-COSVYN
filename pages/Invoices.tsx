@@ -118,6 +118,7 @@ const Invoices = () => {
   // Credit Tracking State
   const [businessData, setBusinessData] = useState<any>(null);
   const [isLimitReached, setIsLimitReached] = useState(false);
+  const [rechargingPlanId, setRechargingPlanId] = useState<string | null>(null);
 
   const [sharePhone, setSharePhone] = useState('');
   const [shareEmail, setShareEmail] = useState('');
@@ -331,28 +332,53 @@ const Invoices = () => {
   };
 
   const handleRecharge = async (plan: any) => {
-    if (!currentUser || !businessData) return;
+    if (!currentUser) {
+      alert("Please log in to recharge invoice credits.");
+      return;
+    }
     
-    handleRazorpayPayment({
-      planId: plan.id,
-      planName: `Invoice Recharge - ${plan.name}`,
-      userEmail: currentUser.email || '',
-      userContact: businessData.mobile || '',
-      businessName: businessData.businessName,
-      onSuccess: async () => {
-        const currentCredits = businessData.purchasedInvoiceCredits || 0;
-        const newCredits = currentCredits + plan.count;
-        
-        // Update local state (server already updated database and recorded billing history)
-        setBusinessData({ ...businessData, purchasedInvoiceCredits: newCredits, lastRechargePlan: plan.name });
-        setIsRechargeModalOpen(false);
-        setIsLimitReached(false);
-        
-        // Trigger celebration
-        setShowCelebration(true);
-        setTimeout(() => setShowCelebration(false), 4500);
-      }
-    });
+    setRechargingPlanId(plan.id);
+
+    try {
+      await handleRazorpayPayment({
+        planId: plan.id,
+        planName: plan.name,
+        amount: plan.price,
+        creditsToAdd: plan.count,
+        userId: currentUser.uid,
+        userEmail: currentUser.email || '',
+        userContact: businessData?.mobile || '',
+        businessName: businessData?.businessName || 'Business Owner',
+        onSuccess: async (result: any) => {
+          setRechargingPlanId(null);
+          const currentCredits = businessData?.purchasedInvoiceCredits || 0;
+          const newCredits = currentCredits + plan.count;
+          
+          setBusinessData((prev: any) => ({
+            ...prev,
+            purchasedInvoiceCredits: newCredits,
+            lastRechargePlan: plan.name
+          }));
+          setIsRechargeModalOpen(false);
+          setIsLimitReached(false);
+          
+          // Trigger celebration
+          setShowCelebration(true);
+          setTimeout(() => setShowCelebration(false), 4500);
+        },
+        onFailure: (err: any) => {
+          setRechargingPlanId(null);
+          console.warn("Recharge cancelled or failed:", err);
+          if (err && err.message && !err.message.includes('cancelled') && !err.message.includes('dismissed')) {
+            alert(err.message || 'Payment could not be completed.');
+          }
+        }
+      });
+    } catch (e: any) {
+      setRechargingPlanId(null);
+      console.error("Recharge invocation error:", e);
+      alert(e?.message || 'Could not initiate payment gateway.');
+    }
   };
 
   const updateItemRow = (id: string, field: keyof LineItem, value: any) => setInvoiceData(prev => ({ ...prev, items: prev.items.map(item => item.id === id ? { ...item, [field]: value } : item) }));
@@ -756,7 +782,7 @@ const Invoices = () => {
                               plan.isGreen ? 'bg-emerald-600 text-white group-hover:bg-emerald-700' :
                               'bg-slate-900 text-white group-hover:bg-black'
                             }`}>
-                               Buy Pack
+                               {rechargingPlanId === plan.id ? 'Processing...' : 'Buy Pack'}
                             </button>
                          </div>
                       </div>

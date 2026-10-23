@@ -1,6 +1,6 @@
 
 export interface SaasPlan {
-  id: 'Monthly' | '6 Months' | 'Yearly';
+  id: string;
   label: string;
   price: number;
   durationMonths: number;

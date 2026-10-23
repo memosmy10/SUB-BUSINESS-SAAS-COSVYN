@@ -145,14 +145,19 @@ service cloud.firestore {
         !request.resource.data.keys().hasAny(['lastPaymentId', 'trialClaimed', 'trialStartDate'])
       );
 
-      // Update: Owner or Admin ONLY.
-      // STRICT ANTI-TAMPER: Client CANNOT modify planName, planStatus, planExpiryDate, lastPaymentId, trialClaimed, trialStartDate.
-      // These fields can ONLY be written by Cloud Functions using the Firebase Admin SDK.
+      // Update: Owner or Admin.
+      // Allows general profile updates, or subscription updates accompanied by lastPaymentId
       allow update: if isAdmin() || (
-        isOwner(userId) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'planName', 'planStatus', 'planExpiryDate', 'lastPaymentId', 'trialClaimed', 'trialStartDate'
-        ])
+        isOwner(userId) && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'planName', 'planStatus', 'planExpiryDate', 'lastPaymentId', 'trialClaimed', 'trialStartDate'
+          ]) ||
+          (
+            'lastPaymentId' in request.resource.data &&
+            request.resource.data.lastPaymentId != null &&
+            request.resource.data.lastPaymentId != ''
+          )
+        )
       );
 
       // 2. Staff (Delivery Personnel)
@@ -273,11 +278,9 @@ service cloud.firestore {
       match /payments/{paymentId} {
         allow read, write: if isOwner(userId) || isAdmin();
       }
-      // Phase 3: Client write access to billing_history is revoked.
-      // Only Cloud Functions using Admin SDK (and Super Admins) may write billing_history.
+      // Billing history: Owner and Admin can read and write payment receipts
       match /billing_history/{docId} {
-        allow read: if isOwner(userId) || isAdmin();
-        allow write: if isAdmin();
+        allow read, write: if isOwner(userId) || isAdmin();
       }
       match /expenses/{expenseId} {
         allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();

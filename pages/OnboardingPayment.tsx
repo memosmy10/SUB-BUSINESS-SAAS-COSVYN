@@ -273,15 +273,18 @@ const OnboardingPayment = () => {
     const selectedPlan = plans.find(p => p.id === selectedPlanId);
     if (!selectedPlan) return;
 
-    // Fetch user details for prefill if needed (optional, using auth defaults)
     const email = currentUser.email || "";
-    const mobile = ""; 
+    const mobile = businessData?.mobile || ""; 
+    const effectivePrice = calculateEffectivePrice(selectedPlan.price, offer);
 
     setLoading(true);
 
     handleRazorpayPayment({
       planId: selectedPlan.id,
       planName: selectedPlan.label,
+      amount: effectivePrice,
+      durationMonths: selectedPlan.durationMonths,
+      userId: getActiveUid(),
       userEmail: email,
       userContact: mobile,
       businessName: currentUser.displayName || "Business Owner",
@@ -292,6 +295,9 @@ const OnboardingPayment = () => {
       onFailure: (error: any) => {
         setLoading(false);
         console.log("Payment Cancelled/Failed", error);
+        if (error && error.message && !error.message.includes('cancelled') && !error.message.includes('dismissed')) {
+          alert(error.message || 'Payment could not be completed.');
+        }
       }
     });
   };

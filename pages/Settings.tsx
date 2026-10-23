@@ -3,7 +3,7 @@ import {
   Plus, Trash2, X, Store, Truck, Calendar, Loader2, Edit2, Check, Package, 
   ShieldCheck, UserCheck, Image as ImageIcon, Upload, Link as LinkIcon, 
   Share2, Copy, ExternalLink, Shield, Key, Clock, Eye, EyeOff, Building, 
-  Users, CheckCircle2, ChevronRight, AlertCircle, RefreshCw
+  Users, CheckCircle2, ChevronRight, AlertCircle, RefreshCw, CreditCard
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamCollection, addItem, deleteItem, updateItem, setItem } from '../services/dbService';
@@ -14,6 +14,7 @@ import {
 import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
+import { getActiveRazorpayKeyId, setActiveRazorpayKeyId, handleRazorpayPayment } from '../services/razorpayService';
 
 /**
  * TEMPORARY MIGRATION FLAG:
@@ -123,6 +124,50 @@ const Settings = () => {
     }, (err) => console.warn("Error loading business logo in settings:", err));
     return () => unsub();
   }, [currentUser]);
+
+  // Razorpay Gateway Settings
+  const [razorpayKeyInput, setRazorpayKeyInput] = useState<string>('');
+  const [isSavingRzpKey, setIsSavingRzpKey] = useState(false);
+  const [rzpSaveSuccess, setRzpSaveSuccess] = useState(false);
+  const [isTestingGateway, setIsTestingGateway] = useState(false);
+
+  useEffect(() => {
+    setRazorpayKeyInput(getActiveRazorpayKeyId());
+  }, []);
+
+  const handleSaveRazorpayKey = () => {
+    setIsSavingRzpKey(true);
+    setActiveRazorpayKeyId(razorpayKeyInput.trim());
+    setTimeout(() => {
+      setIsSavingRzpKey(false);
+      setRzpSaveSuccess(true);
+      setTimeout(() => setRzpSaveSuccess(false), 3000);
+    }, 400);
+  };
+
+  const handleTestPaymentGateway = () => {
+    if (!currentUser) return;
+    setIsTestingGateway(true);
+    handleRazorpayPayment({
+      planId: 'mini',
+      planName: 'Gateway Verification Test (Mini Pack)',
+      amount: 10,
+      creditsToAdd: 1,
+      userId: currentUser.uid,
+      userEmail: currentUser.email || '',
+      businessName: businessName || 'ScaleKitchen Test',
+      onSuccess: () => {
+        setIsTestingGateway(false);
+        alert('🎉 Payment Gateway Test Successful! 1 invoice credit was added to your account.');
+      },
+      onFailure: (err) => {
+        setIsTestingGateway(false);
+        if (err && err.message && !err.message.includes('cancelled') && !err.message.includes('dismissed')) {
+          alert('Test Payment notice: ' + (err.message || 'Payment not completed.'));
+        }
+      }
+    });
+  };
 
   // Driver directory sync is now securely handled server-side via setDriverPinCallable and Cloud Functions.
 
@@ -1439,6 +1484,115 @@ const Settings = () => {
                   )}
                 </div>
               </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION: PAYMENT GATEWAY & RAZORPAY CONFIGURATION */}
+      <div className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-wrap gap-3 justify-between items-center bg-gradient-to-r from-blue-50/50 via-white to-indigo-50/30">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#0d40e6] text-white flex items-center justify-center shadow-xs">
+              <CreditCard size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold font-display text-base text-slate-900">Razorpay Payment Gateway</h2>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  razorpayKeyInput.trim().startsWith('rzp_live_')
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                    : razorpayKeyInput.trim().startsWith('rzp_test_')
+                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                    : razorpayKeyInput.trim()
+                    ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                    : 'bg-rose-100 text-rose-800 border border-rose-200'
+                }`}>
+                  {razorpayKeyInput.trim().startsWith('rzp_live_')
+                    ? '🟢 Razorpay Live Mode'
+                    : razorpayKeyInput.trim().startsWith('rzp_test_')
+                    ? '🟡 Razorpay Test Mode'
+                    : razorpayKeyInput.trim()
+                    ? '🟢 Key Configured'
+                    : '🔴 Key ID Required'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Powers real customer checkouts, Pay-Per-Invoice credit packs, and SaaS renewals.
+              </p>
+            </div>
+          </div>
+
+          {rzpSaveSuccess && (
+            <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full animate-in fade-in">
+              <CheckCircle2 size={14} /> Key Saved Successfully
+            </span>
+          )}
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            
+            {/* Left 2 Cols: Form & Controls */}
+            <div className="lg:col-span-2 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Razorpay API Key ID (Live / Test)
+                </label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={razorpayKeyInput} 
+                    placeholder="rzp_live_xxxxxxxxxxxx (or rzp_test_xxxxxxxxxxxx)"
+                    onChange={e => setRazorpayKeyInput(e.target.value)}
+                    className="flex-1 p-2.5 border border-slate-200 rounded-xl bg-slate-50/80 text-slate-900 text-xs font-mono focus:ring-2 focus:ring-[#0d40e6]/20 focus:border-[#0d40e6] outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveRazorpayKey}
+                    disabled={isSavingRzpKey}
+                    className="px-5 py-2.5 bg-[#0d40e6] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isSavingRzpKey ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    <span>{isSavingRzpKey ? 'Saving...' : 'Save Key'}</span>
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1.5">
+                  Saved securely for your browser session. Every checkout immediately loads the official Razorpay payment modal.
+                </p>
+              </div>
+
+              {/* Gateway Actions */}
+              <div className="pt-2 flex flex-wrap gap-3 items-center">
+                <button
+                  type="button"
+                  onClick={handleTestPaymentGateway}
+                  disabled={isTestingGateway}
+                  className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-[#0d40e6] border border-blue-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {isTestingGateway ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  <span>Launch Razorpay Checkout Popup (₹10)</span>
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  Opens the official Razorpay Checkout modal to confirm your key is working.
+                </span>
+              </div>
+            </div>
+
+            {/* Right Col: Setup Guide */}
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                <ShieldCheck size={16} className="text-emerald-600" />
+                <span>Where to find your credentials:</span>
+              </div>
+              <ol className="text-[11px] text-slate-600 space-y-2 list-decimal list-inside leading-relaxed">
+                <li>Log in to <a href="https://dashboard.razorpay.com" target="_blank" rel="noreferrer" className="text-blue-600 font-semibold underline">dashboard.razorpay.com</a>.</li>
+                <li>Go to <strong>Settings &gt; API Keys</strong>.</li>
+                <li>Copy your <strong>Key ID</strong> (starts with <code>rzp_live_</code> or <code>rzp_test_</code>).</li>
+                <li>Paste it in the box to the left and click <strong>Save Key</strong>.</li>
+                <li><strong>Note on Key Secret:</strong> For your security, Razorpay Key Secrets must NEVER be stored in public browser files. The Key ID alone is all that is required for standard web checkouts!</li>
+              </ol>
             </div>
 
           </div>

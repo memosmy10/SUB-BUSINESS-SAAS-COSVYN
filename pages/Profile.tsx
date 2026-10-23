@@ -135,7 +135,6 @@ const Profile = () => {
     if (!currentUser) return;
     
     try {
-      // Server already atomically computed new expiry date, updated business profile, and recorded billing history
       const newExpiryDate = result?.planExpiryDate || profile.planExpiryDate;
 
       // Update local state immediately
@@ -143,15 +142,15 @@ const Profile = () => {
          ...prev,
          planStatus: 'Active',
          planName: `COSVYN ONE (${planName})`,
-         planExpiryDate: newExpiryDate
+         planExpiryDate: newExpiryDate,
+         lastPaymentId: paymentId
       }));
 
       setIsRenewModalOpen(false);
-      alert("Subscription Renewed Successfully!");
+      alert("🎉 Subscription Renewed Successfully! Your plan is now Active.");
 
     } catch (e) {
-      console.error("Renewal Update Failed:", e);
-      alert("Subscription renewed on server.");
+      console.error("Renewal UI Update Failed:", e);
       setIsRenewModalOpen(false);
     }
   };
@@ -509,16 +508,21 @@ const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
   const effectivePrice = selectedPlan ? calculateEffectivePrice(selectedPlan.price, offer) : 0;
 
+  const { currentUser } = useAuth();
+
   const initiatePayment = () => {
      if(!selectedPlan) return;
      setProcessing(true);
      
      handleRazorpayPayment({
         planId: selectedPlan.id,
-        planName: selectedPlan.label + " Renewal",
-        userEmail: profile.email,
-        userContact: profile.mobile,
-        businessName: profile.businessName,
+        planName: selectedPlan.label,
+        amount: effectivePrice,
+        durationMonths: selectedPlan.durationMonths,
+        userId: currentUser?.uid || profile?.id || '',
+        userEmail: profile.email || currentUser?.email || '',
+        userContact: profile.mobile || '',
+        businessName: profile.businessName || 'Business Owner',
         onSuccess: (result: any) => {
            setProcessing(false);
            onSuccess(result.paymentId, selectedPlan.durationMonths, selectedPlan.label, result);
@@ -526,6 +530,9 @@ const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
         onFailure: (err: any) => {
            console.log("Renewal Cancelled/Failed", err);
            setProcessing(false);
+           if (err && err.message && !err.message.includes('cancelled') && !err.message.includes('dismissed')) {
+             alert(err.message || 'Payment could not be completed.');
+           }
         }
      });
   };
@@ -569,7 +576,7 @@ const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
                          {isSelected && <div className="absolute top-2 right-2 text-primary-600"><CheckCircle size={16}/></div>}
                          <div className="text-sm font-bold text-slate-900 mb-1">{plan.label}</div>
                          <div className="text-2xl font-extrabold text-slate-900 mb-1">₹{price.toLocaleString()}</div>
-                         <div className="text-xs text-slate-500">{plan.durationMonths === 12 ? '/year' : plan.durationMonths === 6 ? '/6mo' : '/mo'}</div>
+                         <div className="text-xs text-slate-500">{plan.durationMonths === 12 ? '/year' : plan.durationMonths === 1 ? '/month' : `/${plan.durationMonths}mo`}</div>
                       </div>
                    )
                 })}

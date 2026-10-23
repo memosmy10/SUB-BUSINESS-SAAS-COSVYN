@@ -904,32 +904,58 @@ async function getServerPlanDetails(planId) {
     throw new HttpsError('invalid-argument', 'Free trial does not require Razorpay order. Use claimFreeTrial instead.');
   }
 
-  const basePlan = SERVER_SAAS_PLANS[normalized];
+  const db = admin.firestore();
+  let basePlan = null;
+  let offer = null;
+
+  // 1. Check real-time dynamic plans in global_settings/saas_config
+  try {
+    const configSnap = await db.collection('global_settings').doc('saas_config').get();
+    if (configSnap.exists) {
+      const configData = configSnap.data();
+      const dbPlans = configData.plans || [];
+      offer = configData.offer;
+
+      const matched = dbPlans.find(p => 
+        String(p.id).toLowerCase() === normalized ||
+        (p.label && p.label.toLowerCase() === normalized) ||
+        (p.durationMonths && `${p.durationMonths} months` === normalized)
+      );
+
+      if (matched) {
+        basePlan = {
+          id: matched.id,
+          label: matched.label,
+          pricePaise: Math.round(Number(matched.price) * 100),
+          durationMonths: Number(matched.durationMonths) || 1,
+          type: 'subscription'
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[Razorpay] saas_config fetch notice:', e.message);
+  }
+
+  // 2. Fallback to static server list if not in dynamic config
   if (!basePlan) {
-    throw new HttpsError('not-found', `Unknown plan: '${planId}'. Must be one of: Monthly, 6 Months, Yearly, or invoice packs.`);
+    basePlan = SERVER_SAAS_PLANS[normalized];
+  }
+
+  if (!basePlan) {
+    throw new HttpsError('not-found', `Unknown plan: '${planId}'.`);
   }
 
   let pricePaise = basePlan.pricePaise;
   let appliedDiscountPercent = 0;
 
-  // Check global_features/pricing for active special offer discount
-  try {
-    const db = admin.firestore();
-    const pricingSnap = await db.collection('global_features').doc('pricing').get();
-    if (pricingSnap.exists) {
-      const pricingData = pricingSnap.data();
-      const offer = pricingData?.offer;
-      if (offer && offer.isActive && offer.discountPercent > 0 && basePlan.type === 'subscription') {
-        const endsAt = offer.endsAt ? new Date(offer.endsAt) : null;
-        if (!endsAt || new Date() < endsAt) {
-          appliedDiscountPercent = Math.min(100, Math.max(0, Number(offer.discountPercent)));
-          const discountAmountPaise = Math.round((pricePaise * appliedDiscountPercent) / 100);
-          pricePaise = Math.max(100, pricePaise - discountAmountPaise); // Razorpay minimum order is ₹1 (100 paise)
-        }
-      }
+  // Apply offer discount if active
+  if (offer && offer.isActive && offer.discountPercent > 0 && basePlan.type === 'subscription') {
+    const endsAt = offer.endsAt ? new Date(offer.endsAt) : null;
+    if (!endsAt || new Date() < endsAt) {
+      appliedDiscountPercent = Math.min(100, Math.max(0, Number(offer.discountPercent)));
+      const discountAmountPaise = Math.round((pricePaise * appliedDiscountPercent) / 100);
+      pricePaise = Math.max(100, pricePaise - discountAmountPaise);
     }
-  } catch (e) {
-    console.warn('[Razorpay] Pricing document fetch notice:', e.message);
   }
 
   return {

@@ -147,9 +147,30 @@ export const useStreamCollection = <T>(collectionName: string, customBizId?: str
   return { data, loading };
 };
 
+/**
+ * Sanitizes object by recursively removing all `undefined` values.
+ * Firestore throws a runtime exception if any field value is `undefined`.
+ */
+export const sanitizeFirestoreData = (obj: any): any => {
+  if (obj === undefined) return null;
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeFirestoreData(item));
+  }
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      clean[key] = sanitizeFirestoreData(value);
+    }
+  }
+  return clean;
+};
+
 export const addItem = async (userId: string, collectionName: string, data: any) => {
   try {
     const targetUid = getTargetBusinessId(userId);
+    if (!targetUid) throw new Error("No target business ID found.");
+    
     let enrichedData = { ...data };
 
     // Auto-enforce branch restriction for branch managers
@@ -158,11 +179,15 @@ export const addItem = async (userId: string, collectionName: string, data: any)
       enrichedData.branchId = managerBranchId;
     }
 
-    const colRef = collection(db, 'businesses', targetUid, collectionName);
-    const docRef = await addDoc(colRef, {
-      ...enrichedData,
-      createdAt: new Date().toISOString()
+    const { id: _ignoreId, ...cleanData } = enrichedData;
+    const safePayload = sanitizeFirestoreData({
+      ...cleanData,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     });
+
+    const colRef = collection(db, 'businesses', targetUid, collectionName);
+    const docRef = await addDoc(colRef, safePayload);
     return docRef.id;
   } catch (error) {
     console.error(`Error adding to ${collectionName}:`, error);
@@ -173,6 +198,8 @@ export const addItem = async (userId: string, collectionName: string, data: any)
 export const updateItem = async (userId: string, collectionName: string, docId: string, data: any) => {
   try {
     const targetUid = getTargetBusinessId(userId);
+    if (!targetUid) throw new Error("No target business ID found.");
+
     let enrichedData = { ...data };
 
     const managerBranchId = getManagerBranchId();
@@ -180,11 +207,16 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
       enrichedData.branchId = managerBranchId;
     }
 
-    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
-    await updateDoc(docRef, {
-      ...enrichedData,
+    // Strip top-level 'id' to prevent storing duplicate/conflicting id fields in document body
+    const { id: _ignoreId, ...cleanData } = enrichedData;
+    const safePayload = sanitizeFirestoreData({
+      ...cleanData,
       updatedAt: new Date().toISOString()
     });
+
+    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
+    // Use setDoc with merge: true to avoid crashes if document state differs
+    await setDoc(docRef, safePayload, { merge: true });
   } catch (error) {
     console.error(`Error updating ${collectionName}/${docId}:`, error);
     throw error;
@@ -194,11 +226,16 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
 export const setItem = async (userId: string, collectionName: string, docId: string, data: any) => {
   try {
     const targetUid = getTargetBusinessId(userId);
-    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
-    await setDoc(docRef, {
-      ...data,
+    if (!targetUid) throw new Error("No target business ID found.");
+
+    const { id: _ignoreId, ...cleanData } = data;
+    const safePayload = sanitizeFirestoreData({
+      ...cleanData,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    });
+
+    const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
+    await setDoc(docRef, safePayload, { merge: true });
   } catch (error) {
     console.error(`Error setting ${collectionName}/${docId}:`, error);
     throw error;
@@ -208,6 +245,8 @@ export const setItem = async (userId: string, collectionName: string, docId: str
 export const deleteItem = async (userId: string, collectionName: string, docId: string) => {
   try {
     const targetUid = getTargetBusinessId(userId);
+    if (!targetUid) throw new Error("No target business ID found.");
+
     const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     await deleteDoc(docRef);
   } catch (error) {

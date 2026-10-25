@@ -2,10 +2,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   RefreshCw, Plus, Store, Search, Calendar, X, 
-  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download, Package
+  Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download, Package, UserCircle
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem, getTargetBusinessId } from '../services/dbService';
+import { useStreamCollection, addItem, updateItem, deleteItem, getTargetBusinessId } from '../services/dbService';
 import { 
   calculateEndDate, calculateRemainingDeliveries, shiftDateStr, isPlanActiveOnDate,
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
@@ -137,31 +137,57 @@ const Customers = () => {
 
   const handleSaveCustomer = async (data: any) => {
     const effectiveBiz = getTargetBusinessId(currentUser?.uid);
-    if (!effectiveBiz) return;
-    if (activeCustomer) {
-      await updateItem(effectiveBiz, 'customers', activeCustomer.id, data);
-    } else {
-      const newId = await addItem(effectiveBiz, 'customers', data);
-      if (data.amountPaid > 0) {
-        await addItem(effectiveBiz, 'payments', {
-          amount: data.amountPaid, customerId: newId, customerName: data.name,
-          date: new Date().toISOString(), type: 'Income'
-        });
-      }
+    if (!effectiveBiz) {
+      alert("No active business profile found. Please log in again.");
+      return;
     }
-    setIsAddModalOpen(false);
-    setActiveCustomer(null);
-    setIsRenewal(false);
+    try {
+      if (activeCustomer) {
+        await updateItem(effectiveBiz, 'customers', activeCustomer.id, data);
+      } else {
+        const newId = await addItem(effectiveBiz, 'customers', data);
+        if (data.amountPaid > 0) {
+          await addItem(effectiveBiz, 'payments', {
+            amount: data.amountPaid, customerId: newId, customerName: data.name,
+            date: new Date().toISOString(), type: 'Income'
+          });
+        }
+      }
+      setIsAddModalOpen(false);
+      setActiveCustomer(null);
+      setIsRenewal(false);
+    } catch (err: any) {
+      console.error("Failed to save customer:", err);
+      alert("Failed to save customer in database: " + (err.message || "Please check network and try again."));
+    }
   };
 
   const handleDeleteCustomer = async (id: string) => {
     const effectiveBiz = getTargetBusinessId(currentUser?.uid);
-    if (effectiveBiz && window.confirm('Delete customer and history?')) {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'businesses', effectiveBiz, 'customers', id));
-      const paySnap = await getDocs(query(collection(db, 'businesses', effectiveBiz, 'payments'), where('customerId', '==', id)));
-      paySnap.forEach(d => batch.delete(d.ref));
-      await batch.commit();
+    if (!effectiveBiz) {
+      alert("No active business profile found. Please log in again.");
+      return;
+    }
+    if (window.confirm('Are you sure you want to permanently delete this customer and their history?')) {
+      try {
+        // Direct, guaranteed permanent deletion from Firestore
+        await deleteItem(effectiveBiz, 'customers', id);
+
+        // Safe best-effort cleanup of linked payments
+        try {
+          const paySnap = await getDocs(query(collection(db, 'businesses', effectiveBiz, 'payments'), where('customerId', '==', id)));
+          if (!paySnap.empty) {
+            const batch = writeBatch(db);
+            paySnap.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+          }
+        } catch (payErr) {
+          console.warn('Payment cleanup note:', payErr);
+        }
+      } catch (err: any) {
+        console.error("Failed to delete customer:", err);
+        alert("Failed to delete customer from database: " + (err.message || "Unknown error"));
+      }
     }
   };
 
@@ -171,31 +197,36 @@ const Customers = () => {
     const cust = customers.find(c => c.id === customerId);
     if (!cust) return;
 
-    const currentPlans = cust.activePlans || [];
-    const updatedPlans = currentPlans.map((p, idx) => {
-      if (selectedPlanIndices.includes(idx)) {
+    try {
+      const currentPlans = cust.activePlans || [];
+      const updatedPlans = currentPlans.map((p, idx) => {
+        if (selectedPlanIndices.includes(idx)) {
+          const planConfig = plans.find(pc => pc.id === p.planId);
+          const weekdays = planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6];
+          const newPauses = [...(p.pauses || []), pauseEvent];
+          const newEndDate = calculateEndDate(p.startDate, planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26, weekdays, newPauses);
+          return { ...p, pauses: newPauses, endDate: newEndDate };
+        }
+        return p;
+      });
+
+      const maxEndDate = updatedPlans.reduce((max, p) => p.endDate > max ? p.endDate : max, updatedPlans[0].endDate);
+      const maxDaysLeft = updatedPlans.reduce((max, p) => {
         const planConfig = plans.find(pc => pc.id === p.planId);
-        const weekdays = planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6];
-        const newPauses = [...(p.pauses || []), pauseEvent];
-        const newEndDate = calculateEndDate(p.startDate, planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26, weekdays, newPauses);
-        return { ...p, pauses: newPauses, endDate: newEndDate };
-      }
-      return p;
-    });
+        const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6], p.pauses || []);
+        return left > max ? left : max;
+      }, 0);
 
-    const maxEndDate = updatedPlans.reduce((max, p) => p.endDate > max ? p.endDate : max, updatedPlans[0].endDate);
-    const maxDaysLeft = updatedPlans.reduce((max, p) => {
-      const planConfig = plans.find(pc => pc.id === p.planId);
-      const left = calculateRemainingDeliveries(p.endDate, planConfig?.weekdays || p.weekdays || [1,2,3,4,5,6], p.pauses || []);
-      return left > max ? left : max;
-    }, 0);
-
-    await updateItem(effectiveBiz, 'customers', customerId, { 
-      activePlans: updatedPlans, 
-      endDate: maxEndDate,
-      daysLeft: maxDaysLeft
-    });
-    setIsPauseModalOpen(false);
+      await updateItem(effectiveBiz, 'customers', customerId, { 
+        activePlans: updatedPlans, 
+        endDate: maxEndDate,
+        daysLeft: maxDaysLeft
+      });
+      setIsPauseModalOpen(false);
+    } catch (err: any) {
+      console.error("Failed to pause subscription in database:", err);
+      alert("Failed to save pause changes: " + (err.message || "Unknown error"));
+    }
   };
 
   const handlePauseBranch = async (branchId: string, timings: string[], pauseEvent: PauseEvent) => {
@@ -1680,8 +1711,13 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
       const isStarred = Boolean(formData.isStarred || activePlans.some(p => p.isStarred));
       const starredQuery = (formData.starredQuery || formData.notes || '').trim();
 
+      const assignedStaff = currentBranchStaff.find((s: any) => s.id === formData.deliveryBoyId);
+      const deliveryBoyName = assignedStaff ? assignedStaff.name : (formData.deliveryBoyName || '');
+
       onSubmit({ 
          ...formData, 
+         deliveryBoyId: formData.deliveryBoyId,
+         deliveryBoyName,
          discount,
          deliveryCharges,
          amountPaid: Number(formData.amountPaid) || 0,
@@ -1695,7 +1731,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
          startDate: primary.startDate, endDate: maxEnd, daysLeft: maxDaysLeft, isActive: true, planPrice: plansTotal, 
          pendingAmount, paymentStatus: pendingAmount > 0 ? 'Pending' : 'Paid',
          renewalCount: initialData ? (isRenewal ? (initialData.renewalCount || 0) + 1 : (initialData.renewalCount || 0)) : 0, 
-         routeOrder: initialData ? initialData.routeOrder : 999 
+         routeOrder: initialData ? (initialData.routeOrder ?? 999) : 999 
       });
    };
 
@@ -1711,7 +1747,25 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
             <form onSubmit={handleSubmit} className="space-y-6">
                <div className="grid grid-cols-2 gap-4">
                   <div><ModalLabel>Branch *</ModalLabel><select required className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-bold text-slate-700 text-sm" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>{branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-                  <div><ModalLabel>Staff (Delivery Boy) *</ModalLabel><select required className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-bold text-slate-700 text-sm" value={formData.deliveryBoyId} onChange={e => setFormData({...formData, deliveryBoyId: e.target.value})}><option value="">Select Staff</option>{currentBranchStaff.map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+                  <div>
+                    <ModalLabel>Staff (Delivery Boy) *</ModalLabel>
+                    <select 
+                      required 
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-bold text-slate-700 text-sm" 
+                      value={formData.deliveryBoyId} 
+                      onChange={e => {
+                        const selectedStaffMember = currentBranchStaff.find((s:any) => s.id === e.target.value);
+                        setFormData({
+                          ...formData, 
+                          deliveryBoyId: e.target.value,
+                          deliveryBoyName: selectedStaffMember ? selectedStaffMember.name : ''
+                        });
+                      }}
+                    >
+                      <option value="">Select Staff</option>
+                      {currentBranchStaff.map((s:any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
                </div>
                <div className="grid grid-cols-2 gap-4">
                   <div><ModalLabel>Name *</ModalLabel><input required className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-bold text-slate-700 text-sm" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
@@ -2253,14 +2307,40 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
 const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: any) => {
    const [formData, setFormData] = useState({ branchId: branches[0]?.id || '', customerId: '', mealTime: 'All', start: '', end: '' });
    const [selectedPlanIndices, setSelectedPlanIndices] = useState<number[]>([]);
+   const [customerSearch, setCustomerSearch] = useState('');
+   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+   const customerDropdownRef = useRef<HTMLDivElement>(null);
+
+   useEffect(() => {
+     const handleClickOutside = (e: MouseEvent) => {
+       if (customerDropdownRef.current && !customerDropdownRef.current.contains(e.target as Node)) {
+         setIsCustomerDropdownOpen(false);
+       }
+     };
+     document.addEventListener('mousedown', handleClickOutside);
+     return () => document.removeEventListener('mousedown', handleClickOutside);
+   }, []);
    
    const branchCustomers = (customers || []).filter((c:any) => c.branchId === formData.branchId);
    const selectedCustomer = branchCustomers.find((c:any) => c.id === formData.customerId);
    const activePlans = selectedCustomer?.activePlans || [];
 
    useEffect(() => {
-     if (!formData.customerId && branchCustomers.length > 0) setFormData(f => ({ ...f, customerId: branchCustomers[0].id }));
+     if (!formData.customerId && branchCustomers.length > 0) {
+       setFormData(f => ({ ...f, customerId: branchCustomers[0].id }));
+     }
    }, [formData.branchId, branchCustomers]);
+
+   const filteredBranchCustomers = useMemo(() => {
+     const q = customerSearch.toLowerCase().trim();
+     if (!q) return branchCustomers;
+     return branchCustomers.filter((c: any) => 
+       String(c.name || '').toLowerCase().includes(q) ||
+       String(c.mobile || '').includes(q) ||
+       String(c.address || '').toLowerCase().includes(q) ||
+       String(c.area || '').toLowerCase().includes(q)
+     );
+   }, [branchCustomers, customerSearch]);
 
    // Reset selection when mealTime changes
    useEffect(() => {
@@ -2292,8 +2372,101 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-               <div><ModalLabel>Branch</ModalLabel><select className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>{branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-               <div><ModalLabel>Customer</ModalLabel><select className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none" value={formData.customerId} onChange={e => setFormData({...formData, customerId: e.target.value})}>{branchCustomers.map((c:any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+               <div>
+                 <ModalLabel>Branch</ModalLabel>
+                 <select 
+                   className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none cursor-pointer focus:ring-2 focus:ring-primary-500" 
+                   value={formData.branchId} 
+                   onChange={e => {
+                     setFormData({...formData, branchId: e.target.value, customerId: ''});
+                     setCustomerSearch('');
+                   }}
+                 >
+                   {branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                 </select>
+               </div>
+
+               {/* Searchable Customer Dropdown */}
+               <div ref={customerDropdownRef} className="relative">
+                 <div className="flex items-center justify-between">
+                   <ModalLabel>Select Customer *</ModalLabel>
+                   <span className="text-[11px] font-bold text-slate-400 mb-1">{branchCustomers.length} customers</span>
+                 </div>
+                 <div 
+                   onClick={() => setIsCustomerDropdownOpen(!isCustomerDropdownOpen)}
+                   className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm outline-none flex items-center justify-between cursor-pointer hover:border-primary-500 transition-all shadow-xs"
+                 >
+                   <div className="flex items-center gap-2 truncate">
+                     <UserCircle size={18} className="text-primary-600 shrink-0" />
+                     {selectedCustomer ? (
+                       <span className="text-slate-800 truncate">
+                         {selectedCustomer.name} <span className="text-slate-400 font-normal">({selectedCustomer.mobile || 'No phone'})</span>
+                       </span>
+                     ) : (
+                       <span className="text-slate-400 font-normal">Select or Search Customer...</span>
+                     )}
+                   </div>
+                   <ChevronDown size={16} className={`text-slate-400 transition-transform ${isCustomerDropdownOpen ? 'rotate-180' : ''}`} />
+                 </div>
+
+                 {isCustomerDropdownOpen && (
+                   <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95">
+                     <div className="p-2.5 border-b border-slate-100 bg-slate-50/80">
+                       <div className="relative flex items-center">
+                         <Search size={15} className="absolute left-3 text-slate-400" />
+                         <input
+                           type="text"
+                           autoFocus
+                           placeholder="Type to search name, phone, area..."
+                           value={customerSearch}
+                           onChange={e => setCustomerSearch(e.target.value)}
+                           className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-primary-500"
+                         />
+                         {customerSearch && (
+                           <button 
+                             type="button" 
+                             onClick={() => setCustomerSearch('')}
+                             className="absolute right-2.5 p-0.5 text-slate-400 hover:text-slate-600"
+                           >
+                             <X size={14} />
+                           </button>
+                         )}
+                       </div>
+                     </div>
+                     <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 no-scrollbar">
+                       {filteredBranchCustomers.length === 0 ? (
+                         <div className="p-4 text-center text-xs font-medium text-slate-400">
+                           No customers match "{customerSearch}"
+                         </div>
+                       ) : (
+                         filteredBranchCustomers.map((c: any) => {
+                           const isSelected = c.id === formData.customerId;
+                           return (
+                             <button
+                               key={c.id}
+                               type="button"
+                               onClick={() => {
+                                 setFormData(prev => ({ ...prev, customerId: c.id }));
+                                 setIsCustomerDropdownOpen(false);
+                               }}
+                               className={`w-full px-3.5 py-2.5 text-left flex items-center justify-between gap-3 hover:bg-primary-50/60 transition-colors ${isSelected ? 'bg-primary-50 font-bold text-primary-900' : 'text-slate-700'}`}
+                             >
+                               <div className="truncate">
+                                 <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                                   {c.name}
+                                   {c.area && <span className="text-[10px] font-normal px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded-md">{c.area}</span>}
+                                 </div>
+                                 <div className="text-[11px] text-slate-400 font-medium">{c.mobile || 'No phone'} • {c.address || ''}</div>
+                               </div>
+                               {isSelected && <Check size={16} className="text-primary-600 shrink-0" />}
+                             </button>
+                           );
+                         })
+                       )}
+                     </div>
+                   </div>
+                 )}
+               </div>
             </div>
 
             <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 mb-8">

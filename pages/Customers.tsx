@@ -9,7 +9,8 @@ import { useStreamCollection, addItem, updateItem, deleteItem, getTargetBusiness
 import { 
   calculateEndDate, calculateRemainingDeliveries, shiftDateStr, isPlanActiveOnDate,
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
-  REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber, formatDateDDMMYYYY
+  REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber, formatDateDDMMYYYY,
+  getCustomerActiveDaysLeft
 } from '../services/store';
 import { doc, collection, query, where, getDocs, writeBatch, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -114,17 +115,17 @@ const Customers = () => {
     }
   }, [branches, filters.branchId]);
 
-  // REAL-TIME DATA ENRICHMENT: Calculate daysLeft dynamically based on current date
+  // REAL-TIME DATA ENRICHMENT: Calculate daysLeft dynamically based on canonical getCustomerActiveDaysLeft
   const enrichedCustomers = useMemo(() => {
     return customers.map(c => {
-      // Calculate max days left across all active plans
-      const realDaysLeft = (c.activePlans || []).reduce((max: number, p: any) => {
-        const pc = plans.find((pl: any) => pl.id === p.planId);
-        const weekdays = pc?.weekdays || p.weekdays || [1,2,3,4,5,6];
-        const left = calculateRemainingDeliveries(p.endDate, weekdays, p.pauses || []);
-        return Math.max(max, left);
-      }, 0);
-      return { ...c, realDaysLeft };
+      const status = getCustomerActiveDaysLeft(c, plans);
+      return { 
+        ...c, 
+        realDaysLeft: status.daysLeft,
+        isExpired: status.isExpired,
+        latestEndDate: status.endDate,
+        canonicalPlanName: status.activePlanName
+      };
     });
   }, [customers, plans]);
 
@@ -690,15 +691,15 @@ const Customers = () => {
                             </span>
                           </td>
                           <td className="p-3.5 text-center">
-                            {getTodayStr() > (c.endDate || '') ? (
+                            {c.isExpired ? (
                                <div className="inline-flex flex-col items-center">
                                  <span className="text-rose-600 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-md text-xs font-semibold">Expired</span>
-                                 {c.endDate && <span className="text-[9px] text-slate-400 font-mono mt-0.5">{formatDateDDMMYYYY(c.endDate)}</span>}
+                                 {(c.latestEndDate || c.endDate) && <span className="text-[9px] text-slate-400 font-mono mt-0.5">{formatDateDDMMYYYY(c.latestEndDate || c.endDate)}</span>}
                                </div>
                             ) : (
                                <div className="inline-flex flex-col items-center">
                                  <span className="text-primary-700 font-bold text-xs bg-primary-50 px-2 py-0.5 rounded-md border border-primary-200/50">{c.realDaysLeft} days</span>
-                                 {c.endDate && <span className="text-[9px] text-slate-400 font-mono mt-0.5">till {formatDateDDMMYYYY(c.endDate)}</span>}
+                                 {(c.latestEndDate || c.endDate) && <span className="text-[9px] text-slate-400 font-mono mt-0.5">till {formatDateDDMMYYYY(c.latestEndDate || c.endDate)}</span>}
                                </div>
                             )}
                           </td>
@@ -1548,6 +1549,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    });
 
    const [activePlans, setActivePlans] = useState<any[]>(isRenewal ? [] : (initialData?.activePlans || []));
+   const [isSubmitting, setIsSubmitting] = useState(false);
    const [newPlanForm, setNewPlanForm] = useState({ 
      mealTime: 'Lunch', 
      planId: '', 
@@ -1692,7 +1694,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    const finalPayable = Math.max(0, plansTotal + deliveryCharges - discount);
    const pendingAmount = Math.max(0, finalPayable - (Number(formData.amountPaid) || 0));
 
-   const handleSubmit = (e: React.FormEvent) => {
+   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (activePlans.length === 0) return alert("Add at least one plan.");
       const primary = activePlans[0];
@@ -1714,25 +1716,32 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
       const assignedStaff = currentBranchStaff.find((s: any) => s.id === formData.deliveryBoyId);
       const deliveryBoyName = assignedStaff ? assignedStaff.name : (formData.deliveryBoyName || '');
 
-      onSubmit({ 
-         ...formData, 
-         deliveryBoyId: formData.deliveryBoyId,
-         deliveryBoyName,
-         discount,
-         deliveryCharges,
-         amountPaid: Number(formData.amountPaid) || 0,
-         finalPayable,
-         isStarred,
-         starredQuery,
-         activePlans, 
-         pastPlans,
-         planId: primary.planId, 
-         mealTime: activePlans.map(p => p.mealTime), 
-         startDate: primary.startDate, endDate: maxEnd, daysLeft: maxDaysLeft, isActive: true, planPrice: plansTotal, 
-         pendingAmount, paymentStatus: pendingAmount > 0 ? 'Pending' : 'Paid',
-         renewalCount: initialData ? (isRenewal ? (initialData.renewalCount || 0) + 1 : (initialData.renewalCount || 0)) : 0, 
-         routeOrder: initialData ? (initialData.routeOrder ?? 999) : 999 
-      });
+      setIsSubmitting(true);
+      try {
+        await onSubmit({ 
+           ...formData, 
+           deliveryBoyId: formData.deliveryBoyId,
+           deliveryBoyName,
+           discount,
+           deliveryCharges,
+           amountPaid: Number(formData.amountPaid) || 0,
+           finalPayable,
+           isStarred,
+           starredQuery,
+           activePlans, 
+           pastPlans,
+           planId: primary.planId, 
+           mealTime: activePlans.map(p => p.mealTime), 
+           startDate: primary.startDate, endDate: maxEnd, daysLeft: maxDaysLeft, isActive: true, planPrice: plansTotal, 
+           pendingAmount, paymentStatus: pendingAmount > 0 ? 'Pending' : 'Paid',
+           renewalCount: initialData ? (isRenewal ? (initialData.renewalCount || 0) + 1 : (initialData.renewalCount || 0)) : 0, 
+           routeOrder: initialData ? (initialData.routeOrder ?? 999) : 999 
+        });
+      } catch (err) {
+        console.error("Save customer error:", err);
+      } finally {
+        setIsSubmitting(false);
+      }
    };
 
    return (
@@ -2295,8 +2304,21 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                   </div>
                </div>
                <div className="grid grid-cols-2 gap-4 pb-2">
-                  <button type="button" onClick={onClose} className="py-3 border-2 border-slate-100 rounded-xl font-bold text-slate-500 transition-colors hover:bg-slate-50">Cancel</button>
-                  <button type="submit" className="py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-[0.98]">Save Customer</button>
+                  <button type="button" onClick={onClose} disabled={isSubmitting} className="py-3 border-2 border-slate-100 rounded-xl font-bold text-slate-500 transition-colors hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+                  <button 
+                    type="submit" 
+                    disabled={isSubmitting} 
+                    className="py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        <span>Saving Customer...</span>
+                      </>
+                    ) : (
+                      <span>Save Customer</span>
+                    )}
+                  </button>
                </div>
             </form>
          </div>

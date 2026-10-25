@@ -29,10 +29,9 @@ import { auth } from './firebase';
 export const getManagerBranchId = (): string | null => {
   if (typeof window === 'undefined') return null;
   try {
-    const isManagerUrl = window.location.hash.includes('manager') || 
-                         window.location.pathname.includes('manager') || 
-                         window.location.search.includes('manager') ||
-                         localStorage.getItem('active_portal') === 'manager';
+    const hash = window.location.hash || '';
+    const pathname = window.location.pathname || '';
+    const isManagerUrl = hash.includes('/manager') || pathname.includes('/manager');
     
     if (isManagerUrl) {
       const explicitBranch = localStorage.getItem('manager_branch_id');
@@ -57,15 +56,21 @@ export const getManagerBranchId = (): string | null => {
  * Resolves the target business ID for CRUD operations.
  * If in manager portal, targets manager_biz_id.
  * If in driver portal, targets driver_biz_id.
- * Otherwise uses the provided userId or auth.currentUser.uid.
+ * Otherwise strictly uses the provided owner userId or auth.currentUser.uid.
  */
 export const getTargetBusinessId = (fallbackUserId?: string): string => {
   if (typeof window !== 'undefined') {
-    if (window.location.hash.includes('manager') || window.location.pathname.includes('manager') || localStorage.getItem('active_portal') === 'manager') {
+    const hash = window.location.hash || '';
+    const pathname = window.location.pathname || '';
+
+    // Only apply manager business override when actively inside the manager portal
+    if (hash.includes('/manager') || pathname.includes('/manager')) {
       const mgrBiz = localStorage.getItem('manager_biz_id');
       if (mgrBiz) return mgrBiz;
     }
-    if (window.location.hash.includes('driver') || window.location.pathname.includes('driver')) {
+
+    // Only apply driver business override when actively inside the driver portal
+    if (hash.includes('/driver') || pathname.includes('/driver')) {
       const drvBiz = localStorage.getItem('driver_biz_id');
       if (drvBiz) return drvBiz;
     }

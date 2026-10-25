@@ -832,3 +832,83 @@ export const decodeDriverToken = (token: string): {
   }
   return null;
 };
+
+/**
+ * UNIFIED CANONICAL CALCULATOR FOR CUSTOMER PLAN EXPIRATION & DAYS LEFT.
+ * Used by Customer List, Notifications, Delivery Dashboard, and WhatsApp alerts
+ * to guarantee 100% zero-discrepancy data consistency across the entire SaaS.
+ */
+export const getCustomerActiveDaysLeft = (
+  c: any,
+  plansConfig: any[] = []
+): { daysLeft: number; isExpired: boolean; endDate: string; activePlanName: string } => {
+  if (!c) return { daysLeft: 0, isExpired: true, endDate: '', activePlanName: 'No Plan' };
+  
+  const today = getTodayStr(); // Format: 'YYYY-MM-DD'
+  const activePlans = Array.isArray(c.activePlans) ? c.activePlans : [];
+
+  if (activePlans.length > 0) {
+    // 1. Find overall maximum endDate across all active plans
+    const latestEnd = activePlans.reduce((max: string, p: any) => {
+      const e = (p.endDate || '').split('T')[0];
+      return e > max ? e : max;
+    }, '');
+
+    // 2. If the latest end date is strictly in the past, customer is 100% EXPIRED
+    if (latestEnd && today > latestEnd) {
+      return {
+        daysLeft: 0,
+        isExpired: true,
+        endDate: latestEnd,
+        activePlanName: activePlans[0]?.planName || c.planName || 'Meal Plan'
+      };
+    }
+
+    // 3. Compute remaining deliveries across all active plans that haven't ended yet
+    let maxDeliveriesLeft = 0;
+    let primaryPlanName = '';
+
+    for (const p of activePlans) {
+      const pEnd = (p.endDate || '').split('T')[0];
+      if (pEnd && today > pEnd) continue; // Skip already expired individual plans
+
+      const pConfig = plansConfig.find((pl: any) => pl.id === p.planId);
+      const weekdays = pConfig?.weekdays || p.weekdays || [1, 2, 3, 4, 5, 6];
+      const deliveries = calculateRemainingDeliveries(p.endDate, weekdays, p.pauses || []);
+      
+      if (deliveries >= maxDeliveriesLeft) {
+        maxDeliveriesLeft = deliveries;
+        primaryPlanName = p.planName || primaryPlanName;
+      }
+    }
+
+    return {
+      daysLeft: maxDeliveriesLeft,
+      isExpired: false,
+      endDate: latestEnd,
+      activePlanName: primaryPlanName || activePlans[0]?.planName || c.planName || 'Meal Plan'
+    };
+  }
+
+  // Fallback for single flat plan on customer document
+  const custEnd = (c.endDate || '').split('T')[0];
+  if (!custEnd || today > custEnd) {
+    return {
+      daysLeft: 0,
+      isExpired: true,
+      endDate: custEnd || '',
+      activePlanName: c.planName || 'Meal Plan'
+    };
+  }
+
+  const pConfig = plansConfig.find((pl: any) => pl.id === c.planId);
+  const weekdays = pConfig?.weekdays || c.weekdays || [1, 2, 3, 4, 5, 6];
+  const deliveries = calculateRemainingDeliveries(c.endDate, weekdays, c.pauses || []);
+
+  return {
+    daysLeft: deliveries,
+    isExpired: false,
+    endDate: custEnd,
+    activePlanName: c.planName || 'Meal Plan'
+  };
+};

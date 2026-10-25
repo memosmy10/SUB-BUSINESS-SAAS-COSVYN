@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell, Legend, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { useStreamCollection } from '../services/dbService';
-import { calculateRemainingDeliveries, getTodayStr, isPlanActiveOnDate, formatDateDDMMYYYY } from '../services/store';
+import { calculateRemainingDeliveries, getTodayStr, isPlanActiveOnDate, formatDateDDMMYYYY, getCustomerActiveDaysLeft } from '../services/store';
 import { GlassmorphicDonutChart } from '../components/GlassmorphicDonutChart';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#6366f1'];
@@ -92,7 +92,8 @@ const Dashboard = () => {
     const unqCust = filteredCust.length;
     const activeCust = filteredCust.filter(c => {
       if (!c.isActive) return false;
-      return todayStr <= (c.endDate || '');
+      const status = getCustomerActiveDaysLeft(c, plans);
+      return !status.isExpired;
     }).length;
 
     let plansToday = 0;

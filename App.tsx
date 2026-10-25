@@ -45,7 +45,7 @@ import Contact from './pages/legal/Contact';
 import { 
   Menu, X, Zap, LogOut, Bell, AlertTriangle, Loader2, User, CheckCircle, Phone, MapPin, ArrowRight, MessageSquare
 } from 'lucide-react';
-import { getDaysDifference, calculateRemainingDeliveries } from './services/store';
+import { getDaysDifference, calculateRemainingDeliveries, getCustomerActiveDaysLeft } from './services/store';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ADMIN_EMAIL, isAdminEmail } from './services/adminStore';
 import { doc, onSnapshot, updateDoc, getDoc, deleteDoc, setDoc } from 'firebase/firestore';
@@ -348,44 +348,22 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
     });
   }, [currentUser?.uid, customers, plans, staff, branches, deliveryLogs, businessData]);
 
-  // FIX: SYNCED LIVE CALCULATION FOR NOTIFICATIONS BASED ON DATABASE AND LIVE PLAN DELIVERY COUNT
+  // FIX: CANONICAL UNIFIED CALCULATION FOR NOTIFICATIONS (ZERO DATA INCONSISTENCY)
   const expiringCustomers = React.useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-
     return (customers || [])
       .map((c: any) => {
-        let realDaysLeft = 0;
-        let determined = false;
-
-        // 1. If activePlans array is populated, compute remaining deliveries accurately
-        if (Array.isArray(c.activePlans) && c.activePlans.length > 0) {
-          const maxFromPlans = c.activePlans.reduce((max: number, p: any) => {
-            const planConfig = plans.find((pl: any) => pl.id === p.planId);
-            const weekdays = planConfig?.weekdays || p.weekdays || [1, 2, 3, 4, 5, 6];
-            const left = calculateRemainingDeliveries(p.endDate, weekdays, p.pauses || []);
-            return Math.max(max, left);
-          }, 0);
-          if (maxFromPlans > 0) {
-            realDaysLeft = maxFromPlans;
-            determined = true;
-          }
-        }
-
-        // 2. If not determined from activePlans, check customer's direct database daysLeft field
-        if (!determined && typeof c.daysLeft === 'number' && !isNaN(c.daysLeft)) {
-          realDaysLeft = c.daysLeft;
-          determined = true;
-        }
-
-        // 3. Fallback: check customer's endDate against today's date
-        if (!determined && c.endDate) {
-          const diff = getDaysDifference(today, c.endDate);
-          realDaysLeft = Math.max(0, diff);
-        }
-
-        return { ...c, realDaysLeft };
+        const status = getCustomerActiveDaysLeft(c, plans);
+        return {
+          ...c,
+          realDaysLeft: status.daysLeft,
+          isExpired: status.isExpired,
+          computedEndDate: status.endDate,
+          computedPlanName: status.activePlanName
+        };
       })
-      .filter((c: any) => c.isActive && c.realDaysLeft <= 10 && c.realDaysLeft >= 0)
+      // Strictly exclude customers whose plans have already expired in the past!
+      // Only show currently active customers whose plans are expiring between 10 to 0 days (0 days = ending today)
+      .filter((c: any) => c.isActive !== false && !c.isExpired && c.realDaysLeft <= 10 && c.realDaysLeft >= 0)
       .sort((a: any, b: any) => a.realDaysLeft - b.realDaysLeft);
   }, [customers, plans]);
 
@@ -534,8 +512,9 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
                             <p className="text-xs text-slate-500 mt-1">No customer meal plans expiring in the next 10 days.</p>
                           </div>
                         ) : expiringCustomers.map((cust: any) => {
-                          const customerPlan = plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Meal Plan';
-                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${customerPlan}) is scheduled to conclude on ${cust.endDate}. We would love to continue delivering fresh meals to you! Please reply to renew your plan.`;
+                          const customerPlan = cust.computedPlanName || plans.find((p:any) => p.id === cust.planId)?.name || 'Standard Meal Plan';
+                          const planConcludeDate = cust.computedEndDate || cust.endDate || '';
+                          const whatsappMsg = `Hello ${cust.name}, your meal subscription plan (${customerPlan}) is scheduled to conclude on ${planConcludeDate}. We would love to continue delivering fresh meals to you! Please reply to renew your plan.`;
                           const whatsappLink = `https://wa.me/${(cust.mobile || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`;
                           
                           return (

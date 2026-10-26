@@ -135,7 +135,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
 
             try {
-              await setPersistence(auth, inMemoryPersistence);
               const retryRes = await signInWithEmailAndPassword(auth, cleanEmail, pass);
               persistSession(retryRes.user);
               setCurrentUser(retryRes.user);
@@ -210,7 +209,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
 
             try {
-              await setPersistence(auth, inMemoryPersistence);
               const retryRes = await signInWithEmailAndPassword(auth, cleanEmail, pass);
               persistSession(retryRes.user);
               setCurrentUser(retryRes.user);

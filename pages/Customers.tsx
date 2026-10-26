@@ -5,7 +5,16 @@ import {
   Loader2, Edit, Trash2, Pause, Phone, ChevronDown, ChevronRight, MessageSquare, Receipt, Clock, CheckCircle, Info, CalendarDays, Share2, Calculator, Check, Star, AlertTriangle, Filter, Users2, MapPin, RotateCcw, Download, Package, UserCircle
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamCollection, addItem, updateItem, deleteItem, getTargetBusinessId } from '../services/dbService';
+import { 
+  useStreamCollection, 
+  addItem, 
+  updateItem, 
+  deleteItem, 
+  getTargetBusinessId,
+  addCustomerWithPaymentAtomic,
+  deleteCustomerAtomic,
+  pauseBranchAtomic
+} from '../services/dbService';
 import { 
   calculateEndDate, calculateRemainingDeliveries, shiftDateStr, isPlanActiveOnDate,
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
@@ -140,19 +149,13 @@ const Customers = () => {
     const effectiveBiz = getTargetBusinessId(currentUser?.uid);
     if (!effectiveBiz) {
       alert("No active business profile found. Please log in again.");
-      return;
+      throw new Error("No active business profile found.");
     }
     try {
       if (activeCustomer) {
         await updateItem(effectiveBiz, 'customers', activeCustomer.id, data);
       } else {
-        const newId = await addItem(effectiveBiz, 'customers', data);
-        if (data.amountPaid > 0) {
-          await addItem(effectiveBiz, 'payments', {
-            amount: data.amountPaid, customerId: newId, customerName: data.name,
-            date: new Date().toISOString(), type: 'Income'
-          });
-        }
+        await addCustomerWithPaymentAtomic(effectiveBiz, data, Number(data.amountPaid) || 0);
       }
       setIsAddModalOpen(false);
       setActiveCustomer(null);
@@ -160,6 +163,7 @@ const Customers = () => {
     } catch (err: any) {
       console.error("Failed to save customer:", err);
       alert("Failed to save customer in database: " + (err.message || "Please check network and try again."));
+      throw err;
     }
   };
 
@@ -171,20 +175,7 @@ const Customers = () => {
     }
     if (window.confirm('Are you sure you want to permanently delete this customer and their history?')) {
       try {
-        // Direct, guaranteed permanent deletion from Firestore
-        await deleteItem(effectiveBiz, 'customers', id);
-
-        // Safe best-effort cleanup of linked payments
-        try {
-          const paySnap = await getDocs(query(collection(db, 'businesses', effectiveBiz, 'payments'), where('customerId', '==', id)));
-          if (!paySnap.empty) {
-            const batch = writeBatch(db);
-            paySnap.forEach(d => batch.delete(d.ref));
-            await batch.commit();
-          }
-        } catch (payErr) {
-          console.warn('Payment cleanup note:', payErr);
-        }
+        await deleteCustomerAtomic(effectiveBiz, id);
       } catch (err: any) {
         console.error("Failed to delete customer:", err);
         alert("Failed to delete customer from database: " + (err.message || "Unknown error"));
@@ -235,7 +226,7 @@ const Customers = () => {
     if (!effectiveBiz) return;
     
     const affectedCustomers = customers.filter(c => c.branchId === branchId);
-    let updatedCount = 0;
+    const updates: Array<{ id: string; activePlans: any[]; endDate: string; daysLeft: number }> = [];
 
     for (const cust of affectedCustomers) {
       const currentPlans = cust.activePlans || [];
@@ -261,12 +252,22 @@ const Customers = () => {
           return left > max ? left : max;
         }, 0);
 
-        await updateItem(effectiveBiz, 'customers', cust.id, { 
-          activePlans: updatedPlans, 
+        updates.push({
+          id: cust.id,
+          activePlans: updatedPlans,
           endDate: maxEndDate,
           daysLeft: maxDaysLeft
         });
-        updatedCount++;
+      }
+    }
+
+    if (updates.length > 0) {
+      try {
+        await pauseBranchAtomic(effectiveBiz, updates);
+      } catch (err: any) {
+        console.error("Failed to pause branch in database:", err);
+        alert("Failed to pause branch: " + (err.message || "Unknown error"));
+        return;
       }
     }
     
@@ -1550,6 +1551,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
 
    const [activePlans, setActivePlans] = useState<any[]>(isRenewal ? [] : (initialData?.activePlans || []));
    const [isSubmitting, setIsSubmitting] = useState(false);
+   const [submitError, setSubmitError] = useState<string | null>(null);
    const [newPlanForm, setNewPlanForm] = useState({ 
      mealTime: 'Lunch', 
      planId: '', 
@@ -1717,6 +1719,7 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
       const deliveryBoyName = assignedStaff ? assignedStaff.name : (formData.deliveryBoyName || '');
 
       setIsSubmitting(true);
+      setSubmitError(null);
       try {
         await onSubmit({ 
            ...formData, 
@@ -1737,8 +1740,9 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
            renewalCount: initialData ? (isRenewal ? (initialData.renewalCount || 0) + 1 : (initialData.renewalCount || 0)) : 0, 
            routeOrder: initialData ? (initialData.routeOrder ?? 999) : 999 
         });
-      } catch (err) {
+      } catch (err: any) {
         console.error("Save customer error:", err);
+        setSubmitError(err?.message || "Failed to save customer in database. Please check your network and retry.");
       } finally {
         setIsSubmitting(false);
       }
@@ -1753,6 +1757,12 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                </h3>
                <button onClick={onClose} className="p-2 text-slate-400 hover:text-red-500 transition-colors"><X size={24}/></button>
             </div>
+            {submitError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center gap-2">
+                <AlertTriangle size={16} className="text-red-500 shrink-0" />
+                <span>{submitError}</span>
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-6">
                <div className="grid grid-cols-2 gap-4">
                   <div><ModalLabel>Branch *</ModalLabel><select required className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none font-bold text-slate-700 text-sm" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>{branches.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>

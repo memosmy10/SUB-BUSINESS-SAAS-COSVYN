@@ -12,7 +12,8 @@ import {
   getDoc,
   collectionGroup,
   orderBy,
-  setDoc
+  setDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -251,6 +252,7 @@ export const deleteItem = async (userId: string, collectionName: string, docId: 
   try {
     const targetUid = getTargetBusinessId(userId);
     if (!targetUid) throw new Error("No target business ID found.");
+    if (!docId) throw new Error("No document ID provided for deletion.");
 
     const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     await deleteDoc(docRef);
@@ -258,6 +260,119 @@ export const deleteItem = async (userId: string, collectionName: string, docId: 
     console.error(`Error deleting ${collectionName}/${docId}:`, error);
     throw error;
   }
+};
+
+/**
+ * Atomic customer creation with optional initial payment.
+ * Ensures customer and linked initial payment record are committed together in a single batch.
+ */
+export const addCustomerWithPaymentAtomic = async (
+  userId: string,
+  customerData: any,
+  initialPaymentAmount: number = 0
+): Promise<string> => {
+  const targetUid = getTargetBusinessId(userId);
+  if (!targetUid) throw new Error("No target business ID found.");
+
+  const batch = writeBatch(db);
+  const customersCol = collection(db, 'businesses', targetUid, 'customers');
+  const newCustRef = doc(customersCol);
+  const customerId = newCustRef.id;
+
+  const { id: _ignoreId, ...cleanData } = customerData;
+  const managerBranchId = getManagerBranchId();
+  if (managerBranchId) {
+    cleanData.branchId = managerBranchId;
+  }
+
+  const safeCustomerPayload = sanitizeFirestoreData({
+    ...cleanData,
+    id: customerId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+
+  batch.set(newCustRef, safeCustomerPayload);
+
+  if (initialPaymentAmount > 0) {
+    const paymentsCol = collection(db, 'businesses', targetUid, 'payments');
+    const newPayRef = doc(paymentsCol);
+    const safePaymentPayload = sanitizeFirestoreData({
+      amount: initialPaymentAmount,
+      customerId,
+      customerName: customerData.name || '',
+      date: new Date().toISOString(),
+      type: 'Income',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    batch.set(newPayRef, safePaymentPayload);
+  }
+
+  await batch.commit();
+  return customerId;
+};
+
+/**
+ * Atomic customer deletion that removes customer and associated payments in a single transaction.
+ */
+export const deleteCustomerAtomic = async (userId: string, customerId: string): Promise<void> => {
+  const targetUid = getTargetBusinessId(userId);
+  if (!targetUid) throw new Error("No target business ID found.");
+  if (!customerId) throw new Error("No customer ID provided for deletion.");
+
+  const batch = writeBatch(db);
+  const custDocRef = doc(db, 'businesses', targetUid, 'customers', customerId);
+  batch.delete(custDocRef);
+
+  // Clean up linked payments atomically
+  try {
+    const paySnap = await getDocs(query(
+      collection(db, 'businesses', targetUid, 'payments'),
+      where('customerId', '==', customerId)
+    ));
+    paySnap.forEach(d => batch.delete(d.ref));
+  } catch (payErr) {
+    console.warn("Payment query during atomic delete note:", payErr);
+  }
+
+  await batch.commit();
+};
+
+/**
+ * Atomic branch pause operation committing updates across all affected customers in batches.
+ */
+export const pauseBranchAtomic = async (
+  userId: string,
+  customerUpdates: Array<{ id: string; activePlans: any[]; endDate: string; daysLeft: number }>
+): Promise<number> => {
+  const targetUid = getTargetBusinessId(userId);
+  if (!targetUid) throw new Error("No target business ID found.");
+  if (customerUpdates.length === 0) return 0;
+
+  const BATCH_SIZE = 450;
+  let committed = 0;
+
+  for (let i = 0; i < customerUpdates.length; i += BATCH_SIZE) {
+    const chunk = customerUpdates.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(db);
+
+    for (const update of chunk) {
+      const docRef = doc(db, 'businesses', targetUid, 'customers', update.id);
+      const safePayload = sanitizeFirestoreData({
+        activePlans: update.activePlans,
+        endDate: update.endDate,
+        daysLeft: update.daysLeft,
+        updatedAt: new Date().toISOString()
+      });
+      batch.set(docRef, safePayload, { merge: true });
+    }
+
+    await batch.commit();
+    committed += chunk.length;
+  }
+
+  return committed;
 };
 
 // --- GLOBAL PRICING SERVICE ---

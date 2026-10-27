@@ -47,25 +47,9 @@ export const functions = getFunctions(app);
 
 // Callable function instances
 export const driverLoginCallable = httpsCallable<
-  { bizId?: string; staffId?: string; phone: string; pin: string },
-  { token: string; driver: { name: string; bizId: string; staffId: string; branchId: string; mobile: string; id: string } }
+  { phone: string; pin: string },
+  { token: string; driver: { name: string; bizId: string; staffId: string; branchId: string; mobile: string } }
 >(functions, 'driverLogin');
-
-export const updateDriverStopCallable = httpsCallable<
-  {
-    bizId: string;
-    staffId: string;
-    stopId: string;
-    status: 'Delivered' | 'Failed' | 'Pending';
-    notes?: string;
-    boxesCollected?: number;
-    failureReason?: string;
-    customerId?: string;
-    customerName?: string;
-    mealType?: string;
-  },
-  { success: boolean }
->(functions, 'updateDriverStop');
 
 export const managerLoginCallable = httpsCallable<
   { email: string; password: string; bizId?: string },
@@ -73,7 +57,7 @@ export const managerLoginCallable = httpsCallable<
 >(functions, 'managerLogin');
 
 export const setDriverPinCallable = httpsCallable<
-  { bizId: string; staffId?: string; phone: string; pin: string; name?: string; branchId?: string; status?: string; active?: boolean },
+  { bizId: string; staffId?: string; phone: string; pin: string; name?: string; branchId?: string; additionalData?: any },
   { success: boolean; staffId: string }
 >(functions, 'setDriverPin');
 

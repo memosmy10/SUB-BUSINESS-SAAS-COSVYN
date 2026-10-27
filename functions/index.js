@@ -141,14 +141,11 @@ exports.scheduledFirestoreExport = onSchedule(
 
 /**
  * driverLogin
- * Sole authority for driver authentication.
- * Accepts { bizId, staffId, phone, pin }.
- * Validates against businesses/{bizId}/staff/{staffId}.
- * Enforces atomic rate-limiting, bcrypt PIN verification, and issues Firebase Custom Token
- * with claims: { role: 'driver', bizId, staffId, branchId }.
+ * Verifies driver phone + PIN, enforces lockout (5 failures -> 15 min lock),
+ * and issues a Firebase Custom Token with claims: { role: 'driver', bizId, staffId, branchId }
  */
 exports.driverLogin = onCall({ cors: true }, async (request) => {
-  const { bizId, staffId, phone, pin } = request.data || {};
+  const { phone, pin } = request.data || {};
 
   const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
   if (!cleanPhone || cleanPhone.length !== 10) {
@@ -160,27 +157,54 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     throw new HttpsError('invalid-argument', 'PIN must be between 4 and 6 digits.');
   }
 
-  const cleanBizId = String(bizId || '').trim();
-  const cleanStaffId = String(staffId || '').trim();
-
-  if (!cleanBizId || !cleanStaffId) {
-    throw new HttpsError('invalid-argument', 'Business ID and Rider ID are required for driver login. Please use the personalized link provided by your kitchen.');
-  }
-
   const db = admin.firestore();
   const now = Date.now();
   const rateLimitRef = db.collection('auth_rate_limits').doc(`driver_${cleanPhone}`);
-
-  // Atomic rate limiting check
   const rateLimitSnap = await rateLimitRef.get();
   const rateLimitData = rateLimitSnap.exists ? rateLimitSnap.data() : { attempts: 0, lockedUntil: null };
 
+  // Check if locked out
   if (rateLimitData.lockedUntil && Number(rateLimitData.lockedUntil) > now) {
     const remainingMinutes = Math.max(1, Math.ceil((Number(rateLimitData.lockedUntil) - now) / 60000));
     throw new HttpsError(
       'resource-exhausted',
-      `Account temporarily locked due to consecutive failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`
+      `Account temporarily locked due to 5 consecutive failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`
     );
+  }
+
+  // Look up driver record
+  let driverDoc = null;
+  let driverRef = null;
+
+  // 1. Check global_features/driver_auth_{phone}
+  const globalRef = db.collection('global_features').doc(`driver_auth_${cleanPhone}`);
+  const globalSnap = await globalRef.get();
+
+  if (globalSnap.exists) {
+    driverDoc = globalSnap.data();
+    driverRef = globalRef;
+  } else {
+    // 2. Check legacy driver_auth_lookup/{phone}
+    const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
+    const lookupSnap = await lookupRef.get();
+    if (lookupSnap.exists) {
+      driverDoc = lookupSnap.data();
+      driverRef = lookupSnap.ref;
+    } else {
+      // 3. Search across staff collections via collectionGroup
+      const staffQuery = await db.collectionGroup('staff')
+        .where('mobile', '==', cleanPhone)
+        .limit(1)
+        .get();
+
+      if (!staffQuery.empty) {
+        const staffSnap = staffQuery.docs[0];
+        driverDoc = { ...staffSnap.data(), staffId: staffSnap.id };
+        const parentBizId = staffSnap.ref.parent.parent ? staffSnap.ref.parent.parent.id : '';
+        driverDoc.bizId = parentBizId;
+        driverRef = staffSnap.ref;
+      }
+    }
   }
 
   const recordFailedAttempt = async () => {
@@ -204,42 +228,25 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     const remaining = 5 - attempts;
     throw new HttpsError(
       'unauthenticated',
-      `Invalid credentials or inactive rider profile. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining)`
+      `Incorrect 4-digit PIN. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout)`
     );
   };
 
-  // Directly query the target staff record in the specified business
-  const staffDocRef = db.collection('businesses').doc(cleanBizId).collection('staff').doc(cleanStaffId);
-  const staffDocSnap = await staffDocRef.get();
-
-  if (!staffDocSnap.exists) {
+  if (!driverDoc) {
     await recordFailedAttempt();
   }
 
-  const staffData = staffDocSnap.data() || {};
-
-  // Check active status
-  if (staffData.status === 'Inactive' || staffData.active === false || staffData.isDeleted) {
-    await recordFailedAttempt();
-  }
-
-  // Compare normalized phone numbers
-  const registeredPhone = String(staffData.mobile || '').replace(/\D/g, '').slice(-10);
-  if (registeredPhone !== cleanPhone) {
-    await recordFailedAttempt();
-  }
-
-  // PIN verification strictly against pinHash with bcrypt (Fail closed if no pinHash)
-  if (!staffData.pinHash) {
-    await recordFailedAttempt();
-  }
-
+  // Verify PIN (checks pinHash first, then falls back to plaintext pin for migration compatibility)
   let isMatch = false;
-  try {
-    isMatch = bcrypt.compareSync(cleanPin, staffData.pinHash);
-  } catch (err) {
-    console.error('Bcrypt comparison error:', err);
-    isMatch = false;
+  if (driverDoc.pinHash) {
+    isMatch = bcrypt.compareSync(cleanPin, driverDoc.pinHash);
+  } else if (driverDoc.pin) {
+    isMatch = (cleanPin === String(driverDoc.pin).trim());
+    // Auto-hash for future logins without deleting existing field
+    if (isMatch && driverRef) {
+      const pinHash = bcrypt.hashSync(cleanPin, 10);
+      driverRef.update({ pinHash }).catch(err => console.warn('Auto-hash driver PIN error:', err));
+    }
   }
 
   if (!isMatch) {
@@ -253,13 +260,16 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     lastSuccessAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
-  const branchId = staffData.branchId || '';
-  const name = staffData.name || 'Delivery Partner';
-  const uid = `driver_${cleanBizId}_${cleanStaffId}`;
+  const bizId = driverDoc.bizId || '';
+  const staffId = driverDoc.staffId || driverDoc.id || 'driver-1';
+  const branchId = driverDoc.branchId || '';
+  const name = driverDoc.name || 'Delivery Partner';
+
+  const uid = `driver_${bizId}_${staffId}`;
   const claims = {
     role: 'driver',
-    bizId: cleanBizId,
-    staffId: cleanStaffId,
+    bizId,
+    staffId,
     branchId
   };
 
@@ -268,10 +278,9 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
   return {
     token: customToken,
     driver: {
-      id: cleanStaffId,
-      staffId: cleanStaffId,
       name,
-      bizId: cleanBizId,
+      bizId,
+      staffId,
       branchId,
       mobile: cleanPhone
     }
@@ -432,14 +441,13 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
  * setDriverPin
  * Callable function used by business owner when creating or updating a driver PIN.
  * Securely hashes the PIN and writes ONLY pinHash to Firestore (never plaintext PIN).
- * Updates /staff and /driver_profiles projection. Never writes to driver_auth_lookup or global_features.
  */
 exports.setDriverPin = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required to set driver PIN.');
   }
 
-  const { bizId, staffId, phone, pin, name, branchId, status, active } = request.data || {};
+  const { bizId, staffId, phone, pin, name, branchId, additionalData } = request.data || {};
 
   const callerUid = request.auth.uid;
   const isOwner = callerUid === bizId;
@@ -466,132 +474,47 @@ exports.setDriverPin = onCall({ cors: true }, async (request) => {
 
   const batch = db.batch();
 
-  // 1. Staff subcollection (whitelisted fields, never plaintext PIN)
+  // 1. Staff subcollection (without plaintext pin)
   const staffRef = db.collection('businesses').doc(bizId).collection('staff').doc(targetStaffId);
   const staffPayload = {
-    name: String(name || '').trim(),
+    ...(additionalData || {}),
+    name: name || '',
     mobile: cleanPhone,
     pinHash,
-    branchId: String(branchId || '').trim(),
-    status: status || 'Active',
-    active: active !== false,
-    role: 'Delivery Partner',
+    branchId: branchId || '',
     updatedAt: nowIso
   };
+  // Ensure plaintext pin is never written
+  delete staffPayload.pin;
   batch.set(staffRef, staffPayload, { merge: true });
 
-  // 2. Safe driver profile projection
-  const profileRef = db.collection('businesses').doc(bizId).collection('driver_profiles').doc(targetStaffId);
-  const profilePayload = {
-    id: targetStaffId,
+  // 2. Global directory in global_features
+  const globalRef = db.collection('global_features').doc(`driver_auth_${cleanPhone}`);
+  batch.set(globalRef, {
+    bizId,
     staffId: targetStaffId,
-    name: String(name || '').trim(),
+    name: name || '',
     mobile: cleanPhone,
-    branchId: String(branchId || '').trim(),
-    status: status || 'Active',
-    active: active !== false,
+    pinHash,
+    branchId: branchId || '',
     updatedAt: nowIso
-  };
-  batch.set(profileRef, profilePayload, { merge: true });
+  }, { merge: true });
+
+  // 3. Legacy lookup
+  const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
+  batch.set(lookupRef, {
+    bizId,
+    staffId: targetStaffId,
+    name: name || '',
+    mobile: cleanPhone,
+    pinHash,
+    branchId: branchId || '',
+    updatedAt: nowIso
+  }, { merge: true });
 
   await batch.commit();
 
   return { success: true, staffId: targetStaffId };
-});
-
-/**
- * updateDriverStop
- * Callable for authenticated drivers to atomically update a delivery stop,
- * write the canonical delivery log, and update reusable box counts.
- */
-exports.updateDriverStop = onCall({ cors: true }, async (request) => {
-  if (!request.auth || !request.auth.token || request.auth.token.role !== 'driver') {
-    throw new HttpsError('unauthenticated', 'Driver authentication required.');
-  }
-
-  const tokenBizId = request.auth.token.bizId;
-  const tokenStaffId = request.auth.token.staffId;
-  const { bizId, staffId, stopId, status, notes, boxesCollected, failureReason, customerId, customerName, mealType } = request.data || {};
-
-  if (!bizId || bizId !== tokenBizId || !staffId || staffId !== tokenStaffId) {
-    throw new HttpsError('permission-denied', 'Unauthorized to update stops for another rider or tenant.');
-  }
-
-  if (!stopId) {
-    throw new HttpsError('invalid-argument', 'Stop ID is required.');
-  }
-
-  const db = admin.firestore();
-  const nowIso = new Date().toISOString();
-  const todayStr = nowIso.split('T')[0];
-
-  // Stop reference in projection
-  const stopRef = db.collection('businesses').doc(bizId).collection('driver_routes').doc(staffId).collection('stops').doc(stopId);
-  const logId = `${customerId || stopId}_${todayStr}_${mealType || 'General'}`;
-  const logRef = db.collection('businesses').doc(bizId).collection('delivery_logs').doc(logId);
-
-  await db.runTransaction(async (transaction) => {
-    const stopDoc = await transaction.get(stopRef);
-    if (!stopDoc.exists) {
-      throw new HttpsError('not-found', 'Stop not found.');
-    }
-
-    const stopData = stopDoc.data();
-    const updateData = {
-      status: status || 'Delivered',
-      deliveryStatus: status || 'Delivered',
-      notes: notes || '',
-      updatedAt: nowIso
-    };
-
-    if (status === 'Delivered') {
-      updateData.deliveredAt = nowIso;
-      updateData.deliveredTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    } else if (status === 'Failed') {
-      updateData.failedAt = nowIso;
-      updateData.failureReason = failureReason || notes || 'Delivery failed';
-    }
-
-    if (typeof boxesCollected === 'number' && boxesCollected >= 0) {
-      updateData.boxesCollected = boxesCollected;
-    }
-
-    transaction.update(stopRef, updateData);
-
-    // Write canonical delivery log
-    transaction.set(logRef, {
-      customerId: customerId || stopData.customerId || '',
-      customerName: customerName || stopData.customerName || '',
-      deliveryBoyId: staffId,
-      deliveryBoyName: request.auth.token.name || '',
-      date: todayStr,
-      mealTime: mealType || stopData.mealTime || 'Lunch',
-      status: status || 'Delivered',
-      notes: notes || '',
-      failureReason: failureReason || '',
-      boxesCollected: Number(boxesCollected) || 0,
-      timestamp: nowIso
-    }, { merge: true });
-
-    // If reusable boxes recollected, adjust customer's balance
-    const targetCustId = customerId || stopData.customerId;
-    const collected = Number(boxesCollected) || 0;
-    if (targetCustId && collected > 0) {
-      const custRef = db.collection('businesses').doc(bizId).collection('customers').doc(targetCustId);
-      const custDoc = await transaction.get(custRef);
-      if (custDoc.exists) {
-        const custData = custDoc.data();
-        const currentUncollected = Number(custData.uncollectedBoxesCount) || 0;
-        const newUncollected = Math.max(0, currentUncollected - collected);
-        transaction.update(custRef, {
-          uncollectedBoxesCount: newUncollected,
-          updatedAt: nowIso
-        });
-      }
-    }
-  });
-
-  return { success: true };
 });
 
 /**

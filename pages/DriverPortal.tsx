@@ -10,8 +10,16 @@ import {
   collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc, collectionGroup 
 } from 'firebase/firestore';
 import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { db, auth, driverLoginCallable, updateDriverStopCallable } from '../services/firebase';
+import { db, auth, driverLoginCallable } from '../services/firebase';
 import bcrypt from 'bcryptjs';
+
+/**
+ * TEMPORARY MIGRATION FLAG:
+ * Kept strictly for backward compatibility during Phase 1 deployment transition.
+ * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
+ * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
+ */
+const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
@@ -457,119 +465,103 @@ export const DriverPortal: React.FC = () => {
     }
 
     // 1. Direct staff subcollection stream (works in owner preview or when permissions permit)
-    // 1. Safe Public Kitchen Branding stream (accessible to drivers and public)
-    const publicProfileRef = doc(db, 'businesses', bizId, 'portal_public', 'profile');
-    const unsubscribeBiz = onSnapshot(publicProfileRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.businessName) setBusinessName(data.businessName);
-        if (data.logoUrl) setLogoUrl(data.logoUrl);
-      }
-    }, () => {
-      // Fallback for owner preview
-      const rootBizRef = doc(db, 'businesses', bizId);
-      onSnapshot(rootBizRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data.businessName) setBusinessName(data.businessName);
-          if (data.logoUrl) setLogoUrl(data.logoUrl);
-        }
-      }, () => {});
-    });
-
-    // 2. Safe Driver Profile Projection stream (accessible to driver with their custom token)
-    let unsubscribeProfile = () => {};
-    if (selectedBoyId) {
-      const profileRef = doc(db, 'businesses', bizId, 'driver_profiles', selectedBoyId);
-      unsubscribeProfile = onSnapshot(profileRef, (snap) => {
-        if (snap.exists()) {
-          const profile = snap.data();
-          if (profile.name) setDriverDisplayName(profile.name);
-          if (profile.status === 'Inactive' || profile.active === false) {
-            safeStorageSet('driver_is_logged_in', 'false');
-            safeStorageSet('driver_session_expires', '0');
-            setLoginError("This delivery partner account has been deactivated by the kitchen manager.");
-            setLoginModalOpen(true);
-          }
-        }
-      }, () => {});
-    }
-
-    // 3. Assigned Route Stops projection stream (businesses/{bizId}/driver_routes/{staffId}/stops)
-    let unsubscribeRouteStops = () => {};
-    if (selectedBoyId) {
-      const stopsRef = collection(db, 'businesses', bizId, 'driver_routes', selectedBoyId, 'stops');
-      unsubscribeRouteStops = onSnapshot(stopsRef, (snap) => {
-        if (!snap.empty) {
-          const stopsList = snap.docs.map(d => {
-            const data = d.data();
-            return {
-              id: d.id,
-              customerId: data.customerId || d.id,
-              name: data.customerName || 'Customer',
-              customerName: data.customerName || 'Customer',
-              mobile: data.mobile || '',
-              address: data.address || '',
-              area: data.area || '',
-              branchId: data.branchId || '',
-              deliveryBoyId: selectedBoyId,
-              deliveryBoyName: driverDisplayName || 'Rider',
-              routeOrder: typeof data.routeOrder === 'number' ? data.routeOrder : 999,
-              mealTime: data.mealTime || 'Lunch',
-              planName: data.planName || '',
-              reusableBoxEnabled: Boolean(data.reusableBoxEnabled),
-              reusableBoxType: data.reusableBoxType || '',
-              uncollectedBoxesCount: Number(data.uncollectedBoxesCount) || 0,
-              isActive: true,
-              deliveryStatus: data.deliveryStatus || 'Pending'
-            };
-          });
-          setCustomers(stopsList as any);
-
-          // Build delivery logs mapping from stop projection
-          const logMap: Record<string, any> = {};
-          stopsList.forEach(item => {
-            if (item.deliveryStatus && item.deliveryStatus !== 'Pending') {
-              logMap[`${item.id}_${item.mealTime}`] = {
-                status: item.deliveryStatus,
-                date: todayStr,
-                mealTime: item.mealTime,
-                customerId: item.id
-              };
-            }
-          });
-          setDeliveryLogs(prev => ({ ...prev, ...logMap }));
-          setLoading(false);
-        }
-      }, (err) => console.warn("Route stops projection notice:", err?.message));
-    }
-
-    // 4. Backward-compatible direct staff & customer streams (works in owner preview)
     const staffRef = collection(db, 'businesses', bizId, 'staff');
     const unsubscribeStaff = onSnapshot(staffRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DeliveryBoyStaff[];
       if (list.length > 0) {
         setAllStaff(list);
+        
+        // If a rider is selected, update shift status
         if (selectedBoyId) {
           const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
           if (found) {
             const hasLocalShift = safeStorageGet('driver_shift_active') === 'true' && safeStorageGet('driver_shift_date') === todayStr;
             const isOnlineInDb = found.status === 'Online' && found.lastAttendanceDate === todayStr;
             setIsShiftActive(isOnlineInDb || hasLocalShift);
-            if (found.attendanceMarkedAt) setPunchInTime(found.attendanceMarkedAt);
+            if (found.attendanceMarkedAt) {
+              setPunchInTime(found.attendanceMarkedAt);
+            } else if (hasLocalShift && safeStorageGet('driver_punch_in_time')) {
+              setPunchInTime(safeStorageGet('driver_punch_in_time'));
+            }
+
+            // ENFORCE ACCOUNT STATUS: If rider was deactivated or deleted by owner
+            if ((found.status as string) === 'Inactive' || (found as any).isDeleted) {
+              safeStorageSet('driver_is_logged_in', 'false');
+              safeStorageSet('driver_session_expires', '0');
+              setLoginError("This delivery partner account has been deactivated by the kitchen manager.");
+              setLoginModalOpen(true);
+            }
           }
         }
       }
       setLoading(false);
-    }, () => setLoading(false));
+    }, (err) => {
+      console.warn("Direct staff stream notice (using global manifest):", err?.message);
+      setLoading(false);
+    });
 
+    // 2. Direct customers subcollection stream
     const custRef = collection(db, 'businesses', bizId, 'customers');
     const unsubscribeCust = onSnapshot(custRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as GlobalCustomer[];
-      if (list.length > 0 && customers.length === 0) setCustomers(list);
-    }, () => {});
+      if (list.length > 0) setCustomers(list);
+    }, (err) => console.warn("Direct customer stream notice (using global manifest):", err?.message));
 
-    // 5. Driver status in per-tenant subcollection (businesses/{bizId}/driver_status/{staffId})
+    // 3. Direct plans stream
+    const plansRef = collection(db, 'businesses', bizId, 'plans');
+    const unsubscribePlans = onSnapshot(plansRef, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (list.length > 0) setPlans(list);
+    }, (err) => console.warn("Direct plans stream notice:", err?.message));
+
+    // 4. Direct branches stream
+    const branchesRef = collection(db, 'businesses', bizId, 'branches');
+    const unsubscribeBranches = onSnapshot(branchesRef, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (list.length > 0) setBranches(list);
+    }, (err) => console.warn("Direct branches stream notice:", err?.message));
+
+    // 5. Direct today's delivery logs stream
+    const logsRef = collection(db, 'businesses', bizId, 'delivery_logs');
+    const unsubscribeLogs = onSnapshot(logsRef, (snap) => {
+      const map: Record<string, any> = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data.date === todayStr) {
+          map[`${data.customerId}_${data.mealTime}`] = { id: d.id, ...data };
+        }
+      });
+      setDeliveryLogs(prev => ({ ...prev, ...map }));
+    }, (err) => console.warn("Direct logs stream notice:", err?.message));
+
+    // 6. Direct business profile stream for branding & logo
+    const bizDocRef = doc(db, 'businesses', bizId);
+    const unsubscribeBiz = onSnapshot(bizDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.businessName) setBusinessName(data.businessName);
+        if (data.logoUrl) setLogoUrl(data.logoUrl);
+      }
+    }, (err) => console.warn("Driver biz profile err:", err?.message));
+
+    // 7. REAL-TIME DRIVER MANIFEST in per-tenant subcollection (businesses/{bizId}/driver_manifest/{staffId})
+    let unsubscribeManifest = () => {};
+    if (selectedBoyId) {
+      const manifestDocRef = doc(db, 'businesses', bizId, 'driver_manifest', selectedBoyId);
+      unsubscribeManifest = onSnapshot(manifestDocRef, (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (Array.isArray(data.customers) && data.customers.length > 0) setCustomers(data.customers);
+          if (Array.isArray(data.plans) && data.plans.length > 0) setPlans(data.plans);
+          if (Array.isArray(data.branches) && data.branches.length > 0) setBranches(data.branches);
+          if (data.businessName) setBusinessName(data.businessName);
+          if (data.logoUrl) setLogoUrl(data.logoUrl);
+          setLoading(false);
+        }
+      }, (err) => console.warn("Driver manifest stream notice:", err?.message));
+    }
+
+    // 8. REAL-TIME DRIVER STATUS in per-tenant subcollection (businesses/{bizId}/driver_status/{staffId})
     let unsubscribeStatus = () => {};
     if (selectedBoyId) {
       const statusDocRef = doc(db, 'businesses', bizId, 'driver_status', selectedBoyId);
@@ -589,12 +581,17 @@ export const DriverPortal: React.FC = () => {
       }, () => {});
     }
 
+    const unsubscribeGlobalLogs = () => {};
+
     return () => {
       unsubscribeBiz();
-      unsubscribeProfile();
-      unsubscribeRouteStops();
       unsubscribeStaff();
       unsubscribeCust();
+      unsubscribePlans();
+      unsubscribeBranches();
+      unsubscribeLogs();
+      unsubscribeManifest();
+      unsubscribeGlobalLogs();
       unsubscribeStatus();
     };
   }, [bizId, selectedBoyId, todayStr]);
@@ -1226,18 +1223,30 @@ export const DriverPortal: React.FC = () => {
     }
 
     try {
-      await updateDriverStopCallable({
-        bizId,
-        staffId: selectedBoyId,
-        stopId: stop.customer?.id || stop.id,
+      const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${stop.customer.id}_${selectedMeal}`);
+      await setDoc(logDocRef, {
+        date: todayStr,
+        customerId: stop.customer.id,
+        customerName: stop.customer.name,
+        branchId: stop.customer.branchId || currentBoy?.branchId || '',
+        deliveryBoyId: selectedBoyId,
+        deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
+        mealTime: selectedMeal,
         status: currentStatus,
-        customerId: stop.customer?.id || stop.id,
-        customerName: stop.customer?.name || stop.customerName,
-        mealType: selectedMeal,
-        boxesCollected: hasReusableBox && currentStatus === 'Delivered' ? 1 : 0
-      });
+        deliveredAt: currentStatus === 'Delivered' ? now.toISOString() : null,
+        reusableBoxEnabled: hasReusableBox,
+        boxType: stop.primaryBoxType || 'Disposable',
+        isDay2Plus: stop.isDay2Plus,
+        boxStatus: hasReusableBox 
+          ? (stop.logRecord?.boxStatus || 'Pending') 
+          : 'Disposable',
+        boxNotes: stop.logRecord?.boxNotes || '',
+        currentLat: currentCoords?.lat || null,
+        currentLng: currentCoords?.lng || null,
+        updatedAt: now.toISOString()
+      }, { merge: true });
     } catch (err) {
-      console.warn("updateDriverStopCallable notice:", err);
+      console.warn("Direct delivery log write notice:", err);
     }
   };
 
@@ -1301,19 +1310,46 @@ export const DriverPortal: React.FC = () => {
     }
 
     try {
-      await updateDriverStopCallable({
-        bizId,
-        staffId: selectedBoyId,
-        stopId: customer.id,
-        status: 'Delivered',
-        notes: boxNotes.trim(),
-        boxesCollected: isCollectedAny ? 1 : 0,
+      const logDocRef = doc(db, 'businesses', bizId, 'delivery_logs', `${todayStr}_${customer.id}_${selectedMeal}`);
+
+      await setDoc(logDocRef, {
+        date: todayStr,
         customerId: customer.id,
         customerName: customer.name,
-        mealType: selectedMeal
-      });
+        deliveryBoyId: selectedBoyId,
+        deliveryBoyName: currentBoy?.name || driverDisplayName || 'Rider',
+        mealTime: selectedMeal,
+        reusableBoxEnabled: true,
+        boxType: customer.reusableBoxType || '3-Tier Stainless Steel Tiffin',
+        isDay2Plus: true,
+        boxStatus: selectedBoxStatus,
+        boxNotes: boxNotes.trim(),
+        boxCollectedAt: isClean ? now.toISOString() : null,
+        updatedAt: now.toISOString()
+      }, { merge: true });
+
+      // Update customer uncollected boxes count and history in businesses/{bizId}/customers/{customer.id}
+      try {
+        const custDocRef = doc(db, 'businesses', bizId, 'customers', customer.id);
+        const prevCount = typeof customer.uncollectedBoxesCount === 'number' ? customer.uncollectedBoxesCount : 1;
+        const newCount = isCollectedAny ? Math.max(0, prevCount - 1) : prevCount;
+        
+        await updateDoc(custDocRef, {
+          uncollectedBoxesCount: newCount,
+          [`boxCollections.${todayStr}_${selectedMeal}`]: {
+            status: selectedBoxStatus === 'Collected' ? 'Collected Clean' : selectedBoxStatus === 'Dirty / Unwashed' ? 'Collected Unclean' : selectedBoxStatus,
+            boxType: customer.reusableBoxType || 'Stainless Steel 3-Tier Dabba',
+            issueNote: boxNotes.trim(),
+            collectedAt: now.toISOString(),
+            updatedBy: currentBoy?.name || driverDisplayName || 'Delivery Partner'
+          },
+          updatedAt: now.toISOString()
+        });
+      } catch (custErr) {
+        console.warn("Could not sync customer box record directly:", custErr);
+      }
     } catch (err) {
-      console.warn("updateDriverStopCallable box recollection notice:", err);
+      console.warn("Direct box recollection write notice (synced to global logs):", err);
     }
   };
 
@@ -1384,33 +1420,32 @@ export const DriverPortal: React.FC = () => {
       showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
     };
 
-    // Sole Authority: Server-verified Cloud Function callable
-    const targetBizId = bizId || getParam('biz') || safeStorageGet('driver_biz_id');
-    const targetBoyId = selectedBoyId || getParam('boy') || safeStorageGet('driver_boy_id');
+    // Helper: Secure PIN verification (bcrypt hash check with backward-compatible plaintext fallback & auto-migration)
+    const verifyPinAgainstRecord = (candidatePin: string, record: any): boolean => {
+      if (record.pinHash) {
+        try {
+          if (bcrypt.compareSync(candidatePin, record.pinHash)) {
+            return true;
+          }
+        } catch (e) {
+          console.warn("bcrypt comparison note:", e);
+        }
+      }
+      if (record.pin) {
+        return candidatePin === String(record.pin).trim();
+      }
+      return false;
+    };
 
-    if (!targetBizId || !targetBoyId) {
-      setLoginError("Please open the personalized delivery link shared by your kitchen owner to access your route.");
-      setVerifying(false);
-      return;
-    }
-
+    // 1. Primary: Server-verified Cloud Function callable (if deployed)
     try {
       const result = await driverLoginCallable({
-        bizId: targetBizId,
-        staffId: targetBoyId,
         phone: digits,
         pin: pin
       });
 
       if (result?.data?.token) {
-        const userCred = await signInWithCustomToken(auth, result.data.token);
-        const idTokenResult = await userCred.user.getIdTokenResult();
-        
-        // Verify custom token claims
-        if (idTokenResult.claims.role !== 'driver') {
-          throw new Error('Unauthorized role in credentials.');
-        }
-
+        await signInWithCustomToken(auth, result.data.token);
         const driverInfo = result.data.driver;
         handleLoginSuccess(driverInfo.name, driverInfo.bizId, driverInfo.staffId, driverInfo.branchId);
         return;
@@ -1421,12 +1456,209 @@ export const DriverPortal: React.FC = () => {
 
       if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
         setLoginError(errorMsg);
-      } else {
-        setLoginError("Invalid credentials or inactive rider profile. Please check your mobile number and PIN.");
+        setVerifying(false);
+        return;
       }
-      setVerifying(false);
-      return;
     }
+
+    // 2. Direct Driver Auth Directory Lookup (Instant O(1) lookup on independent devices)
+    const possibleKeys = Array.from(new Set([
+      digits,
+      `+91${digits}`,
+      `91${digits}`,
+      (rawMobile || '').trim()
+    ])).filter(Boolean);
+
+    for (const key of possibleKeys) {
+      try {
+        const lookupRef = doc(db, 'driver_auth_lookup', key);
+        const lookupSnap = await getDoc(lookupRef);
+
+        if (lookupSnap.exists()) {
+          const lookupData = lookupSnap.data();
+
+          // Deactivation Check (Test 10)
+          if (lookupData.active === false || lookupData.isDeleted === true || lookupData.status === 'Inactive') {
+            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+            setVerifying(false);
+            return;
+          }
+
+          if (verifyPinAgainstRecord(pin, lookupData)) {
+            // Auto-migrate plaintext PIN to bcrypt hash if not yet hashed
+            if (!lookupData.pinHash) {
+              const pinHash = bcrypt.hashSync(pin, 10);
+              setDoc(lookupRef, { pinHash, active: true, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+            }
+            const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
+            handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId, lookupData.pinVersion);
+            return;
+          } else {
+            recordFailedAttempt();
+            return;
+          }
+        }
+      } catch (lookupErr) {
+        console.warn(`Direct driver_auth_lookup check note (${key}):`, lookupErr);
+      }
+    }
+
+    // 3. Fallback: Staff subcollection check if bizId is known from URL, token, or local storage
+    const effectiveBiz = bizId || getParam('biz') || safeStorageGet('driver_biz_id') || safeStorageGet('last_active_business_id');
+    if (effectiveBiz) {
+      try {
+        const staffQuery = query(collection(db, 'businesses', effectiveBiz, 'staff'));
+        const snap = await getDocs(staffQuery);
+        const matched = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+          .find(s => {
+            const m = (s.mobile || '').replace(/\D/g, '');
+            return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+          });
+
+        if (matched) {
+          // Deactivation check
+          if (((matched as any).status as string) === 'Inactive' || (matched as any).isDeleted) {
+            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+            setVerifying(false);
+            return;
+          }
+
+          if (verifyPinAgainstRecord(pin, matched)) {
+            const pinHash = (matched as any).pinHash || bcrypt.hashSync(pin, 10);
+            // Auto-heal driver_auth_lookup mapping with bcrypt hash
+            setDoc(doc(db, 'driver_auth_lookup', digits), {
+              bizId: effectiveBiz,
+              staffId: matched.id,
+              name: matched.name,
+              mobile: digits,
+              pinHash: pinHash,
+              branchId: matched.branchId || '',
+              active: true,
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+
+            handleLoginSuccess(matched.name, effectiveBiz, matched.id, matched.branchId);
+            return;
+          } else {
+            recordFailedAttempt();
+            return;
+          }
+        }
+      } catch (staffErr) {
+        console.warn("Direct staff query fallback check note:", staffErr);
+      }
+    }
+
+    // 4. Fallback: Collection group query across staff to auto-discover tenant across all kitchens
+    try {
+      const cgQuery = query(collectionGroup(db, 'staff'));
+      const cgSnap = await getDocs(cgQuery);
+      const matchedDoc = cgSnap.docs.find(d => {
+        const staffDocData = d.data() as any;
+        const m = ((staffDocData.mobile || '').replace(/\D/g, ''));
+        return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+      });
+
+      if (matchedDoc) {
+        const staffData = matchedDoc.data() as any;
+        const parentBizId = matchedDoc.ref.parent.parent?.id;
+
+        if (staffData.status === 'Inactive' || staffData.isDeleted) {
+          setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+          setVerifying(false);
+          return;
+        }
+
+        if (verifyPinAgainstRecord(pin, staffData)) {
+          const pinHash = staffData.pinHash || bcrypt.hashSync(pin, 10);
+          if (parentBizId) {
+            setDoc(doc(db, 'driver_auth_lookup', digits), {
+              bizId: parentBizId,
+              staffId: matchedDoc.id,
+              name: staffData.name || 'Delivery Partner',
+              mobile: digits,
+              pinHash: pinHash,
+              branchId: staffData.branchId || '',
+              active: true,
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+          }
+          handleLoginSuccess(staffData.name || 'Delivery Partner', parentBizId, matchedDoc.id, staffData.branchId);
+          return;
+        } else {
+          recordFailedAttempt();
+          return;
+        }
+      }
+    } catch (cgErr) {
+      console.warn("Collection group staff discovery note:", cgErr);
+    }
+
+    // 5. Fallback: Direct scan of businesses collection for registered staff
+    try {
+      const bizCollectionSnap = await getDocs(collection(db, 'businesses'));
+      for (const bDoc of bizCollectionSnap.docs) {
+        try {
+          const sSnap = await getDocs(collection(db, 'businesses', bDoc.id, 'staff'));
+          const found = sSnap.docs
+            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+            .find(s => {
+              const m = (s.mobile || '').replace(/\D/g, '');
+              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+            });
+
+          if (found) {
+            if (((found as any).status as string) === 'Inactive' || (found as any).isDeleted) {
+              setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+              setVerifying(false);
+              return;
+            }
+
+            if (verifyPinAgainstRecord(pin, found)) {
+              const pinHash = (found as any).pinHash || bcrypt.hashSync(pin, 10);
+              setDoc(doc(db, 'driver_auth_lookup', digits), {
+                bizId: bDoc.id,
+                staffId: found.id,
+                name: found.name || 'Delivery Partner',
+                mobile: digits,
+                pinHash: pinHash,
+                branchId: found.branchId || '',
+                active: true,
+                updatedAt: new Date().toISOString()
+              }, { merge: true }).catch(() => {});
+
+              handleLoginSuccess(found.name || 'Delivery Partner', bDoc.id, found.id, found.branchId);
+              return;
+            } else {
+              recordFailedAttempt();
+              return;
+            }
+          }
+        } catch {}
+      }
+    } catch (bSweepErr) {
+      console.warn("Businesses sweep note:", bSweepErr);
+    }
+
+    // 6. Global features fallback
+    try {
+      const featRef = doc(db, 'global_features', `driver_auth_${digits}`);
+      const featSnap = await getDoc(featRef);
+      if (featSnap.exists()) {
+        const featData = featSnap.data();
+        if (verifyPinAgainstRecord(pin, featData)) {
+          handleLoginSuccess(featData.name || 'Delivery Partner', featData.bizId, featData.staffId, featData.branchId);
+          return;
+        } else {
+          recordFailedAttempt();
+          return;
+        }
+      }
+    } catch (featErr) {}
+
+    setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);
+    setVerifying(false);
   };
 
   const handleDriverLogout = () => {

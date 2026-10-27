@@ -12,9 +12,8 @@ import {
   formatDateDDMMYYYY
 } from '../services/store';
 import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
-import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, setDoc, deleteDoc, collection } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
-import bcrypt from 'bcryptjs';
 
 /**
  * TEMPORARY MIGRATION FLAG:
@@ -125,30 +124,24 @@ const Settings = () => {
     return () => unsub();
   }, [currentUser]);
 
-  // Self-healing: auto-sync existing staff to driver_auth_lookup so riders can log in on independent phones
+  // Owner-only subscription to plaintext PINs stored in staff_credentials
+  const [staffCredentials, setStaffCredentials] = useState<Record<string, string>>({});
+
   useEffect(() => {
-    if (!currentUser?.uid || deliveryBoys.length === 0) return;
-    deliveryBoys.forEach((boy: any) => {
-      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
-      if (cleanPhone && cleanPhone.length === 10) {
-        const payload = {
-          bizId: currentUser.uid,
-          staffId: boy.id,
-          name: boy.name || 'Delivery Partner',
-          mobile: cleanPhone,
-          pin: (boy.pin || '1234').trim(),
-          branchId: boy.branchId || '',
-          updatedAt: new Date().toISOString()
-        };
-        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
-      }
+    if (!currentUser?.uid) return;
+    const credsRef = collection(db, 'businesses', currentUser.uid, 'staff_credentials');
+    const unsub = onSnapshot(credsRef, (snap) => {
+      const map: Record<string, string> = {};
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.pin) map[docSnap.id] = data.pin;
+      });
+      setStaffCredentials(map);
+    }, (err) => {
+      console.warn("staff_credentials fetch error:", err);
     });
-  }, [currentUser?.uid, deliveryBoys]);
-
-
-
-  // Driver directory sync is now securely handled server-side via setDriverPinCallable and Cloud Functions.
-
+    return () => unsub();
+  }, [currentUser?.uid]);
   // Combine built-in standard box types with custom box types
   const allBoxTypes = useMemo(() => {
     const customMap = new Map<string, CustomBoxType>();
@@ -268,62 +261,47 @@ const Settings = () => {
   const handleSaveStaff = async (data: Omit<DeliveryBoy, 'id'>) => {
     if(!currentUser) return;
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
-    const cleanPin = (data.pin || '').trim() || '1234';
-    const pinHash = bcrypt.hashSync(cleanPin, 10);
-    const pinVersion = new Date().toISOString();
-    
-    // Include hashed PIN and version on the staff document
-    const staffData = {
-      ...data,
-      mobile: cleanPhone,
-      pin: cleanPin,
-      pinHash,
-      pinVersion,
-      active: (data as any).status !== 'Inactive',
-      updatedAt: pinVersion
-    };
-    
-    let staffId = editingItem?.id;
-    if (editingItem) {
-      await updateItem(currentUser.uid, 'staff', editingItem.id, staffData);
-    } else {
-      const addedDoc = await addItem(currentUser.uid, 'staff', staffData);
-      staffId = (addedDoc as any)?.id || '';
+    const cleanPin = (data.pin || '').trim();
+
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      alert("Please enter a valid 10-digit mobile number.");
+      return;
     }
 
-    // Always register driver in driver_auth_lookup so rider can log in on independent phones
-    if (cleanPhone) {
-      const payload = {
-        bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
-        name: data.name,
-        mobile: cleanPhone,
-        pinHash,
-        pinVersion,
-        branchId: data.branchId || '',
-        status: (data as any).status || 'Offline',
-        active: (data as any).status !== 'Inactive',
-        updatedAt: pinVersion
-      };
-      await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch((err) => {
-        console.warn("driver_auth_lookup write error:", err);
-      });
-      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true }).catch(() => {});
+    if (!cleanPin || !/^\d{4}$/.test(cleanPin)) {
+      alert("Please enter a 4-digit security PIN for this delivery partner.");
+      return;
     }
 
-    // Optional callable invocation for environments with Cloud Functions
+    const staffId = editingItem?.id;
+
+    // Call server callable to write hashed PIN, driver_auth_lookup, and staff_credentials
     try {
-      await setDriverPinCallable({
+      const res = await setDriverPinCallable({
         bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
+        staffId: staffId || undefined,
         phone: cleanPhone,
         pin: cleanPin,
         name: data.name,
         branchId: data.branchId || '',
-        additionalData: staffData
+        additionalData: {
+          salary: Number(data.salary) || 0,
+          dateOfJoining: data.dateOfJoining || new Date().toISOString().split('T')[0],
+          aadharNumber: data.aadharNumber?.trim() || '',
+          homeLocation: data.homeLocation?.trim() || '',
+          status: (data as any).status || 'Offline',
+          role: 'Delivery Boy'
+        }
       });
-    } catch (callableErr) {
-      // Expected in client-only hosting where Cloud Functions are omitted
+
+      if (!res.data.success) {
+        throw new Error("Server failed to save delivery partner.");
+      }
+    } catch (callableErr: any) {
+      console.error("setDriverPin error:", callableErr);
+      const msg = callableErr?.message || "Failed to save delivery partner. Please try again.";
+      alert(msg);
+      return;
     }
 
     setActiveModal(null);
@@ -421,22 +399,18 @@ const Settings = () => {
     if (collection === 'staff') {
       const boy = deliveryBoys.find(b => b.id === id);
       const cleanPhone = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
-      if (cleanPhone) {
-        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
-          active: false,
-          isDeleted: true,
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(() => {});
-      }
       try {
         await deleteDriverCallable({
           bizId: currentUser.uid,
           staffId: id,
           phone: cleanPhone
         });
-      } catch (e) {
-        console.warn("deleteDriver callable notice:", e);
+      } catch (e: any) {
+        console.error("deleteDriver error:", e);
+        alert(e?.message || "Failed to delete delivery partner.");
+        return;
       }
+      return;
     }
     await deleteItem(currentUser.uid, collection, id);
   };
@@ -655,24 +629,30 @@ const Settings = () => {
   // --- DELIVERY BOY MODAL (Includes Aadhar Number & Delivery Boy Home Location - Part 2) ---
   const DeliveryBoyModal = ({ initialData, onClose }: { initialData?: DeliveryBoy, onClose: () => void }) => {
     const [showPin, setShowPin] = useState(false);
+    const existingPin = initialData ? (staffCredentials[initialData.id] || initialData.pin || '') : '';
     const [formData, setFormData] = useState<Partial<DeliveryBoy>>({ 
       branchId: branches[0]?.id || '',
       dateOfJoining: new Date().toISOString().split('T')[0],
       salary: 15000,
       aadharNumber: '',
       homeLocation: '',
-      pin: initialData?.pin || '1234',
+      pin: existingPin,
       ...initialData
     });
     
     const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
+      const cleanPin = (formData.pin || '').trim();
+      if (!cleanPin || !/^\d{4}$/.test(cleanPin)) {
+        alert("Please enter a valid 4-digit security PIN for this delivery partner.");
+        return;
+      }
       handleSaveStaff({ 
         ...formData, 
         salary: Number(formData.salary) || 0,
         aadharNumber: formData.aadharNumber?.trim() || '',
         homeLocation: formData.homeLocation?.trim() || '',
-        pin: (formData.pin || '').trim() || '1234'
+        pin: cleanPin
       } as any);
     };
     
@@ -1863,7 +1843,7 @@ const Settings = () => {
                       title="4-Digit PIN for rider app login"
                     >
                       <Key size={12} className="text-amber-600" />
-                      {d.pin || '1234'}
+                      {staffCredentials[d.id] || d.pin || '----'}
                     </span>
                   </td>
                   <td className="px-6 py-3.5 font-mono text-slate-600">

@@ -7,19 +7,10 @@ import {
   Lock, Key, Eye, EyeOff, LogOut
 } from 'lucide-react';
 import { 
-  collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc, collectionGroup 
+  collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc, where 
 } from 'firebase/firestore';
-import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { signInWithCustomToken, onAuthStateChanged, signOut } from 'firebase/auth';
 import { db, auth, driverLoginCallable } from '../services/firebase';
-import bcrypt from 'bcryptjs';
-
-/**
- * TEMPORARY MIGRATION FLAG:
- * Kept strictly for backward compatibility during Phase 1 deployment transition.
- * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
- * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
- */
-const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 import { 
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
@@ -229,69 +220,25 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
-  // Decode secure obfuscated token if present
-  const token = getParam('auth') || getParam('k') || getParam('token');
-  const decoded = token ? decodeDriverToken(token) : null;
-
-  // Persist URL parameters immediately so the mobile session persists across reloads
-  if (decoded) {
-    if (decoded.bizId) safeStorageSet('driver_biz_id', decoded.bizId);
-    if (decoded.boyId) safeStorageSet('driver_boy_id', decoded.boyId);
-    if (decoded.mobile) safeStorageSet('driver_phone', decoded.mobile);
-    if (decoded.name) safeStorageSet('driver_name', decoded.name);
-  }
-  const urlBiz = getParam('biz');
-  if (urlBiz) safeStorageSet('driver_biz_id', urlBiz);
-  const urlBoy = getParam('boy');
-  if (urlBoy) safeStorageSet('driver_boy_id', urlBoy);
   const urlPhone = getParam('phone');
-  if (urlPhone) safeStorageSet('driver_phone', urlPhone);
+  const initialPhone = (urlPhone || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
 
-  const initialBiz = decoded?.bizId || 
-                     urlBiz || 
-                     safeStorageGet('driver_biz_id') || 
-                     safeStorageGet('last_active_business_id') || 
-                     safeStorageGet('manager_biz_id') || 
-                     (!auth.currentUser?.isAnonymous ? auth.currentUser?.uid : '') || '';
-  const initialBoy = decoded?.boyId || urlBoy || safeStorageGet('driver_boy_id') || '';
-  const initialPhone = decoded?.mobile || urlPhone || safeStorageGet('driver_phone') || '';
-  const initialName = decoded?.name || safeStorageGet('driver_name') || safeStorageGet('driver_token_name') || '';
-
-  const [bizId, setBizId] = useState<string>(initialBiz);
-  const [bizInput, setBizInput] = useState<string>('');
-  const [selectedBoyId, setSelectedBoyId] = useState<string>(initialBoy);
-  const [driverDisplayName, setDriverDisplayName] = useState<string>(initialName);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(initialBiz === 'demo');
-  
-  // Kitchen Owner Preview: ONLY active if owner is logged in to Firebase AND NOT logged in as a delivery partner
-  const sessionExpires = Number(safeStorageGet('driver_session_expires') || 0);
-  const isSessionValid = !sessionExpires || sessionExpires > Date.now();
-  const isDriverLoggedIn = Boolean(safeStorageGet('driver_is_logged_in') === 'true' && isSessionValid);
-  const isOwnerPreviewParam = typeof window !== 'undefined' && (getParam('view') === 'preview' || getParam('preview') === 'true');
-  const isOwnerFirebaseAccount = Boolean(
-    auth.currentUser && 
-    !auth.currentUser.isAnonymous && 
-    auth.currentUser.email !== 'driver_session_system@scalekitchen.internal' &&
-    (!initialBiz || auth.currentUser.uid === initialBiz)
-  );
-  const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(
-    !isDriverLoggedIn && isOwnerFirebaseAccount && isOwnerPreviewParam
-  );
+  const [bizId, setBizId] = useState<string>('');
+  const [selectedBoyId, setSelectedBoyId] = useState<string>('');
+  const [driverDisplayName, setDriverDisplayName] = useState<string>('');
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const [isKitchenOwnerUser, setIsKitchenOwnerUser] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
+  const [showTroubleModal, setShowTroubleModal] = useState<boolean>(false);
+  const initialPinVersionRef = useRef<string | null>(null);
 
   const [loginError, setLoginError] = useState<string | null>(null);
   const [phoneInput, setPhoneInput] = useState<string>(initialPhone);
   const [pinInput, setPinInput] = useState<string>('');
   const [showPin, setShowPin] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
-
-  // If driver has an active authenticated session, close login modal; otherwise prompt for 4-digit PIN
-  const [loginModalOpen, setLoginModalOpen] = useState<boolean>(() => {
-    if (initialBiz === 'demo') return false;
-    if (initialBoy && isDriverLoggedIn) return false;
-    // Don't auto-open if in owner preview
-    if (!isDriverLoggedIn && isOwnerFirebaseAccount && isOwnerPreviewParam) return false;
-    return true;
-  });
+  const [loginModalOpen, setLoginModalOpen] = useState<boolean>(true);
 
   const [selectedMeal, setSelectedMeal] = useState<MealSession>(() => getDefaultMealSessionForTime());
   const [isDriverMealManuallySelected, setIsDriverMealManuallySelected] = useState<boolean>(false);
@@ -346,7 +293,7 @@ export const DriverPortal: React.FC = () => {
   const dayOfWeek = new Date().getDay();
   const watchIdRef = useRef<number | null>(null);
 
-  // ZERO URL EXPOSURE: Clean query parameters from address bar immediately after reading
+  // Clean query parameters from address bar immediately after reading
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -362,81 +309,58 @@ export const DriverPortal: React.FC = () => {
     }
   }, []);
 
-  // Universal Auth Synchronization for Delivery Boy App across all browsers
+  // Authoritative Firebase Auth Session: Role MUST be verified from custom claims
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      const isDriverSession = Boolean(
-        safeStorageGet('driver_is_logged_in') === 'true' || 
-        user?.uid?.startsWith('driver_')
-      );
-      if (user && !user.isAnonymous && !user.uid.startsWith('driver_')) {
-        // Only show preview banner if owner explicitly requested preview AND is not logged in as driver
-        if (!isDriverSession && (getParam('view') === 'preview' || getParam('preview') === 'true')) {
-          setIsKitchenOwnerUser(true);
-        } else {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        if (!isDemoMode) {
+          setBizId('');
+          setSelectedBoyId('');
+          setDriverDisplayName('');
           setIsKitchenOwnerUser(false);
-        }
-        if (!bizId && !isDemoMode) {
-          setBizId(user.uid);
-        }
-      } else {
-        setIsKitchenOwnerUser(false);
-      }
-    });
-
-    return () => unsub();
-  }, [bizId, isDemoMode]);
-
-  // Real-time listener for account deactivation or PIN updates made by Kitchen Manager in Settings
-  useEffect(() => {
-    const cleanPhone = (phoneInput || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
-    if (!cleanPhone) return;
-
-    const authDocRef = doc(db, 'driver_auth_lookup', cleanPhone);
-    const unsub = onSnapshot(authDocRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        
-        // Immediate Deactivation Enforcement (Test 10)
-        if (data.active === false || data.isDeleted === true) {
-          safeStorageSet('driver_is_logged_in', 'false');
-          safeStorageSet('driver_session_expires', '0');
-          setLoginError("This delivery partner account has been deactivated or removed by the kitchen manager.");
           setLoginModalOpen(true);
-          return;
         }
+        return;
+      }
 
-        // Enforce updated PIN if changed by manager
-        if (data.pinVersion) {
-          const currentVersion = safeStorageGet('driver_pin_version');
-          if (!isKitchenOwnerUser && currentVersion && currentVersion !== data.pinVersion) {
-            safeStorageSet('driver_is_logged_in', 'false');
-            safeStorageSet('driver_session_expires', '0');
-            setPinInput('');
-            setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
-            setLoginModalOpen(true);
+      try {
+        const idToken = await user.getIdTokenResult(true);
+        const claims = idToken?.claims || {};
+
+        if (claims.role === 'driver') {
+          const cBizId = claims.bizId as string;
+          const cStaffId = claims.staffId as string;
+          const cBranchId = claims.branchId as string;
+          if (cBizId && cStaffId) {
+            setBizId(cBizId);
+            setSelectedBoyId(cStaffId);
+            if (cBranchId) safeStorageSet('driver_branch_id', cBranchId);
+            setIsKitchenOwnerUser(false);
+            setLoginModalOpen(false);
+            return;
           }
         }
 
-        if (data.bizId && !bizId) {
-          setBizId(data.bizId);
+        // Owner preview mode: ONLY active if ?preview=true or ?view=preview AND token is NOT role 'driver'
+        const isOwnerPreviewParam = typeof window !== 'undefined' && 
+          (getParam('view') === 'preview' || getParam('preview') === 'true');
+        if (isOwnerPreviewParam && claims.role !== 'driver') {
+          setIsKitchenOwnerUser(true);
+          setBizId(user.uid);
+          setLoginModalOpen(false);
+          return;
         }
-        if (data.staffId && !selectedBoyId) {
-          setSelectedBoyId(data.staffId);
-        }
+
+        setIsKitchenOwnerUser(false);
+        setLoginModalOpen(true);
+      } catch (err: any) {
+        console.error("Auth claim verification error:", err);
+        setSyncError("Auth error: " + (err?.message || 'Verification failed'));
       }
-    }, (err) => {
-      console.warn("Driver auth stream listener warn:", err);
     });
 
     return () => unsub();
-  }, [phoneInput, isKitchenOwnerUser, bizId, selectedBoyId]);
-
-  // Sync to localStorage
-  useEffect(() => {
-    if (bizId) safeStorageSet('driver_biz_id', bizId);
-    if (selectedBoyId) safeStorageSet('driver_boy_id', selectedBoyId);
-  }, [bizId, selectedBoyId]);
+  }, [isDemoMode]);
 
   // Load Demo Data if in demo mode
   const launchDemoMode = () => {
@@ -452,7 +376,7 @@ export const DriverPortal: React.FC = () => {
     setLoading(false);
   };
 
-  // Subscribe to staff members of this business
+  // Main Data Subscriptions (strictly adhering to Firestore security rules)
   useEffect(() => {
     if (!bizId) {
       setLoading(false);
@@ -464,75 +388,114 @@ export const DriverPortal: React.FC = () => {
       return;
     }
 
-    // 1. Direct staff subcollection stream (works in owner preview or when permissions permit)
-    const staffRef = collection(db, 'businesses', bizId, 'staff');
-    const unsubscribeStaff = onSnapshot(staffRef, (snap) => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DeliveryBoyStaff[];
-      if (list.length > 0) {
+    // 1. Staff stream:
+    // If Kitchen Owner in preview mode -> listens to entire staff collection
+    // If Rider (role 'driver') -> listens ONLY to their own staff document (businesses/{bizId}/staff/{staffId})
+    let unsubscribeStaff = () => {};
+    if (isKitchenOwnerUser) {
+      const staffRef = collection(db, 'businesses', bizId, 'staff');
+      unsubscribeStaff = onSnapshot(staffRef, (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as DeliveryBoyStaff[];
         setAllStaff(list);
-        
-        // If a rider is selected, update shift status
-        if (selectedBoyId) {
-          const found = list.find(s => s.id === selectedBoyId || s.name === selectedBoyId);
-          if (found) {
-            const hasLocalShift = safeStorageGet('driver_shift_active') === 'true' && safeStorageGet('driver_shift_date') === todayStr;
-            const isOnlineInDb = found.status === 'Online' && found.lastAttendanceDate === todayStr;
-            setIsShiftActive(isOnlineInDb || hasLocalShift);
-            if (found.attendanceMarkedAt) {
-              setPunchInTime(found.attendanceMarkedAt);
-            } else if (hasLocalShift && safeStorageGet('driver_punch_in_time')) {
-              setPunchInTime(safeStorageGet('driver_punch_in_time'));
-            }
-
-            // ENFORCE ACCOUNT STATUS: If rider was deactivated or deleted by owner
-            if ((found.status as string) === 'Inactive' || (found as any).isDeleted) {
-              safeStorageSet('driver_is_logged_in', 'false');
-              safeStorageSet('driver_session_expires', '0');
-              setLoginError("This delivery partner account has been deactivated by the kitchen manager.");
-              setLoginModalOpen(true);
-            }
-          }
+        setLoading(false);
+      }, (err) => {
+        console.warn("Owner staff collection stream error:", err);
+        setSyncError("Staff: " + err.message);
+        setLoading(false);
+      });
+    } else if (selectedBoyId) {
+      const ownStaffDocRef = doc(db, 'businesses', bizId, 'staff', selectedBoyId);
+      unsubscribeStaff = onSnapshot(ownStaffDocRef, (snap) => {
+        if (!snap.exists()) {
+          signOut(auth).catch(() => {});
+          setLoginError("This delivery partner account no longer exists.");
+          setLoginModalOpen(true);
+          return;
         }
-      }
-      setLoading(false);
-    }, (err) => {
-      console.warn("Direct staff stream notice (using global manifest):", err?.message);
-      setLoading(false);
-    });
+        const sData = snap.data();
+
+        // Enforce Deactivation
+        if (sData.status === 'Inactive' || sData.active === false || sData.isDeleted === true) {
+          signOut(auth).catch(() => {});
+          setLoginError("This delivery partner account has been deactivated by the kitchen manager.");
+          setLoginModalOpen(true);
+          return;
+        }
+
+        // Enforce Updated PIN
+        if (initialPinVersionRef.current === null) {
+          initialPinVersionRef.current = sData.pinVersion || null;
+        } else if (sData.pinVersion && initialPinVersionRef.current !== sData.pinVersion) {
+          signOut(auth).catch(() => {});
+          setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
+          setLoginModalOpen(true);
+          return;
+        }
+
+        if (sData.name) {
+          setDriverDisplayName(sData.name);
+        }
+        const hasLocalShift = safeStorageGet('driver_shift_active') === 'true' && safeStorageGet('driver_shift_date') === todayStr;
+        const isOnlineInDb = sData.status === 'Online' && sData.lastAttendanceDate === todayStr;
+        setIsShiftActive(isOnlineInDb || hasLocalShift);
+        if (sData.attendanceMarkedAt) {
+          setPunchInTime(sData.attendanceMarkedAt);
+        }
+        setAllStaff([{ id: snap.id, ...sData } as DeliveryBoyStaff]);
+        setLoading(false);
+      }, (err) => {
+        console.warn("Rider staff doc stream error:", err);
+        setSyncError("Rider profile: " + err.message);
+        setLoading(false);
+      });
+    }
 
     // 2. Direct customers subcollection stream
     const custRef = collection(db, 'businesses', bizId, 'customers');
     const unsubscribeCust = onSnapshot(custRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as GlobalCustomer[];
       if (list.length > 0) setCustomers(list);
-    }, (err) => console.warn("Direct customer stream notice (using global manifest):", err?.message));
+    }, (err) => {
+      console.warn("Customers stream error:", err);
+      setSyncError("Customers: " + err.message);
+    });
 
     // 3. Direct plans stream
     const plansRef = collection(db, 'businesses', bizId, 'plans');
     const unsubscribePlans = onSnapshot(plansRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       if (list.length > 0) setPlans(list);
-    }, (err) => console.warn("Direct plans stream notice:", err?.message));
+    }, (err) => {
+      console.warn("Plans stream error:", err);
+      setSyncError("Plans: " + err.message);
+    });
 
     // 4. Direct branches stream
     const branchesRef = collection(db, 'businesses', bizId, 'branches');
     const unsubscribeBranches = onSnapshot(branchesRef, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       if (list.length > 0) setBranches(list);
-    }, (err) => console.warn("Direct branches stream notice:", err?.message));
+    }, (err) => {
+      console.warn("Branches stream error:", err);
+      setSyncError("Branches: " + err.message);
+    });
 
-    // 5. Direct today's delivery logs stream
-    const logsRef = collection(db, 'businesses', bizId, 'delivery_logs');
-    const unsubscribeLogs = onSnapshot(logsRef, (snap) => {
+    // 5. Today's delivery logs stream (restricted to date == todayStr)
+    const logsQuery = query(
+      collection(db, 'businesses', bizId, 'delivery_logs'), 
+      where('date', '==', todayStr)
+    );
+    const unsubscribeLogs = onSnapshot(logsQuery, (snap) => {
       const map: Record<string, any> = {};
       snap.docs.forEach(d => {
         const data = d.data();
-        if (data.date === todayStr) {
-          map[`${data.customerId}_${data.mealTime}`] = { id: d.id, ...data };
-        }
+        map[`${data.customerId}_${data.mealTime}`] = { id: d.id, ...data };
       });
       setDeliveryLogs(prev => ({ ...prev, ...map }));
-    }, (err) => console.warn("Direct logs stream notice:", err?.message));
+    }, (err) => {
+      console.warn("Delivery logs stream error:", err);
+      setSyncError("Delivery logs: " + err.message);
+    });
 
     // 6. Direct business profile stream for branding & logo
     const bizDocRef = doc(db, 'businesses', bizId);
@@ -542,7 +505,10 @@ export const DriverPortal: React.FC = () => {
         if (data.businessName) setBusinessName(data.businessName);
         if (data.logoUrl) setLogoUrl(data.logoUrl);
       }
-    }, (err) => console.warn("Driver biz profile err:", err?.message));
+    }, (err) => {
+      console.warn("Kitchen profile stream error:", err);
+      setSyncError("Kitchen profile: " + err.message);
+    });
 
     // 7. REAL-TIME DRIVER MANIFEST in per-tenant subcollection (businesses/{bizId}/driver_manifest/{staffId})
     let unsubscribeManifest = () => {};
@@ -558,7 +524,10 @@ export const DriverPortal: React.FC = () => {
           if (data.logoUrl) setLogoUrl(data.logoUrl);
           setLoading(false);
         }
-      }, (err) => console.warn("Driver manifest stream notice:", err?.message));
+      }, (err) => {
+        console.warn("Driver manifest stream error:", err);
+        setSyncError("Manifest: " + err.message);
+      });
     }
 
     // 8. REAL-TIME DRIVER STATUS in per-tenant subcollection (businesses/{bizId}/driver_status/{staffId})
@@ -578,10 +547,11 @@ export const DriverPortal: React.FC = () => {
             }
           }
         }
-      }, () => {});
+      }, (err) => {
+        console.warn("Driver status stream error:", err);
+        setSyncError("Status: " + err.message);
+      });
     }
-
-    const unsubscribeGlobalLogs = () => {};
 
     return () => {
       unsubscribeBiz();
@@ -591,10 +561,9 @@ export const DriverPortal: React.FC = () => {
       unsubscribeBranches();
       unsubscribeLogs();
       unsubscribeManifest();
-      unsubscribeGlobalLogs();
       unsubscribeStatus();
     };
-  }, [bizId, selectedBoyId, todayStr]);
+  }, [bizId, selectedBoyId, isKitchenOwnerUser, todayStr]);
 
   // GPS Watcher when shift is active (Module 4)
   useEffect(() => {
@@ -1353,7 +1322,7 @@ export const DriverPortal: React.FC = () => {
     }
   };
 
-  const handleVerifyLogin = async (mobileOverride?: string, boyIdOverride?: string) => {
+  const handleVerifyLogin = async (mobileOverride?: string) => {
     const rawMobile = mobileOverride || phoneInput;
     const digits = (rawMobile || '').replace(/\D/g, '').slice(-10);
     const pin = pinInput.trim();
@@ -1367,302 +1336,76 @@ export const DriverPortal: React.FC = () => {
       return;
     }
 
-    // Rate-limiting & brute-force protection
-    const now = Date.now();
-    const lockoutUntil = Number(safeStorageGet('driver_lockout_until') || 0);
-    if (lockoutUntil && now < lockoutUntil) {
-      const waitSec = Math.ceil((lockoutUntil - now) / 1000);
-      setLoginError(`Too many failed login attempts. Please wait ${waitSec} seconds before trying again.`);
-      return;
-    }
-
     setVerifying(true);
     setLoginError(null);
+    setLastErrorCode(null);
 
-    const recordFailedAttempt = () => {
-      const attempts = (Number(safeStorageGet('driver_failed_attempts') || 0)) + 1;
-      safeStorageSet('driver_failed_attempts', String(attempts));
-      if (attempts >= 5) {
-        safeStorageSet('driver_lockout_until', String(Date.now() + 60000)); // 60-second lockout
-        setLoginError("Too many failed login attempts. Please wait 1 minute before trying again.");
-      } else {
-        setLoginError("Unable to verify your mobile number or PIN. Please check your details and try again.");
-      }
-      setVerifying(false);
-    };
-
-    const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string, pinVersion?: string) => {
-      safeStorageSet('driver_failed_attempts', '0');
-      safeStorageSet('driver_lockout_until', '0');
-      setIsKitchenOwnerUser(false);
-      safeStorageSet('driver_is_logged_in', 'true');
-      safeStorageSet('driver_session_expires', String(Date.now() + 7 * 24 * 60 * 60 * 1000));
-      safeStorageSet('driver_session_token', btoa(`${digits}:${sId || 'staff'}:${Date.now()}`));
-      if (pinVersion) safeStorageSet('driver_pin_version', pinVersion);
-      setDriverDisplayName(name);
-      safeStorageSet('driver_name', name);
-      safeStorageSet('driver_phone', digits);
-      // Clean up any legacy plaintext PIN storage to preserve security
-      safeStorageSet('driver_auth_pin', '');
-      safeStorageSet('driver_token_pin', '');
-      if (bId) {
-        setBizId(bId);
-        safeStorageSet('driver_biz_id', bId);
-      }
-      if (sId) {
-        setSelectedBoyId(sId);
-        safeStorageSet('driver_boy_id', sId);
-      }
-      if (brId) safeStorageSet('driver_branch_id', brId);
-      setLoginModalOpen(false);
-      setPinInput('');
-      setVerifying(false);
-      showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
-    };
-
-    // Helper: Secure PIN verification (bcrypt hash check with backward-compatible plaintext fallback & auto-migration)
-    const verifyPinAgainstRecord = (candidatePin: string, record: any): boolean => {
-      if (record.pinHash) {
-        try {
-          if (bcrypt.compareSync(candidatePin, record.pinHash)) {
-            return true;
-          }
-        } catch (e) {
-          console.warn("bcrypt comparison note:", e);
-        }
-      }
-      if (record.pin) {
-        return candidatePin === String(record.pin).trim();
-      }
-      return false;
-    };
-
-    // 1. Primary: Server-verified Cloud Function callable (if deployed)
     try {
       const result = await driverLoginCallable({
         phone: digits,
         pin: pin
       });
 
-      if (result?.data?.token) {
-        await signInWithCustomToken(auth, result.data.token);
-        const driverInfo = result.data.driver;
-        handleLoginSuccess(driverInfo.name, driverInfo.bizId, driverInfo.staffId, driverInfo.branchId);
-        return;
+      if (!result?.data?.token) {
+        throw new Error("No token returned from server.");
       }
-    } catch (callableErr: any) {
-      const errorMsg = callableErr?.message || '';
-      const errorCode = callableErr?.code || '';
 
-      if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
-        setLoginError(errorMsg);
-        setVerifying(false);
-        return;
+      const { token, driver } = result.data;
+      await signInWithCustomToken(auth, token);
+      const idToken = await auth.currentUser?.getIdTokenResult(true);
+
+      const claims = idToken?.claims || {};
+      if (claims.role !== 'driver' || !claims.bizId || !claims.staffId) {
+        throw new Error("Invalid credentials or driver claims.");
       }
+
+      const { bizId: cBiz, staffId: cStaff, branchId: cBranch } = claims as any;
+      setBizId(cBiz);
+      setSelectedBoyId(cStaff);
+      if (cBranch) safeStorageSet('driver_branch_id', cBranch);
+      setDriverDisplayName(driver?.name || 'Delivery Partner');
+      safeStorageSet('driver_phone', digits);
+      setPinInput('');
+      setLoginModalOpen(false);
+      setVerifying(false);
+      showToast(`Welcome back, ${driver?.name || 'Partner'}! Ready for today's deliveries.`);
+    } catch (err: any) {
+      console.error("Driver login failure:", err?.code, err?.message, err);
+      const errCode = err?.code || '';
+      const errMsg = err?.message || '';
+      setLastErrorCode(errCode || 'LOGIN_ERROR');
+
+      if (errCode === 'functions/resource-exhausted' || errMsg.includes('locked') || errMsg.includes('attempts remaining')) {
+        setLoginError(errMsg || "Too many failed attempts. Account temporarily locked for 15 minutes.");
+      } else if (
+        errCode === 'functions/unauthenticated' || 
+        errCode === 'functions/not-found' || 
+        errMsg.includes('Invalid mobile number or PIN') || 
+        errMsg.includes('deactivated') ||
+        errMsg.includes('expired')
+      ) {
+        setLoginError(errMsg || "Invalid mobile number or PIN.");
+      } else if (
+        errCode === 'functions/unavailable' || 
+        errCode === 'functions/internal' || 
+        errCode === 'functions/cancelled' || 
+        !navigator.onLine
+      ) {
+        setLoginError("Cannot reach server. Check internet and try again.");
+      } else {
+        setLoginError(errMsg || "Cannot reach server. Check internet and try again.");
+      }
+      setVerifying(false);
     }
-
-    // 2. Direct Driver Auth Directory Lookup (Instant O(1) lookup on independent devices)
-    const possibleKeys = Array.from(new Set([
-      digits,
-      `+91${digits}`,
-      `91${digits}`,
-      (rawMobile || '').trim()
-    ])).filter(Boolean);
-
-    for (const key of possibleKeys) {
-      try {
-        const lookupRef = doc(db, 'driver_auth_lookup', key);
-        const lookupSnap = await getDoc(lookupRef);
-
-        if (lookupSnap.exists()) {
-          const lookupData = lookupSnap.data();
-
-          // Deactivation Check (Test 10)
-          if (lookupData.active === false || lookupData.isDeleted === true || lookupData.status === 'Inactive') {
-            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-            setVerifying(false);
-            return;
-          }
-
-          if (verifyPinAgainstRecord(pin, lookupData)) {
-            // Auto-migrate plaintext PIN to bcrypt hash if not yet hashed
-            if (!lookupData.pinHash) {
-              const pinHash = bcrypt.hashSync(pin, 10);
-              setDoc(lookupRef, { pinHash, active: true, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
-            }
-            const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
-            handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId, lookupData.pinVersion);
-            return;
-          } else {
-            recordFailedAttempt();
-            return;
-          }
-        }
-      } catch (lookupErr) {
-        console.warn(`Direct driver_auth_lookup check note (${key}):`, lookupErr);
-      }
-    }
-
-    // 3. Fallback: Staff subcollection check if bizId is known from URL, token, or local storage
-    const effectiveBiz = bizId || getParam('biz') || safeStorageGet('driver_biz_id') || safeStorageGet('last_active_business_id');
-    if (effectiveBiz) {
-      try {
-        const staffQuery = query(collection(db, 'businesses', effectiveBiz, 'staff'));
-        const snap = await getDocs(staffQuery);
-        const matched = snap.docs
-          .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-          .find(s => {
-            const m = (s.mobile || '').replace(/\D/g, '');
-            return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-          });
-
-        if (matched) {
-          // Deactivation check
-          if (((matched as any).status as string) === 'Inactive' || (matched as any).isDeleted) {
-            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-            setVerifying(false);
-            return;
-          }
-
-          if (verifyPinAgainstRecord(pin, matched)) {
-            const pinHash = (matched as any).pinHash || bcrypt.hashSync(pin, 10);
-            // Auto-heal driver_auth_lookup mapping with bcrypt hash
-            setDoc(doc(db, 'driver_auth_lookup', digits), {
-              bizId: effectiveBiz,
-              staffId: matched.id,
-              name: matched.name,
-              mobile: digits,
-              pinHash: pinHash,
-              branchId: matched.branchId || '',
-              active: true,
-              updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
-
-            handleLoginSuccess(matched.name, effectiveBiz, matched.id, matched.branchId);
-            return;
-          } else {
-            recordFailedAttempt();
-            return;
-          }
-        }
-      } catch (staffErr) {
-        console.warn("Direct staff query fallback check note:", staffErr);
-      }
-    }
-
-    // 4. Fallback: Collection group query across staff to auto-discover tenant across all kitchens
-    try {
-      const cgQuery = query(collectionGroup(db, 'staff'));
-      const cgSnap = await getDocs(cgQuery);
-      const matchedDoc = cgSnap.docs.find(d => {
-        const staffDocData = d.data() as any;
-        const m = ((staffDocData.mobile || '').replace(/\D/g, ''));
-        return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-      });
-
-      if (matchedDoc) {
-        const staffData = matchedDoc.data() as any;
-        const parentBizId = matchedDoc.ref.parent.parent?.id;
-
-        if (staffData.status === 'Inactive' || staffData.isDeleted) {
-          setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-          setVerifying(false);
-          return;
-        }
-
-        if (verifyPinAgainstRecord(pin, staffData)) {
-          const pinHash = staffData.pinHash || bcrypt.hashSync(pin, 10);
-          if (parentBizId) {
-            setDoc(doc(db, 'driver_auth_lookup', digits), {
-              bizId: parentBizId,
-              staffId: matchedDoc.id,
-              name: staffData.name || 'Delivery Partner',
-              mobile: digits,
-              pinHash: pinHash,
-              branchId: staffData.branchId || '',
-              active: true,
-              updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
-          }
-          handleLoginSuccess(staffData.name || 'Delivery Partner', parentBizId, matchedDoc.id, staffData.branchId);
-          return;
-        } else {
-          recordFailedAttempt();
-          return;
-        }
-      }
-    } catch (cgErr) {
-      console.warn("Collection group staff discovery note:", cgErr);
-    }
-
-    // 5. Fallback: Direct scan of businesses collection for registered staff
-    try {
-      const bizCollectionSnap = await getDocs(collection(db, 'businesses'));
-      for (const bDoc of bizCollectionSnap.docs) {
-        try {
-          const sSnap = await getDocs(collection(db, 'businesses', bDoc.id, 'staff'));
-          const found = sSnap.docs
-            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-            .find(s => {
-              const m = (s.mobile || '').replace(/\D/g, '');
-              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-            });
-
-          if (found) {
-            if (((found as any).status as string) === 'Inactive' || (found as any).isDeleted) {
-              setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-              setVerifying(false);
-              return;
-            }
-
-            if (verifyPinAgainstRecord(pin, found)) {
-              const pinHash = (found as any).pinHash || bcrypt.hashSync(pin, 10);
-              setDoc(doc(db, 'driver_auth_lookup', digits), {
-                bizId: bDoc.id,
-                staffId: found.id,
-                name: found.name || 'Delivery Partner',
-                mobile: digits,
-                pinHash: pinHash,
-                branchId: found.branchId || '',
-                active: true,
-                updatedAt: new Date().toISOString()
-              }, { merge: true }).catch(() => {});
-
-              handleLoginSuccess(found.name || 'Delivery Partner', bDoc.id, found.id, found.branchId);
-              return;
-            } else {
-              recordFailedAttempt();
-              return;
-            }
-          }
-        } catch {}
-      }
-    } catch (bSweepErr) {
-      console.warn("Businesses sweep note:", bSweepErr);
-    }
-
-    // 6. Global features fallback
-    try {
-      const featRef = doc(db, 'global_features', `driver_auth_${digits}`);
-      const featSnap = await getDoc(featRef);
-      if (featSnap.exists()) {
-        const featData = featSnap.data();
-        if (verifyPinAgainstRecord(pin, featData)) {
-          handleLoginSuccess(featData.name || 'Delivery Partner', featData.bizId, featData.staffId, featData.branchId);
-          return;
-        } else {
-          recordFailedAttempt();
-          return;
-        }
-      }
-    } catch (featErr) {}
-
-    setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);
-    setVerifying(false);
   };
 
-  const handleDriverLogout = () => {
+  const handleDriverLogout = async () => {
     if (window.confirm("Are you sure you want to log out of the Delivery Partner app?")) {
+      try {
+        await signOut(auth);
+      } catch (e) {
+        console.warn("Sign out err:", e);
+      }
       safeStorageSet('driver_is_logged_in', 'false');
       safeStorageSet('driver_session_expires', '0');
       safeStorageSet('driver_session_token', '');
@@ -1673,10 +1416,14 @@ export const DriverPortal: React.FC = () => {
       safeStorageSet('driver_name', '');
       safeStorageSet('driver_phone', '');
       safeStorageSet('driver_biz_id', '');
+      safeStorageSet('driver_shift_active', 'false');
+      safeStorageSet('driver_punch_in_time', '');
       setBizId('');
       setSelectedBoyId('');
       setDriverDisplayName('');
       setPinInput('');
+      setIsShiftActive(false);
+      setPunchInTime(null);
       setLoginModalOpen(true);
       showToast("Logged out successfully.");
     }
@@ -1789,16 +1536,31 @@ export const DriverPortal: React.FC = () => {
             </button>
           </form>
 
-          {/* Quick Connect for Owner or Demo Route */}
-          <div className="pt-2 border-t border-white/10 space-y-2">
-            {auth.currentUser && (
+          {/* Having Trouble Diagnostic Link & Owner Session Warning */}
+          <div className="pt-2 border-t border-white/10 space-y-2.5">
+            <div className="flex items-center justify-between text-xs px-1">
               <button
-                onClick={() => setBizId(auth.currentUser!.uid)}
-                className="w-full py-2 px-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition-all active:scale-95"
+                type="button"
+                onClick={() => setShowTroubleModal(true)}
+                className="text-[11px] text-amber-400 hover:text-amber-300 font-medium hover:underline inline-flex items-center gap-1"
               >
-                <span>Connect As Current Kitchen Owner</span>
-                <ArrowRight size={14} className="text-amber-400" />
+                <HelpCircle size={13} />
+                <span>Having trouble?</span>
               </button>
+              {lastErrorCode && (
+                <span className="text-[10px] text-slate-400 font-mono">
+                  Code: {lastErrorCode}
+                </span>
+              )}
+            </div>
+
+            {auth.currentUser && !auth.currentUser.uid.startsWith('driver_') && (
+              <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[11px] text-amber-300 flex items-start gap-2 text-left">
+                <Info size={14} className="shrink-0 mt-0.5 text-amber-400" />
+                <span>
+                  <strong>Notice:</strong> Signing in as a delivery partner replaces an owner session in this browser. Please test in a private/incognito window.
+                </span>
+              </div>
             )}
 
             <button
@@ -1810,6 +1572,68 @@ export const DriverPortal: React.FC = () => {
               <span>Launch Demo Rider Route (Preview)</span>
             </button>
           </div>
+
+          {/* Diagnostic Modal */}
+          {showTroubleModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
+              <div className="glass-card bg-slate-900 border border-white/20 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-left text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <HelpCircle size={18} className="text-amber-400" />
+                    <h3 className="font-bold font-display text-base text-white">Login Diagnostics</h3>
+                  </div>
+                  <button onClick={() => setShowTroubleModal(false)} className="text-slate-400 hover:text-white">
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="space-y-2.5 text-xs">
+                  <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+                    <span className="text-slate-400">Network Status:</span>
+                    <span className={`font-bold flex items-center gap-1.5 ${typeof navigator !== 'undefined' && navigator.onLine ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <span className={`w-2 h-2 rounded-full ${typeof navigator !== 'undefined' && navigator.onLine ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                      {typeof navigator !== 'undefined' && navigator.onLine ? 'Online (Connected)' : 'Offline (No Internet)'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+                    <span className="text-slate-400">Last Error Code:</span>
+                    <span className="font-mono font-bold text-amber-300">
+                      {lastErrorCode || 'None'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-1.5 text-slate-300">
+                    <span className="font-bold text-white block">Troubleshooting Tips:</span>
+                    <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-400">
+                      <li>Confirm that your 10-digit mobile number matches the kitchen manager's record.</li>
+                      <li>Ensure your kitchen owner has assigned you a 4-digit PIN in Kitchen Settings.</li>
+                      <li>If locked out (5 failed attempts), wait 15 minutes before retrying.</li>
+                      <li>Ensure your phone has an active cellular or Wi-Fi data connection.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <a
+                  href={`https://wa.me/919999999999?text=${encodeURIComponent(`Hi ScaleKitchen Support, I am having trouble logging into the delivery partner app. Error code: ${lastErrorCode || 'N/A'}`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+                >
+                  <MessageSquare size={14} />
+                  <span>Contact WhatsApp Support</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTroubleModal(false)}
+                  className="w-full py-2 bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-semibold rounded-xl"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1922,6 +1746,22 @@ export const DriverPortal: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Non-dismissible Sync Problem Banner (Task A9) */}
+      {syncError && (
+        <div className="sticky top-14 z-50 bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-bold flex items-center justify-between border-b border-amber-600 shadow-lg">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="shrink-0 text-slate-950" />
+            <span>Sync problem: {syncError}. Some data may be delayed.</span>
+          </div>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="px-2.5 py-1 bg-black/20 hover:bg-black/30 rounded text-[11px] font-bold shrink-0 ml-2"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Kitchen Owner Preview Header Banner */}
       {isKitchenOwnerUser && (
@@ -2600,7 +2440,7 @@ export const DriverPortal: React.FC = () => {
                   Enter your registered phone & 4-digit PIN
                 </p>
               </div>
-              {selectedBoyId && isDriverLoggedIn && (
+              {bizId && (selectedBoyId || isKitchenOwnerUser) && (
                 <button 
                   onClick={() => setLoginModalOpen(false)} 
                   className="text-slate-400 hover:text-white p-1 hover:bg-white/10 rounded-lg transition-colors"
@@ -2703,47 +2543,94 @@ export const DriverPortal: React.FC = () => {
               </button>
             </form>
 
-            {allStaff.length > 0 && (
-              <>
-                <div className="relative flex py-1 items-center">
-                  <div className="flex-grow border-t border-white/10"></div>
-                  <span className="flex-shrink mx-2 text-[10px] text-slate-400 uppercase font-semibold">Or Select Profile</span>
-                  <div className="flex-grow border-t border-white/10"></div>
-                </div>
-
-                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                  {allStaff.map(boy => (
-                    <button
-                      key={boy.id}
-                      type="button"
-                      onClick={() => {
-                        setPhoneInput(boy.mobile || '');
-                        setLoginError(null);
-                        showToast(`Selected ${boy.name}. Please enter your 4-digit PIN.`);
-                      }}
-                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
-                        selectedBoyId === boy.id 
-                          ? 'bg-amber-500/20 border-amber-500/50 text-white' 
-                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-bold text-xs text-white">{boy.name}</div>
-                        <div className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No contact number'}</div>
-                      </div>
-                      <Key size={14} className="text-amber-400" />
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {allStaff.length === 0 && (
-              <div className="pt-2 border-t border-white/10 text-center space-y-0.5">
-                <p className="text-[11px] font-medium text-slate-400">ScaleKitchen Delivery Partner Portal</p>
-                <p className="text-[10px] text-slate-500">Contact your kitchen owner if you need your 4-digit PIN.</p>
+            <div className="pt-2 border-t border-white/10 space-y-2">
+              <div className="flex items-center justify-between text-xs px-1">
+                <button
+                  type="button"
+                  onClick={() => setShowTroubleModal(true)}
+                  className="text-[11px] text-amber-400 hover:text-amber-300 font-medium hover:underline inline-flex items-center gap-1"
+                >
+                  <HelpCircle size={13} />
+                  <span>Having trouble?</span>
+                </button>
+                {lastErrorCode && (
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Code: {lastErrorCode}
+                  </span>
+                )}
               </div>
-            )}
+
+              {auth.currentUser && !auth.currentUser.uid.startsWith('driver_') && (
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[10px] text-amber-300 flex items-start gap-2 text-left">
+                  <Info size={13} className="shrink-0 mt-0.5 text-amber-400" />
+                  <span>
+                    Signing in as a delivery partner replaces an owner session in this browser. Please test in a private/incognito window.
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diagnostic Modal (accessible from login modal) */}
+      {showTroubleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
+          <div className="glass-card bg-slate-900 border border-white/20 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-left text-white">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <HelpCircle size={18} className="text-amber-400" />
+                <h3 className="font-bold font-display text-base text-white">Login Diagnostics</h3>
+              </div>
+              <button onClick={() => setShowTroubleModal(false)} className="text-slate-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+                <span className="text-slate-400">Network Status:</span>
+                <span className={`font-bold flex items-center gap-1.5 ${typeof navigator !== 'undefined' && navigator.onLine ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <span className={`w-2 h-2 rounded-full ${typeof navigator !== 'undefined' && navigator.onLine ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                  {typeof navigator !== 'undefined' && navigator.onLine ? 'Online (Connected)' : 'Offline (No Internet)'}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+                <span className="text-slate-400">Last Error Code:</span>
+                <span className="font-mono font-bold text-amber-300">
+                  {lastErrorCode || 'None'}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-1.5 text-slate-300">
+                <span className="font-bold text-white block">Troubleshooting Tips:</span>
+                <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-400">
+                  <li>Confirm that your 10-digit mobile number matches the kitchen manager's record.</li>
+                  <li>Ensure your kitchen owner has assigned you a 4-digit PIN in Kitchen Settings.</li>
+                  <li>If locked out (5 failed attempts), wait 15 minutes before retrying.</li>
+                  <li>Ensure your phone has an active cellular or Wi-Fi data connection.</li>
+                </ul>
+              </div>
+            </div>
+
+            <a
+              href={`https://wa.me/919999999999?text=${encodeURIComponent(`Hi ScaleKitchen Support, I am having trouble logging into the delivery partner app. Error code: ${lastErrorCode || 'N/A'}`)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+            >
+              <MessageSquare size={14} />
+              <span>Contact WhatsApp Support</span>
+            </a>
+
+            <button
+              type="button"
+              onClick={() => setShowTroubleModal(false)}
+              className="w-full py-2 bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-semibold rounded-xl"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

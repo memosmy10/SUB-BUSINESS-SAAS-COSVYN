@@ -112,14 +112,23 @@ export const ManagerPortal: React.FC = () => {
     if (!bizId || !loggedInManager) return;
     localStorage.setItem('manager_biz_id', bizId);
 
-    const bizDocRef = doc(db, 'businesses', bizId);
-    const unsubBiz = onSnapshot(bizDocRef, (snap) => {
+    const publicProfileRef = doc(db, 'businesses', bizId, 'portal_public', 'profile');
+    const unsubBiz = onSnapshot(publicProfileRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.businessName) setBusinessName(data.businessName);
         if (data.logoUrl) setLogoUrl(data.logoUrl);
       }
-    }, (err) => console.warn("Biz profile fetch error:", err));
+    }, () => {
+      const bizDocRef = doc(db, 'businesses', bizId);
+      onSnapshot(bizDocRef, (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.businessName) setBusinessName(data.businessName);
+          if (data.logoUrl) setLogoUrl(data.logoUrl);
+        }
+      }, () => {});
+    });
 
     const branchesRef = collection(db, 'businesses', bizId, 'branches');
     const unsubBranches = onSnapshot(branchesRef, (snap) => {

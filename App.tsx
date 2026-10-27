@@ -283,70 +283,77 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
   const { data: branches = [] } = useStreamCollection<any>('branches');
   const { data: deliveryLogs = [] } = useStreamCollection<any>('delivery_logs');
 
-  // Auto-sync real-time driver manifest to global_features so delivery boys have full instant access
+  // Least-privilege projection sync: Public portal branding, driver profiles, and assigned route stops
   useEffect(() => {
     if (!currentUser?.uid) return;
     const bizId = currentUser.uid;
-    const manifestRef = doc(db, 'global_features', `driver_manifest_${bizId}`);
-    
-    // Clean and serialize customer data for driver portal
-    const serializedCustomers = customers.map((c: any) => ({
-      id: c.id,
-      name: c.name || 'Customer',
-      mobile: c.mobile || '',
-      address: c.address || '',
-      area: c.area || '',
-      branchId: c.branchId || '',
-      deliveryBoyId: c.deliveryBoyId || '',
-      deliveryBoyName: c.deliveryBoyName || '',
-      routeOrder: typeof c.routeOrder === 'number' ? c.routeOrder : 999,
-      isActive: c.isActive !== false,
-      activePlans: c.activePlans || [],
-      planId: c.planId || '',
-      planName: c.planName || '',
-      mealTime: c.mealTime || 'Lunch',
-      startDate: c.startDate || '',
-      endDate: c.endDate || '',
-      weekdays: c.weekdays || [1, 2, 3, 4, 5, 6],
-      pauses: c.pauses || [],
-      notes: c.notes || '',
-      starredQuery: c.starredQuery || '',
-      highlightMark: c.highlightMark || '',
-      isStarred: Boolean(c.isStarred),
-      reusableBoxEnabled: Boolean(c.reusableBoxEnabled),
-      reusableBoxType: c.reusableBoxType || '',
-      uncollectedBoxesCount: Number(c.uncollectedBoxesCount) || 0,
-      boxCollections: c.boxCollections || {}
-    }));
+    const nowIso = new Date().toISOString();
+    const todayStr = nowIso.split('T')[0];
 
-    setDoc(manifestRef, {
-      bizId,
+    // 1. Sync public kitchen branding projection (safe for public/driver portal viewing)
+    setDoc(doc(db, 'businesses', bizId, 'portal_public', 'profile'), {
       businessName: businessData?.businessName || 'ScaleKitchen',
       logoUrl: businessData?.logoUrl || '',
-      updatedAt: new Date().toISOString(),
-      customers: serializedCustomers,
-      plans: plans || [],
-      staff: staff || [],
-      branches: branches || [],
-      deliveryLogs: deliveryLogs || []
-    }, { merge: true }).catch(err => console.warn("Driver manifest background sync:", err));
+      updatedAt: nowIso
+    }, { merge: true }).catch(err => console.warn("Portal public branding sync err:", err));
 
-    // Also sync each delivery boy's auth document with their name, PIN, and stats
+    // 2. Sync minimal driver profiles projection (no credentials, no salary info)
     staff.forEach((boy: any) => {
+      if (!boy.id) return;
       const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
-      if (cleanPhone) {
-        setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), {
-          bizId,
-          staffId: boy.id,
-          name: boy.name,
-          mobile: cleanPhone,
-          pin: (boy.pin || '1234').trim(),
-          branchId: boy.branchId || '',
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(() => {});
-      }
+      setDoc(doc(db, 'businesses', bizId, 'driver_profiles', boy.id), {
+        id: boy.id,
+        staffId: boy.id,
+        name: boy.name || 'Delivery Partner',
+        mobile: cleanPhone,
+        branchId: boy.branchId || '',
+        status: boy.status || 'Active',
+        active: boy.status !== 'Inactive',
+        updatedAt: nowIso
+      }, { merge: true }).catch(() => {});
     });
-  }, [currentUser?.uid, customers, plans, staff, branches, deliveryLogs, businessData]);
+
+    // 3. Sync operational route stops per rider (strictly minimal operational data, no financial/notes/PINs)
+    staff.forEach((boy: any) => {
+      if (!boy.id) return;
+      const boyId = String(boy.id).trim();
+      const boyName = String(boy.name || '').trim().toLowerCase();
+
+      // Find customers assigned to this rider
+      const assignedCustomers = (customers || []).filter((c: any) => {
+        if (!c || c.isActive === false) return false;
+        const cBoyId = String(c.deliveryBoyId || '').trim();
+        const cBoyName = String(c.deliveryBoyName || '').trim().toLowerCase();
+        return (cBoyId && cBoyId === boyId) || (cBoyName && cBoyName === boyName);
+      });
+
+      // Update route stop projection for each assigned customer
+      assignedCustomers.forEach((c: any) => {
+        const stopId = c.id;
+        const matchingLog = (deliveryLogs || []).find((l: any) => l.customerId === c.id && l.date === todayStr);
+
+        setDoc(doc(db, 'businesses', bizId, 'driver_routes', boyId, 'stops', stopId), {
+          id: stopId,
+          stopId: stopId,
+          customerId: c.id,
+          customerName: c.name || 'Customer',
+          mobile: c.mobile || '',
+          address: c.address || '',
+          area: c.area || '',
+          branchId: c.branchId || '',
+          deliveryBoyId: boyId,
+          routeOrder: typeof c.routeOrder === 'number' ? c.routeOrder : 999,
+          mealTime: c.mealTime || 'Lunch',
+          planName: c.planName || '',
+          reusableBoxEnabled: Boolean(c.reusableBoxEnabled),
+          reusableBoxType: c.reusableBoxType || '',
+          uncollectedBoxesCount: Number(c.uncollectedBoxesCount) || 0,
+          deliveryStatus: matchingLog?.status || 'Pending',
+          updatedAt: nowIso
+        }, { merge: true }).catch(() => {});
+      });
+    });
+  }, [currentUser?.uid, customers, staff, deliveryLogs, businessData]);
 
   // FIX: CANONICAL UNIFIED CALCULATION FOR NOTIFICATIONS (ZERO DATA INCONSISTENCY)
   const expiringCustomers = React.useMemo(() => {

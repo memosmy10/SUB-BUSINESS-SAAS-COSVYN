@@ -3,7 +3,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // =========================================================================
-    // SCALEKITCHEN PHASE 2: MULTI-TENANT ISOLATED SECURITY RULES
+    // SCALEKITCHEN BY COSVYN: PRODUCTION MULTI-TENANT ISOLATED SECURITY RULES
     // =========================================================================
 
     // 1. HELPER: Super Admin check with email verification OR custom admin claim
@@ -47,7 +47,7 @@ service cloud.firestore {
     // GLOBAL SYSTEM COLLECTIONS
     // =========================================================================
 
-    // PUBLIC PRICING & CONFIGURATION (The ONLY public read in the entire SaaS)
+    // PUBLIC CONFIGURATION & PLANS
     match /global_settings/{docId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -64,15 +64,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // DRIVER AUTH LOOKUP DIRECTORY (Direct rider login & dispatch lookup by 10-digit mobile)
+    // DRIVER AUTH LOOKUP DIRECTORY (Server-side Cloud Functions only)
     match /driver_auth_lookup/{mobileDigits} {
-      // Direct single-document get allowed so riders can look up their assigned kitchen on independent devices
-      allow get: if true;
-      // Listing is strictly blocked to prevent driver scraping
-      allow list: if false;
-      // Allow owners and backend to register/update driver auth mappings
-      allow create, update: if true;
-      allow delete: if isAdmin();
+      allow read, write: if false;
     }
 
     // FREE TRIAL CLAIM REGISTRY (Server-side Cloud Functions only)
@@ -113,22 +107,16 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // =========================================================================
-    // PHASE 3: PAYMENT ORDERS & SECRETS (Cloud Functions Admin SDK ONLY)
-    // =========================================================================
-
-    // Orders collection: read-only for order owner or admin, writeable only by Admin/Cloud Functions
+    // ORDERS & PAYMENTS (Cloud Functions Admin SDK ONLY)
     match /orders/{orderId} {
       allow read: if isAdmin() || (request.auth != null && resource.data.bizId == request.auth.uid);
       allow write: if isAdmin();
     }
 
-    // Processed payments: idempotency lock for webhooks and callables (Functions Admin SDK ONLY)
     match /processed_payments/{paymentId} {
       allow read, write: if isAdmin();
     }
 
-    // Gemini rate limits: internal to Cloud Functions
     match /gemini_rate_limits/{uid} {
       allow read, write: if isAdmin();
     }
@@ -138,92 +126,118 @@ service cloud.firestore {
     // =========================================================================
 
     match /businesses/{userId} {
-      // 1. Root Business Document
-      allow get, list: if true;
-      allow create, update: if true;
+      // 1. Root Business Document (Owner, Manager, Admin)
+      allow get: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if isOwner(userId) || isAdmin();
       allow delete: if isOwner(userId) || isAdmin();
 
-      // 2. Staff (Delivery Personnel)
-      match /staff/{staffId} {
-        allow read, write: if true;
+      // 2. Public Kitchen Branding Projection (Safe for public/driver portal)
+      match /portal_public/{docId} {
+        allow read: if true;
+        allow write: if isOwner(userId) || isAdmin();
       }
 
-      // 3. Customers (Subscribers - Guaranteed permanent writes and deletes)
-      match /customers/{customerId} {
-        allow read, write: if true;
+      // 3. Driver Profile Projection (Only owner, admin, or the specific driver)
+      match /driver_profiles/{staffId} {
+        allow read: if isOwner(userId) || isAdmin() || (isTenantDriver(userId) && request.auth.token.staffId == staffId);
+        allow write: if isOwner(userId) || isAdmin();
       }
 
-      // 4. Meal Plans
-      match /plans/{planId} {
-        allow read, write: if true;
+      // 4. Assigned Route Stops (Only owner, admin, or the specific driver assigned to route)
+      match /driver_routes/{staffId}/stops/{stopId} {
+        allow read: if isOwner(userId) || isAdmin() || (isTenantDriver(userId) && request.auth.token.staffId == staffId);
+        allow write: if isOwner(userId) || isAdmin() || (isTenantDriver(userId) && request.auth.token.staffId == staffId);
       }
 
-      // 5. Kitchen Branches
-      match /branches/{branchId} {
-        allow read, write: if true;
-      }
-
-      // 6. Delivery Logs (Daily Meal Delivery & Box Recollection)
-      match /delivery_logs/{logId} {
-        allow read, write: if true;
-      }
-
-      // 7. Per-Driver Manifest
-      match /driver_manifest/{staffId} {
-        allow read, write: if true;
-      }
-
-      // 8. Per-Driver Real-Time Status & Location
+      // 5. Per-Driver Real-Time Status & Location
       match /driver_status/{staffId} {
-        allow read, write: if true;
+        allow read: if isOwner(userId) || isAdmin() || isTenantManager(userId) || (isTenantDriver(userId) && request.auth.token.staffId == staffId);
+        allow write: if isOwner(userId) || isAdmin() || (isTenantDriver(userId) && request.auth.token.staffId == staffId);
       }
 
-      // 9. Branch Managers Collection
+      // 6. Driver Shift Sessions
+      match /driver_sessions/{sessionId} {
+        allow read: if isOwner(userId) || isAdmin() || isTenantManager(userId);
+        allow write: if isOwner(userId) || isAdmin() || isTenantDriver(userId);
+      }
+
+      // 7. Staff Subcollection (Full Staff records with salaries/hashes - Strictly Owner, Manager, Admin)
+      match /staff/{staffId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+
+      // 8. Customers (Subscribers - Full financial/PII data - Strictly Owner, Manager, Admin)
+      match /customers/{customerId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+
+      // 9. Meal Plans
+      match /plans/{planId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // 10. Kitchen Branches
+      match /branches/{branchId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // 11. Delivery Logs
+      match /delivery_logs/{logId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow write: if isOwner(userId) || isTenantDriver(userId) || isAdmin();
+      }
+
+      // 12. Branch Managers Collection
       match /managers/{managerId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isAdmin();
       }
 
-      // 10. Manager Audit Logs
+      // 13. Manager Audit Logs
       match /manager_logs/{logId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
 
-      // 11. Reusable Box Types (Asset Configuration)
+      // 14. Reusable Box Types
       match /box_types/{boxId} {
-        allow read, write: if true;
+        allow read: if isOwner(userId) || isTenantDriver(userId) || isTenantManager(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
       }
 
-      // 12. Financial & Operational Collections
+      // 15. Financial Collections (Owner & Admin ONLY - Never accessible to drivers)
       match /invoices/{invoiceId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isAdmin();
       }
       match /payments/{paymentId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isAdmin();
       }
       match /billing_history/{docId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isAdmin();
       }
       match /expenses/{expenseId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isAdmin();
       }
       match /inventory/{itemId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
       match /notes/{noteId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
       match /single_orders/{orderId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
 
-      // 13. Other private subcollections
+      // 16. Fallback for other private subcollections
       match /{otherSubcollection}/{docId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(userId) || isAdmin();
       }
     }
 
     // =========================================================================
-    // COLLECTION GROUPS (Super Admin Analytics & Staff Auth Lookup)
+    // COLLECTION GROUPS (Super Admin Analytics ONLY - Never public)
     // =========================================================================
     match /{path=**}/billing_history/{docId} {
       allow read: if isAdmin();
@@ -232,7 +246,7 @@ service cloud.firestore {
       allow read: if isAdmin();
     }
     match /{path=**}/staff/{staffId} {
-      allow read: if true;
+      allow read: if isAdmin();
     }
   }
 }

@@ -268,20 +268,25 @@ const Settings = () => {
   const handleSaveStaff = async (data: Omit<DeliveryBoy, 'id'>) => {
     if(!currentUser) return;
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
-    const cleanPin = (data.pin || '').trim() || '1234';
-    const pinHash = bcrypt.hashSync(cleanPin, 10);
+    const rawPin = (data.pin || '').trim();
     const pinVersion = new Date().toISOString();
     
-    // Include hashed PIN and version on the staff document
-    const staffData = {
-      ...data,
+    // Never write plaintext PIN to database
+    const { pin: _omitPin, ...fieldsWithoutPin } = data as any;
+    const staffData: any = {
+      ...fieldsWithoutPin,
+      name: (data.name || '').trim(),
       mobile: cleanPhone,
-      pin: cleanPin,
-      pinHash,
-      pinVersion,
+      branchId: data.branchId || '',
+      status: (data as any).status || 'Active',
       active: (data as any).status !== 'Inactive',
       updatedAt: pinVersion
     };
+
+    if (rawPin) {
+      staffData.pinHash = bcrypt.hashSync(rawPin, 10);
+      staffData.pinVersion = pinVersion;
+    }
     
     let staffId = editingItem?.id;
     if (editingItem) {
@@ -291,39 +296,38 @@ const Settings = () => {
       staffId = (addedDoc as any)?.id || '';
     }
 
-    // Always register driver in driver_auth_lookup so rider can log in on independent phones
-    if (cleanPhone) {
-      const payload = {
-        bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
+    const targetStaffId = staffId || editingItem?.id || '';
+
+    // Update safe driver profile projection
+    if (targetStaffId) {
+      await setDoc(doc(db, 'businesses', currentUser.uid, 'driver_profiles', targetStaffId), {
+        id: targetStaffId,
+        staffId: targetStaffId,
         name: data.name,
         mobile: cleanPhone,
-        pinHash,
-        pinVersion,
         branchId: data.branchId || '',
-        status: (data as any).status || 'Offline',
+        status: (data as any).status || 'Active',
         active: (data as any).status !== 'Inactive',
         updatedAt: pinVersion
-      };
-      await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch((err) => {
-        console.warn("driver_auth_lookup write error:", err);
-      });
-      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true }).catch(() => {});
+      }, { merge: true }).catch(() => {});
     }
 
-    // Optional callable invocation for environments with Cloud Functions
-    try {
-      await setDriverPinCallable({
-        bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
-        phone: cleanPhone,
-        pin: cleanPin,
-        name: data.name,
-        branchId: data.branchId || '',
-        additionalData: staffData
-      });
-    } catch (callableErr) {
-      // Expected in client-only hosting where Cloud Functions are omitted
+    // Call server-side callable if PIN was set/changed
+    if (rawPin && targetStaffId) {
+      try {
+        await setDriverPinCallable({
+          bizId: currentUser.uid,
+          staffId: targetStaffId,
+          phone: cleanPhone,
+          pin: rawPin,
+          name: data.name,
+          branchId: data.branchId || '',
+          status: (data as any).status || 'Active',
+          active: (data as any).status !== 'Inactive'
+        });
+      } catch (callableErr) {
+        console.warn("setDriverPinCallable notice:", callableErr);
+      }
     }
 
     setActiveModal(null);

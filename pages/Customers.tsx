@@ -98,6 +98,8 @@ const Customers = () => {
   const [isPauseBranchModalOpen, setIsPauseBranchModalOpen] = useState(false);
   
   const [activeCustomer, setActiveCustomer] = useState<GlobalCustomer | null>(null);
+  const [customerToDelete, setCustomerToDelete] = useState<string | null>(null);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   
   // Advanced Filters State
@@ -167,19 +169,27 @@ const Customers = () => {
     }
   };
 
-  const handleDeleteCustomer = async (id: string) => {
+  const handleDeleteCustomer = (id: string) => {
+    if (!id) return;
+    setCustomerToDelete(id);
+  };
+
+  const confirmDeleteCustomer = async () => {
+    if (!customerToDelete) return;
     const effectiveBiz = getTargetBusinessId(currentUser?.uid);
     if (!effectiveBiz) {
       alert("No active business profile found. Please log in again.");
       return;
     }
-    if (window.confirm('Are you sure you want to permanently delete this customer and their history?')) {
-      try {
-        await deleteCustomerAtomic(effectiveBiz, id);
-      } catch (err: any) {
-        console.error("Failed to delete customer:", err);
-        alert("Failed to delete customer from database: " + (err.message || "Unknown error"));
-      }
+    setIsDeletingCustomer(true);
+    try {
+      await deleteCustomerAtomic(effectiveBiz, customerToDelete);
+      setCustomerToDelete(null);
+    } catch (err: any) {
+      console.error("Failed to delete customer:", err);
+      alert("Failed to delete customer from database: " + (err.message || "Unknown error"));
+    } finally {
+      setIsDeletingCustomer(false);
     }
   };
 
@@ -760,6 +770,53 @@ const Customers = () => {
       )}
       {isPauseModalOpen && <PauseCustomerModal customers={customers} branches={branches} plans={plans} onClose={() => setIsPauseModalOpen(false)} onSubmit={handlePausePlans} />}
       {isPauseBranchModalOpen && <PauseBranchModal branches={branches} customers={customers} onClose={() => setIsPauseBranchModalOpen(false)} onSubmit={handlePauseBranch} />}
+
+      {/* In-App Customer Deletion Confirmation Modal (Guaranteed iFrame & Mobile Compatibility) */}
+      {customerToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-left border border-slate-100">
+            <div className="flex items-center gap-3 text-rose-600 mb-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200/60 flex items-center justify-center shrink-0">
+                <Trash2 size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Delete Customer?</h3>
+                <p className="text-xs text-slate-400">This action will remove the record and linked records.</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+              Are you sure you want to permanently delete this customer? This will remove their subscription profile and history from your database roster.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                type="button"
+                disabled={isDeletingCustomer}
+                onClick={() => setCustomerToDelete(null)}
+                className="py-3 px-4 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button 
+                type="button"
+                disabled={isDeletingCustomer}
+                onClick={confirmDeleteCustomer}
+                className="py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-200 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isDeletingCustomer ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete Permanently</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

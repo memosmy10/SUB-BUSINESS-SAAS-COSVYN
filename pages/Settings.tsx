@@ -15,6 +15,7 @@ import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCalla
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
 import { getActiveRazorpayKeyId, setActiveRazorpayKeyId, handleRazorpayPayment } from '../services/razorpayService';
+import bcrypt from 'bcryptjs';
 
 /**
  * TEMPORARY MIGRATION FLAG:
@@ -311,13 +312,18 @@ const Settings = () => {
     if(!currentUser) return;
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
     const cleanPin = (data.pin || '').trim() || '1234';
+    const pinHash = bcrypt.hashSync(cleanPin, 10);
+    const pinVersion = new Date().toISOString();
     
-    // Include PIN on the staff document so it can be verified
+    // Include hashed PIN and version on the staff document
     const staffData = {
       ...data,
       mobile: cleanPhone,
       pin: cleanPin,
-      updatedAt: new Date().toISOString()
+      pinHash,
+      pinVersion,
+      active: (data as any).status !== 'Inactive',
+      updatedAt: pinVersion
     };
     
     let staffId = editingItem?.id;
@@ -335,9 +341,12 @@ const Settings = () => {
         staffId: staffId || editingItem?.id || '',
         name: data.name,
         mobile: cleanPhone,
-        pin: cleanPin,
+        pinHash,
+        pinVersion,
         branchId: data.branchId || '',
-        updatedAt: new Date().toISOString()
+        status: (data as any).status || 'Offline',
+        active: (data as any).status !== 'Inactive',
+        updatedAt: pinVersion
       };
       await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch((err) => {
         console.warn("driver_auth_lookup write error:", err);
@@ -455,6 +464,13 @@ const Settings = () => {
     if (collection === 'staff') {
       const boy = deliveryBoys.find(b => b.id === id);
       const cleanPhone = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone) {
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+          active: false,
+          isDeleted: true,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
       try {
         await deleteDriverCallable({
           bizId: currentUser.uid,

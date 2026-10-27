@@ -285,7 +285,7 @@ const AppLayout = ({ businessData }: { businessData?: any }) => {
 
   // Auto-sync real-time driver manifest to global_features so delivery boys have full instant access
   useEffect(() => {
-    if (!currentUser?.uid || customers.length === 0) return;
+    if (!currentUser?.uid) return;
     const bizId = currentUser.uid;
     const manifestRef = doc(db, 'global_features', `driver_manifest_${bizId}`);
     

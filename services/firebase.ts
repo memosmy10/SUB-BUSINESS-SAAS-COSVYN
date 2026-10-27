@@ -27,11 +27,11 @@ export const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Auth with browser and memory persistence (prevents iframe sandbox indexedDB SecurityError and auth/network-request-failed)
+// Initialize Auth with IndexedDB, browser and memory persistence (prevents session drop on page refresh)
 export const auth = (() => {
   try {
     return initializeAuth(app, {
-      persistence: [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+      persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
     });
   } catch {
     return getAuth(app);

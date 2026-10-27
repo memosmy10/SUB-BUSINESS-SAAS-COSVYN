@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { db, auth, driverLoginCallable } from '../services/firebase';
+import bcrypt from 'bcryptjs';
 
 /**
  * TEMPORARY MIGRATION FLAG:
@@ -262,8 +263,10 @@ export const DriverPortal: React.FC = () => {
   const [driverDisplayName, setDriverDisplayName] = useState<string>(initialName);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(initialBiz === 'demo');
   
-  // Kitchen Owner Preview: ONLY active if owner is logged in to Firebase AND NOT logged in as a delivery partner via PIN
-  const isDriverLoggedIn = Boolean(safeStorageGet('driver_is_logged_in') === 'true' || safeStorageGet('driver_auth_pin'));
+  // Kitchen Owner Preview: ONLY active if owner is logged in to Firebase AND NOT logged in as a delivery partner
+  const sessionExpires = Number(safeStorageGet('driver_session_expires') || 0);
+  const isSessionValid = !sessionExpires || sessionExpires > Date.now();
+  const isDriverLoggedIn = Boolean(safeStorageGet('driver_is_logged_in') === 'true' && isSessionValid);
   const isOwnerPreviewParam = typeof window !== 'undefined' && (getParam('view') === 'preview' || getParam('preview') === 'true');
   const isOwnerFirebaseAccount = Boolean(
     auth.currentUser && 
@@ -281,11 +284,10 @@ export const DriverPortal: React.FC = () => {
   const [showPin, setShowPin] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
 
-  // If already authenticated with saved PIN, close login modal; otherwise prompt for 4-digit PIN
-  const hasSavedPin = Boolean(safeStorageGet('driver_auth_pin'));
+  // If driver has an active authenticated session, close login modal; otherwise prompt for 4-digit PIN
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(() => {
     if (initialBiz === 'demo') return false;
-    if (initialBoy && hasSavedPin) return false;
+    if (initialBoy && isDriverLoggedIn) return false;
     // Don't auto-open if in owner preview
     if (!isDriverLoggedIn && isOwnerFirebaseAccount && isOwnerPreviewParam) return false;
     return true;
@@ -385,25 +387,37 @@ export const DriverPortal: React.FC = () => {
     return () => unsub();
   }, [bizId, isDemoMode]);
 
-  // Real-time listener for PIN updates made by Kitchen Manager in Settings
+  // Real-time listener for account deactivation or PIN updates made by Kitchen Manager in Settings
   useEffect(() => {
     const cleanPhone = (phoneInput || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
     if (!cleanPhone) return;
 
-    const authDocRef = doc(db, 'global_features', `driver_auth_${cleanPhone}`);
+    const authDocRef = doc(db, 'driver_auth_lookup', cleanPhone);
     const unsub = onSnapshot(authDocRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        if (data.pin) {
-          const expectedPin = String(data.pin).trim();
-          const currentSavedPin = safeStorageGet('driver_auth_pin');
-          if (!isKitchenOwnerUser && currentSavedPin && currentSavedPin !== expectedPin) {
-            safeStorageSet('driver_auth_pin', '');
+        
+        // Immediate Deactivation Enforcement (Test 10)
+        if (data.active === false || data.isDeleted === true) {
+          safeStorageSet('driver_is_logged_in', 'false');
+          safeStorageSet('driver_session_expires', '0');
+          setLoginError("This delivery partner account has been deactivated or removed by the kitchen manager.");
+          setLoginModalOpen(true);
+          return;
+        }
+
+        // Enforce updated PIN if changed by manager
+        if (data.pinVersion) {
+          const currentVersion = safeStorageGet('driver_pin_version');
+          if (!isKitchenOwnerUser && currentVersion && currentVersion !== data.pinVersion) {
+            safeStorageSet('driver_is_logged_in', 'false');
+            safeStorageSet('driver_session_expires', '0');
             setPinInput('');
             setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
             setLoginModalOpen(true);
           }
         }
+
         if (data.bizId && !bizId) {
           setBizId(data.bizId);
         }
@@ -470,13 +484,11 @@ export const DriverPortal: React.FC = () => {
               setPunchInTime(safeStorageGet('driver_punch_in_time'));
             }
 
-            // ENFORCE UPDATED PIN: If owner updated PIN in Settings, rider must re-enter updated PIN
-            const savedPin = safeStorageGet('driver_auth_pin');
-            const expectedPin = found.pin || '1234';
-            if (!isKitchenOwnerUser && savedPin && savedPin !== expectedPin) {
-              safeStorageSet('driver_auth_pin', '');
-              setPinInput('');
-              setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
+            // ENFORCE ACCOUNT STATUS: If rider was deactivated or deleted by owner
+            if ((found.status as string) === 'Inactive' || (found as any).isDeleted) {
+              safeStorageSet('driver_is_logged_in', 'false');
+              safeStorageSet('driver_session_expires', '0');
+              setLoginError("This delivery partner account has been deactivated by the kitchen manager.");
               setLoginModalOpen(true);
             }
           }
@@ -1379,15 +1391,20 @@ export const DriverPortal: React.FC = () => {
       setVerifying(false);
     };
 
-    const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string) => {
+    const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string, pinVersion?: string) => {
       safeStorageSet('driver_failed_attempts', '0');
       safeStorageSet('driver_lockout_until', '0');
       setIsKitchenOwnerUser(false);
       safeStorageSet('driver_is_logged_in', 'true');
+      safeStorageSet('driver_session_expires', String(Date.now() + 7 * 24 * 60 * 60 * 1000));
+      safeStorageSet('driver_session_token', btoa(`${digits}:${sId || 'staff'}:${Date.now()}`));
+      if (pinVersion) safeStorageSet('driver_pin_version', pinVersion);
       setDriverDisplayName(name);
       safeStorageSet('driver_name', name);
       safeStorageSet('driver_phone', digits);
-      safeStorageSet('driver_auth_pin', pin);
+      // Clean up any legacy plaintext PIN storage to preserve security
+      safeStorageSet('driver_auth_pin', '');
+      safeStorageSet('driver_token_pin', '');
       if (bId) {
         setBizId(bId);
         safeStorageSet('driver_biz_id', bId);
@@ -1401,6 +1418,23 @@ export const DriverPortal: React.FC = () => {
       setPinInput('');
       setVerifying(false);
       showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
+    };
+
+    // Helper: Secure PIN verification (bcrypt hash check with backward-compatible plaintext fallback & auto-migration)
+    const verifyPinAgainstRecord = (candidatePin: string, record: any): boolean => {
+      if (record.pinHash) {
+        try {
+          if (bcrypt.compareSync(candidatePin, record.pinHash)) {
+            return true;
+          }
+        } catch (e) {
+          console.warn("bcrypt comparison note:", e);
+        }
+      }
+      if (record.pin) {
+        return candidatePin === String(record.pin).trim();
+      }
+      return false;
     };
 
     // 1. Primary: Server-verified Cloud Function callable (if deployed)
@@ -1442,10 +1476,22 @@ export const DriverPortal: React.FC = () => {
 
         if (lookupSnap.exists()) {
           const lookupData = lookupSnap.data();
-          const expectedPin = String(lookupData.pin || '1234').trim();
-          if (pin === expectedPin) {
+
+          // Deactivation Check (Test 10)
+          if (lookupData.active === false || lookupData.isDeleted === true || lookupData.status === 'Inactive') {
+            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+            setVerifying(false);
+            return;
+          }
+
+          if (verifyPinAgainstRecord(pin, lookupData)) {
+            // Auto-migrate plaintext PIN to bcrypt hash if not yet hashed
+            if (!lookupData.pinHash) {
+              const pinHash = bcrypt.hashSync(pin, 10);
+              setDoc(lookupRef, { pinHash, active: true, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+            }
             const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
-            handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId);
+            handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId, lookupData.pinVersion);
             return;
           } else {
             recordFailedAttempt();
@@ -1471,16 +1517,24 @@ export const DriverPortal: React.FC = () => {
           });
 
         if (matched) {
-          const expectedPin = String(matched.pin || '1234').trim();
-          if (pin === expectedPin) {
-            // Auto-heal driver_auth_lookup mapping for future instant O(1) logins
+          // Deactivation check
+          if (((matched as any).status as string) === 'Inactive' || (matched as any).isDeleted) {
+            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+            setVerifying(false);
+            return;
+          }
+
+          if (verifyPinAgainstRecord(pin, matched)) {
+            const pinHash = (matched as any).pinHash || bcrypt.hashSync(pin, 10);
+            // Auto-heal driver_auth_lookup mapping with bcrypt hash
             setDoc(doc(db, 'driver_auth_lookup', digits), {
               bizId: effectiveBiz,
               staffId: matched.id,
               name: matched.name,
               mobile: digits,
-              pin: expectedPin,
+              pinHash: pinHash,
               branchId: matched.branchId || '',
+              active: true,
               updatedAt: new Date().toISOString()
             }, { merge: true }).catch(() => {});
 
@@ -1509,16 +1563,24 @@ export const DriverPortal: React.FC = () => {
       if (matchedDoc) {
         const staffData = matchedDoc.data() as any;
         const parentBizId = matchedDoc.ref.parent.parent?.id;
-        const expectedPin = String(staffData.pin || '1234').trim();
-        if (pin === expectedPin) {
+
+        if (staffData.status === 'Inactive' || staffData.isDeleted) {
+          setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+          setVerifying(false);
+          return;
+        }
+
+        if (verifyPinAgainstRecord(pin, staffData)) {
+          const pinHash = staffData.pinHash || bcrypt.hashSync(pin, 10);
           if (parentBizId) {
             setDoc(doc(db, 'driver_auth_lookup', digits), {
               bizId: parentBizId,
               staffId: matchedDoc.id,
               name: staffData.name || 'Delivery Partner',
               mobile: digits,
-              pin: expectedPin,
+              pinHash: pinHash,
               branchId: staffData.branchId || '',
+              active: true,
               updatedAt: new Date().toISOString()
             }, { merge: true }).catch(() => {});
           }
@@ -1547,15 +1609,22 @@ export const DriverPortal: React.FC = () => {
             });
 
           if (found) {
-            const expectedPin = String(found.pin || '1234').trim();
-            if (pin === expectedPin) {
+            if (((found as any).status as string) === 'Inactive' || (found as any).isDeleted) {
+              setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
+              setVerifying(false);
+              return;
+            }
+
+            if (verifyPinAgainstRecord(pin, found)) {
+              const pinHash = (found as any).pinHash || bcrypt.hashSync(pin, 10);
               setDoc(doc(db, 'driver_auth_lookup', digits), {
                 bizId: bDoc.id,
                 staffId: found.id,
                 name: found.name || 'Delivery Partner',
                 mobile: digits,
-                pin: expectedPin,
+                pinHash: pinHash,
                 branchId: found.branchId || '',
+                active: true,
                 updatedAt: new Date().toISOString()
               }, { merge: true }).catch(() => {});
 
@@ -1578,8 +1647,7 @@ export const DriverPortal: React.FC = () => {
       const featSnap = await getDoc(featRef);
       if (featSnap.exists()) {
         const featData = featSnap.data();
-        const expectedPin = String(featData.pin || '1234').trim();
-        if (pin === expectedPin) {
+        if (verifyPinAgainstRecord(pin, featData)) {
           handleLoginSuccess(featData.name || 'Delivery Partner', featData.bizId, featData.staffId, featData.branchId);
           return;
         } else {
@@ -1596,7 +1664,11 @@ export const DriverPortal: React.FC = () => {
   const handleDriverLogout = () => {
     if (window.confirm("Are you sure you want to log out of the Delivery Partner app?")) {
       safeStorageSet('driver_is_logged_in', 'false');
+      safeStorageSet('driver_session_expires', '0');
+      safeStorageSet('driver_session_token', '');
+      safeStorageSet('driver_pin_version', '');
       safeStorageSet('driver_auth_pin', '');
+      safeStorageSet('driver_token_pin', '');
       safeStorageSet('driver_boy_id', '');
       safeStorageSet('driver_name', '');
       safeStorageSet('driver_phone', '');
@@ -2528,7 +2600,7 @@ export const DriverPortal: React.FC = () => {
                   Enter your registered phone & 4-digit PIN
                 </p>
               </div>
-              {selectedBoyId && hasSavedPin && (
+              {selectedBoyId && isDriverLoggedIn && (
                 <button 
                   onClick={() => setLoginModalOpen(false)} 
                   className="text-slate-400 hover:text-white p-1 hover:bg-white/10 rounded-lg transition-colors"

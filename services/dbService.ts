@@ -75,6 +75,15 @@ export const getTargetBusinessId = (fallbackUserId?: string): string => {
       const drvBiz = localStorage.getItem('driver_biz_id');
       if (drvBiz) return drvBiz;
     }
+
+    // Fallback to active owner session if available
+    try {
+      const session = localStorage.getItem('scalekitchen_auth_session');
+      if (session) {
+        const parsed = JSON.parse(session);
+        if (parsed?.uid) return fallbackUserId || auth.currentUser?.uid || parsed.uid;
+      }
+    } catch {}
   }
   return fallbackUserId || auth.currentUser?.uid || '';
 };
@@ -97,8 +106,8 @@ export const useStreamCollection = <T>(collectionName: string, customBizId?: str
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       })) as any[];
 
       // STRICT BRANCH ACCESS ENFORCEMENT FOR MANAGERS:
@@ -205,6 +214,7 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
   try {
     const targetUid = getTargetBusinessId(userId);
     if (!targetUid) throw new Error("No target business ID found.");
+    if (!docId) throw new Error("No document ID provided for update.");
 
     let enrichedData = { ...data };
 
@@ -213,8 +223,16 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
       enrichedData.branchId = managerBranchId;
     }
 
-    // Strip top-level 'id' to prevent storing duplicate/conflicting id fields in document body
-    const { id: _ignoreId, ...cleanData } = enrichedData;
+    // Strip top-level 'id' and computed virtual enrichment fields to prevent corrupting database documents
+    const { 
+      id: _ignoreId, 
+      realDaysLeft: _ignoreDaysLeft, 
+      isExpired: _ignoreExpired, 
+      latestEndDate: _ignoreLatestEnd, 
+      canonicalPlanName: _ignorePlanName,
+      ...cleanData 
+    } = enrichedData;
+
     const safePayload = sanitizeFirestoreData({
       ...cleanData,
       updatedAt: new Date().toISOString()
@@ -223,6 +241,11 @@ export const updateItem = async (userId: string, collectionName: string, docId: 
     const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     // Use setDoc with merge: true to avoid crashes if document state differs
     await setDoc(docRef, safePayload, { merge: true });
+
+    // Sync stats if modifying core collections
+    if (['customers', 'staff', 'branches', 'single_orders', 'payments'].includes(collectionName)) {
+      syncBusinessLiveStats(targetUid).catch(() => {});
+    }
   } catch (error) {
     console.error(`Error updating ${collectionName}/${docId}:`, error);
     throw error;
@@ -233,8 +256,17 @@ export const setItem = async (userId: string, collectionName: string, docId: str
   try {
     const targetUid = getTargetBusinessId(userId);
     if (!targetUid) throw new Error("No target business ID found.");
+    if (!docId) throw new Error("No document ID provided for setting data.");
 
-    const { id: _ignoreId, ...cleanData } = data;
+    const { 
+      id: _ignoreId, 
+      realDaysLeft: _ignoreDaysLeft, 
+      isExpired: _ignoreExpired, 
+      latestEndDate: _ignoreLatestEnd, 
+      canonicalPlanName: _ignorePlanName,
+      ...cleanData 
+    } = data;
+
     const safePayload = sanitizeFirestoreData({
       ...cleanData,
       updatedAt: new Date().toISOString()
@@ -256,6 +288,10 @@ export const deleteItem = async (userId: string, collectionName: string, docId: 
 
     const docRef = doc(db, 'businesses', targetUid, collectionName, docId);
     await deleteDoc(docRef);
+
+    if (['customers', 'staff', 'branches', 'single_orders', 'payments'].includes(collectionName)) {
+      syncBusinessLiveStats(targetUid).catch(() => {});
+    }
   } catch (error) {
     console.error(`Error deleting ${collectionName}/${docId}:`, error);
     throw error;
@@ -279,7 +315,15 @@ export const addCustomerWithPaymentAtomic = async (
   const newCustRef = doc(customersCol);
   const customerId = newCustRef.id;
 
-  const { id: _ignoreId, ...cleanData } = customerData;
+  const { 
+    id: _ignoreId, 
+    realDaysLeft: _ignoreDaysLeft, 
+    isExpired: _ignoreExpired, 
+    latestEndDate: _ignoreLatestEnd, 
+    canonicalPlanName: _ignorePlanName,
+    ...cleanData 
+  } = customerData;
+
   const managerBranchId = getManagerBranchId();
   if (managerBranchId) {
     cleanData.branchId = managerBranchId;
@@ -310,11 +354,15 @@ export const addCustomerWithPaymentAtomic = async (
   }
 
   await batch.commit();
+
+  // Immediately refresh live stats
+  syncBusinessLiveStats(targetUid).catch(() => {});
+
   return customerId;
 };
 
 /**
- * Atomic customer deletion that removes customer and associated payments in a single transaction.
+ * Atomic customer deletion that removes customer, associated payments, and delivery logs in a single transaction.
  */
 export const deleteCustomerAtomic = async (userId: string, customerId: string): Promise<void> => {
   const targetUid = getTargetBusinessId(userId);
@@ -336,7 +384,21 @@ export const deleteCustomerAtomic = async (userId: string, customerId: string): 
     console.warn("Payment query during atomic delete note:", payErr);
   }
 
+  // Clean up linked delivery logs atomically
+  try {
+    const logsSnap = await getDocs(query(
+      collection(db, 'businesses', targetUid, 'delivery_logs'),
+      where('customerId', '==', customerId)
+    ));
+    logsSnap.forEach(d => batch.delete(d.ref));
+  } catch (logErr) {
+    console.warn("Delivery logs query during atomic delete note:", logErr);
+  }
+
   await batch.commit();
+
+  // Immediately refresh live stats so dashboard customer count reflects true state
+  syncBusinessLiveStats(targetUid).catch(() => {});
 };
 
 /**
@@ -611,11 +673,11 @@ export const fetchBusinessDetailedDossier = async (businessId: string) => {
       getDocs(query(collection(db, 'businesses', businessId, 'login_logs'), orderBy('date', 'desc'))).catch(() => ({ docs: [] }))
     ]);
 
-    const business = bizSnap && bizSnap.exists() ? { id: bizSnap.id, ...bizSnap.data() } : null;
-    const branches = branchesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const staff = staffSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const customers = customersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const loginLogs = loginLogsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const business = bizSnap && bizSnap.exists() ? { ...bizSnap.data(), id: bizSnap.id } : null;
+    const branches = branchesSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+    const staff = staffSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+    const customers = customersSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+    const loginLogs = loginLogsSnap.docs.map(d => ({ ...d.data(), id: d.id }));
 
     return {
       business,
@@ -651,8 +713,8 @@ export const useAdminTenants = () => {
     const q = query(collection(db, 'businesses'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const users = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       }));
       setTenants(users);
       setLoading(false);
@@ -678,8 +740,8 @@ export const useAdminBillingHistory = () => {
       const items = snapshot.docs.map(doc => {
         const pathSegments = doc.ref.path.split('/');
         return {
-          id: doc.id,
           ...doc.data(),
+          id: doc.id,
           tenantId: pathSegments[1]
         };
       });
@@ -705,8 +767,8 @@ export const useGlobalCollection = (collectionName: string) => {
     const q = query(collection(db, collectionName), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       }));
       setData(items);
       setLoading(false);

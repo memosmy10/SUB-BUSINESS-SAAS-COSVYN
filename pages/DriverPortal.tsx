@@ -7,7 +7,7 @@ import {
   Lock, Key, Eye, EyeOff, LogOut
 } from 'lucide-react';
 import { 
-  collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc 
+  collection, query, onSnapshot, doc, updateDoc, setDoc, getDocs, getDoc, collectionGroup 
 } from 'firebase/firestore';
 import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { db, auth, driverLoginCallable } from '../services/firebase';
@@ -23,7 +23,8 @@ import {
   getTodayStr, isCustomerDeliveryDay2Plus, REUSABLE_BOX_TYPES, 
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
   getCustomerScheduledPlansForSession, isPlanActiveOnDate, formatDateDDMMYYYY,
-  decodeDriverToken, normalizePhone, isReusableBoxType
+  decodeDriverToken, normalizePhone, isReusableBoxType,
+  getDefaultMealSessionForTime, MealSession
 } from '../services/store';
 import { buildWhatsAppUrl, getDeliveryArrivalMessage } from '../services/messageTemplates';
 
@@ -274,12 +275,20 @@ export const DriverPortal: React.FC = () => {
     return true;
   });
 
-  const [selectedMeal, setSelectedMeal] = useState<'Breakfast' | 'Lunch' | 'Dinner'>(() => {
-    const hr = new Date().getHours();
-    if (hr < 11) return 'Breakfast';
-    if (hr < 16) return 'Lunch';
-    return 'Dinner';
-  });
+  const [selectedMeal, setSelectedMeal] = useState<MealSession>(() => getDefaultMealSessionForTime());
+  const [isDriverMealManuallySelected, setIsDriverMealManuallySelected] = useState<boolean>(false);
+
+  // Auto-update meal session on time boundary crossing if driver hasn't manually overridden it
+  useEffect(() => {
+    const checkTime = () => {
+      if (!isDriverMealManuallySelected) {
+        const expected = getDefaultMealSessionForTime();
+        setSelectedMeal(prev => (prev !== expected ? expected : prev));
+      }
+    };
+    const interval = setInterval(checkTime, 30000);
+    return () => clearInterval(interval);
+  }, [isDriverMealManuallySelected]);
 
   const [allStaff, setAllStaff] = useState<DeliveryBoyStaff[]>([]);
   const [customers, setCustomers] = useState<GlobalCustomer[]>([]);
@@ -1330,15 +1339,39 @@ export const DriverPortal: React.FC = () => {
       return;
     }
 
+    // Rate-limiting & brute-force protection
+    const now = Date.now();
+    const lockoutUntil = Number(safeStorageGet('driver_lockout_until') || 0);
+    if (lockoutUntil && now < lockoutUntil) {
+      const waitSec = Math.ceil((lockoutUntil - now) / 1000);
+      setLoginError(`Too many failed login attempts. Please wait ${waitSec} seconds before trying again.`);
+      return;
+    }
+
     setVerifying(true);
     setLoginError(null);
 
+    const recordFailedAttempt = () => {
+      const attempts = (Number(safeStorageGet('driver_failed_attempts') || 0)) + 1;
+      safeStorageSet('driver_failed_attempts', String(attempts));
+      if (attempts >= 5) {
+        safeStorageSet('driver_lockout_until', String(Date.now() + 60000)); // 60-second lockout
+        setLoginError("Too many failed login attempts. Please wait 1 minute before trying again.");
+      } else {
+        setLoginError("Unable to verify your mobile number or PIN. Please check your details and try again.");
+      }
+      setVerifying(false);
+    };
+
     const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string) => {
+      safeStorageSet('driver_failed_attempts', '0');
+      safeStorageSet('driver_lockout_until', '0');
       setIsKitchenOwnerUser(false);
       safeStorageSet('driver_is_logged_in', 'true');
       setDriverDisplayName(name);
       safeStorageSet('driver_name', name);
       safeStorageSet('driver_phone', digits);
+      safeStorageSet('driver_auth_pin', pin);
       if (bId) {
         setBizId(bId);
         safeStorageSet('driver_biz_id', bId);
@@ -1354,7 +1387,7 @@ export const DriverPortal: React.FC = () => {
       showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
     };
 
-    // 1. Primary: Server-verified Cloud Function callable with lockout enforcement & custom token
+    // 1. Primary: Server-verified Cloud Function callable (if deployed)
     try {
       const result = await driverLoginCallable({
         phone: digits,
@@ -1362,7 +1395,6 @@ export const DriverPortal: React.FC = () => {
       });
 
       if (result?.data?.token) {
-        // Sign in with Firebase using per-driver custom token
         await signInWithCustomToken(auth, result.data.token);
         const driverInfo = result.data.driver;
         handleLoginSuccess(driverInfo.name, driverInfo.bizId, driverInfo.staffId, driverInfo.branchId);
@@ -1372,25 +1404,16 @@ export const DriverPortal: React.FC = () => {
       const errorMsg = callableErr?.message || '';
       const errorCode = callableErr?.code || '';
 
-      // Surface server lockout (resource-exhausted) or failed attempts counter directly
       if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
         setLoginError(errorMsg);
         setVerifying(false);
         return;
       }
-
-      if (ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
-        console.warn("[Migration Fallback] Callable driverLogin unavailable, falling back to temporary client verification:", callableErr);
-      } else {
-        setLoginError(errorMsg || "Invalid phone number or PIN.");
-        setVerifying(false);
-        return;
-      }
     }
 
-    // 2. TEMPORARY MIGRATION FALLBACK: Only runs if Cloud Functions are not yet deployed
+    // 2. Direct Driver Auth Lookup (Independent authentication for mobile devices)
     try {
-      const lookupRef = doc(db, 'global_features', `driver_auth_${digits}`);
+      const lookupRef = doc(db, 'driver_auth_lookup', digits);
       const lookupSnap = await getDoc(lookupRef);
 
       if (lookupSnap.exists()) {
@@ -1398,104 +1421,108 @@ export const DriverPortal: React.FC = () => {
         const expectedPin = String(lookupData.pin || '1234').trim();
         if (pin === expectedPin) {
           const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
-          setAllStaff(prev => {
-            if (prev.some(s => s.id === (lookupData.staffId || 'driver-1') || s.name === verifiedName)) return prev;
-            return [
-              ...prev,
-              {
-                id: lookupData.staffId || 'driver-1',
-                name: verifiedName,
-                mobile: digits,
-                branchId: lookupData.branchId || '',
-                role: 'Delivery Boy',
-                status: 'Online'
-              } as DeliveryBoyStaff
-            ];
-          });
-
           handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId);
           return;
         } else {
-          setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-          setVerifying(false);
+          recordFailedAttempt();
           return;
         }
       }
-    } catch (err) {
-      console.warn("Global driver auth lookup check (falling back to token/local):", err);
+    } catch (lookupErr) {
+      console.warn("Direct driver_auth_lookup check note:", lookupErr);
     }
 
-    // 3. Additional Temporary Migration Fallbacks (only active during deployment transition)
-    if (ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
-      // Direct staff cache check
-      if (allStaff.length > 0) {
-        const matched = allStaff.find(s => {
-          const m = (s.mobile || '').replace(/\D/g, '');
-          return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-        });
+    // 3. Fallback: Staff subcollection check if bizId is known
+    const effectiveBiz = bizId || safeStorageGet('driver_biz_id') || safeStorageGet('last_active_business_id');
+    if (effectiveBiz) {
+      try {
+        const staffQuery = query(collection(db, 'businesses', effectiveBiz, 'staff'));
+        const snap = await getDocs(staffQuery);
+        const matched = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+          .find(s => {
+            const m = (s.mobile || '').replace(/\D/g, '');
+            return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+          });
 
         if (matched) {
           const expectedPin = String(matched.pin || '1234').trim();
           if (pin === expectedPin) {
-            handleLoginSuccess(matched.name, bizId, matched.id, matched.branchId);
+            // Auto-heal driver_auth_lookup mapping for future instant O(1) logins
+            setDoc(doc(db, 'driver_auth_lookup', digits), {
+              bizId: effectiveBiz,
+              staffId: matched.id,
+              name: matched.name,
+              mobile: digits,
+              pin: expectedPin,
+              branchId: matched.branchId || '',
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+
+            handleLoginSuccess(matched.name, effectiveBiz, matched.id, matched.branchId);
             return;
           } else {
-            setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-            setVerifying(false);
+            recordFailedAttempt();
             return;
           }
         }
-      }
-
-      // Direct staff query
-      if (bizId) {
-        try {
-          const staffQuery = query(collection(db, 'businesses', bizId, 'staff'));
-          const snap = await getDocs(staffQuery);
-          const matched = snap.docs
-            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-            .find(s => {
-              const m = (s.mobile || '').replace(/\D/g, '');
-              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-            });
-
-          if (matched) {
-            const expectedPin = String(matched.pin || '1234').trim();
-            if (pin === expectedPin) {
-              handleLoginSuccess(matched.name, bizId, matched.id, matched.branchId);
-              return;
-            } else {
-              setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-              setVerifying(false);
-              return;
-            }
-          }
-        } catch (e) {
-          console.warn("Direct staff query fallback check:", e);
-        }
-      }
-
-      // Legacy driver_auth_lookup collection
-      try {
-        const legacyRef = doc(db, 'driver_auth_lookup', digits);
-        const legacySnap = await getDoc(legacyRef);
-        if (legacySnap.exists()) {
-          const data = legacySnap.data();
-          const expectedPin = String(data.pin || '1234').trim();
-          if (pin === expectedPin) {
-            const legName = data.name || 'Partner';
-            handleLoginSuccess(legName, data.bizId, data.staffId);
-            return;
-          } else {
-            setLoginError("Incorrect 4-digit PIN. Please enter the current PIN set by your kitchen manager.");
-            setVerifying(false);
-            return;
-          }
-        }
-      } catch (e) {
-        console.warn("Legacy driver lookup check:", e);
+      } catch (staffErr) {
+        console.warn("Direct staff query fallback check note:", staffErr);
       }
     }
+
+    // 4. Fallback: Collection group query across staff to auto-discover tenant
+    try {
+      const cgQuery = query(collectionGroup(db, 'staff'));
+      const cgSnap = await getDocs(cgQuery);
+      const matchedDoc = cgSnap.docs.find(d => {
+        const m = ((d.data() as any).mobile || '').replace(/\D/g, '');
+        return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+      });
+
+      if (matchedDoc) {
+        const staffData = matchedDoc.data() as any;
+        const parentBizId = matchedDoc.ref.parent.parent?.id;
+        const expectedPin = String(staffData.pin || '1234').trim();
+        if (pin === expectedPin) {
+          if (parentBizId) {
+            setDoc(doc(db, 'driver_auth_lookup', digits), {
+              bizId: parentBizId,
+              staffId: matchedDoc.id,
+              name: staffData.name || 'Delivery Partner',
+              mobile: digits,
+              pin: expectedPin,
+              branchId: staffData.branchId || '',
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+          }
+          handleLoginSuccess(staffData.name || 'Delivery Partner', parentBizId, matchedDoc.id, staffData.branchId);
+          return;
+        } else {
+          recordFailedAttempt();
+          return;
+        }
+      }
+    } catch (cgErr) {
+      console.warn("Collection group staff discovery note:", cgErr);
+    }
+
+    // 5. Global features fallback
+    try {
+      const featRef = doc(db, 'global_features', `driver_auth_${digits}`);
+      const featSnap = await getDoc(featRef);
+      if (featSnap.exists()) {
+        const featData = featSnap.data();
+        const expectedPin = String(featData.pin || '1234').trim();
+        if (pin === expectedPin) {
+          handleLoginSuccess(featData.name || 'Delivery Partner', featData.bizId, featData.staffId, featData.branchId);
+          return;
+        } else {
+          recordFailedAttempt();
+          return;
+        }
+      }
+    } catch (featErr) {}
 
     setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);
     setVerifying(false);
@@ -2512,48 +2539,47 @@ export const DriverPortal: React.FC = () => {
               </button>
             </form>
 
-            <div className="relative flex py-1 items-center">
-              <div className="flex-grow border-t border-white/10"></div>
-              <span className="flex-shrink mx-2 text-[10px] text-slate-400 uppercase font-semibold">Or Select Profile</span>
-              <div className="flex-grow border-t border-white/10"></div>
-            </div>
+            {allStaff.length > 0 && (
+              <>
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-white/10"></div>
+                  <span className="flex-shrink mx-2 text-[10px] text-slate-400 uppercase font-semibold">Or Select Profile</span>
+                  <div className="flex-grow border-t border-white/10"></div>
+                </div>
 
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-              {loading && (
-                <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                  <RefreshCw size={14} className="animate-spin text-amber-400" />
-                  <span>Loading riders from kitchen...</span>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {allStaff.map(boy => (
+                    <button
+                      key={boy.id}
+                      type="button"
+                      onClick={() => {
+                        setPhoneInput(boy.mobile || '');
+                        setLoginError(null);
+                        showToast(`Selected ${boy.name}. Please enter your 4-digit PIN.`);
+                      }}
+                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                        selectedBoyId === boy.id 
+                          ? 'bg-amber-500/20 border-amber-500/50 text-white' 
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-bold text-xs text-white">{boy.name}</div>
+                        <div className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No contact number'}</div>
+                      </div>
+                      <Key size={14} className="text-amber-400" />
+                    </button>
+                  ))}
                 </div>
-              )}
-              {!loading && allStaff.map(boy => (
-                <button
-                  key={boy.id}
-                  type="button"
-                  onClick={() => {
-                    setPhoneInput(boy.mobile || '');
-                    setLoginError(null);
-                    showToast(`Selected ${boy.name}. Please enter your 4-digit PIN.`);
-                  }}
-                  className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
-                    selectedBoyId === boy.id 
-                      ? 'bg-amber-500/20 border-amber-500/50 text-white' 
-                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                  }`}
-                >
-                  <div>
-                    <div className="font-bold text-xs text-white">{boy.name}</div>
-                    <div className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No contact number'}</div>
-                  </div>
-                  <Key size={14} className="text-amber-400" />
-                </button>
-              ))}
-              {!loading && allStaff.length === 0 && (
-                <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-center space-y-1">
-                  <p className="text-xs text-slate-300 font-medium">No riders found in currently connected kitchen.</p>
-                  <p className="text-[10px] text-slate-400">Enter your mobile number & PIN above to auto-connect to your kitchen.</p>
-                </div>
-              )}
-            </div>
+              </>
+            )}
+
+            {allStaff.length === 0 && (
+              <div className="pt-2 border-t border-white/10 text-center space-y-0.5">
+                <p className="text-[11px] font-medium text-slate-400">ScaleKitchen Delivery Partner Portal</p>
+                <p className="text-[10px] text-slate-500">Contact your kitchen owner if you need your 4-digit PIN.</p>
+              </div>
+            )}
           </div>
         </div>
       )}

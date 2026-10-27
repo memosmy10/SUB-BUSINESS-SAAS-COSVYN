@@ -125,6 +125,26 @@ const Settings = () => {
     return () => unsub();
   }, [currentUser]);
 
+  // Self-healing: auto-sync existing staff to driver_auth_lookup so riders can log in on independent phones
+  useEffect(() => {
+    if (!currentUser?.uid || deliveryBoys.length === 0) return;
+    deliveryBoys.forEach((boy: any) => {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone && cleanPhone.length === 10) {
+        const payload = {
+          bizId: currentUser.uid,
+          staffId: boy.id,
+          name: boy.name || 'Delivery Partner',
+          mobile: cleanPhone,
+          pin: (boy.pin || '1234').trim(),
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        };
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
+      }
+    });
+  }, [currentUser?.uid, deliveryBoys]);
+
   // Razorpay Gateway Settings
   const [razorpayKeyInput, setRazorpayKeyInput] = useState<string>('');
   const [isSavingRzpKey, setIsSavingRzpKey] = useState(false);
@@ -292,10 +312,11 @@ const Settings = () => {
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
     const cleanPin = (data.pin || '').trim() || '1234';
     
-    // SECURITY (Phase 1): Exclude plaintext pin from client doc update
-    const { pin: _omitPin, ...staffFieldsWithoutPin } = data as any;
+    // Include PIN on the staff document so it can be verified
     const staffData = {
-      ...staffFieldsWithoutPin,
+      ...data,
+      mobile: cleanPhone,
+      pin: cleanPin,
       updatedAt: new Date().toISOString()
     };
     
@@ -307,8 +328,24 @@ const Settings = () => {
       staffId = (addedDoc as any)?.id || '';
     }
 
-    // Call server-side callable to hash PIN securely and update pinHash (never writes plaintext PIN)
-    let callableSucceeded = false;
+    // Always register driver in driver_auth_lookup so rider can log in on independent phones
+    if (cleanPhone) {
+      const payload = {
+        bizId: currentUser.uid,
+        staffId: staffId || editingItem?.id || '',
+        name: data.name,
+        mobile: cleanPhone,
+        pin: cleanPin,
+        branchId: data.branchId || '',
+        updatedAt: new Date().toISOString()
+      };
+      await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch((err) => {
+        console.warn("driver_auth_lookup write error:", err);
+      });
+      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true }).catch(() => {});
+    }
+
+    // Optional callable invocation for environments with Cloud Functions
     try {
       await setDriverPinCallable({
         bizId: currentUser.uid,
@@ -319,25 +356,8 @@ const Settings = () => {
         branchId: data.branchId || '',
         additionalData: staffData
       });
-      callableSucceeded = true;
     } catch (callableErr) {
-      console.warn("setDriverPin callable warning:", callableErr);
-    }
-
-    // TEMPORARY MIGRATION FALLBACK: Only used before Cloud Functions deployment
-    if (!callableSucceeded && ENABLE_LEGACY_CLIENT_AUTH_FALLBACK && cleanPhone) {
-      console.warn("[Migration Fallback] Writing temporary driver auth record until Cloud Functions are deployed.");
-      const payload = {
-        bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
-        name: data.name,
-        mobile: cleanPhone,
-        pin: cleanPin,
-        branchId: data.branchId || '',
-        updatedAt: new Date().toISOString()
-      };
-      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true }).catch(() => {});
-      setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
+      // Expected in client-only hosting where Cloud Functions are omitted
     }
 
     setActiveModal(null);

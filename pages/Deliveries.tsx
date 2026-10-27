@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   calculateRemainingDeliveries, getTodayStr, getPlanDeliveryDayNumber, 
   getCustomerUncollectedBoxesCount, getCustomerScheduledPlansForSession, isPlanActiveOnDate,
-  formatDateDDMMYYYY
+  formatDateDDMMYYYY, getDefaultMealSessionForTime, MealSession
 } from '../services/store';
 import { writeBatch, doc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -48,8 +48,41 @@ const Deliveries = () => {
   const { data: deliveryLogs = [] } = useStreamCollection<any>('delivery_logs');
 
   const [mainTab, setMainTab] = useState<'routes' | 'boxes' | 'fleet'>('routes');
-  const [activeMealTab, setActiveMealTab] = useState<'Breakfast' | 'Lunch' | 'Dinner'>('Lunch');
+  const [activeMealTab, setActiveMealTab] = useState<MealSession>(() => getDefaultMealSessionForTime());
+  const [isMealManuallySelected, setIsMealManuallySelected] = useState<boolean>(false);
   const [selectedBranch, setSelectedBranch] = useState('All');
+
+  // Automatically select the correct meal session when time crosses 11:00 AM or 5:00 PM if user hasn't manually selected
+  useEffect(() => {
+    const checkMealTime = () => {
+      if (!isMealManuallySelected) {
+        const expectedSession = getDefaultMealSessionForTime();
+        setActiveMealTab(prev => (prev !== expectedSession ? expectedSession : prev));
+      }
+    };
+    checkMealTime();
+    const interval = setInterval(checkMealTime, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, [isMealManuallySelected]);
+
+  const handleSelectMealTab = (tabId: MealSession) => {
+    setIsMealManuallySelected(true);
+    setActiveMealTab(tabId);
+    setExpandedBoyId(null);
+  };
+
+  // Helper function to consistently match customer to delivery boy across all sections
+  const doesCustomerBelongToBoy = (c: any, boy: any): boolean => {
+    if (!c || !boy) return false;
+    const bId = String(boy.id || '').trim();
+    const bName = String(boy.name || '').trim().toLowerCase();
+    const cBoyId = String(c.deliveryBoyId || '').trim();
+    const cBoyName = String(c.deliveryBoyName || '').trim().toLowerCase();
+
+    if (bId && (cBoyId === bId || cBoyId.toLowerCase() === bId.toLowerCase())) return true;
+    if (bName && (cBoyName === bName || cBoyId.toLowerCase() === bName)) return true;
+    return false;
+  };
 
   // Auto-lock to single branch if manager or user has only 1 branch assigned
   useEffect(() => {
@@ -155,7 +188,7 @@ const Deliveries = () => {
         }
       };
       
-      customers.filter(c => c.deliveryBoyId === boy.id).forEach(c => {
+      customers.filter(c => doesCustomerBelongToBoy(c, boy)).forEach(c => {
         ['Breakfast', 'Lunch', 'Dinner'].forEach((session: any) => {
           const scheduled = getCustomerScheduledPlansForSession(c, session, selectedDate, plans);
           scheduled.forEach((ap: any) => {
@@ -684,25 +717,48 @@ const Deliveries = () => {
             <h2 className="text-xl sm:text-2xl font-bold font-display text-slate-900 tracking-tight">Active Route Management</h2>
             <p className="text-slate-500 text-xs mt-0.5">Dispatches and route sequences for <strong className="text-slate-800 font-semibold">{activeMealTab}</strong></p>
           </div>
-          <div className="glass-panel p-1 rounded-xl flex gap-1.5 w-full md:w-fit shadow-xs">
+          <div className="glass-panel p-1.5 rounded-2xl flex gap-2 w-full md:w-fit shadow-xs bg-slate-100/80 border border-slate-200/80">
             {[
-              { id: 'Breakfast', icon: Sunrise, color: 'text-orange-600', activeBg: 'bg-white shadow-xs text-orange-700' },
-              { id: 'Lunch', icon: Sun, color: 'text-blue-600', activeBg: 'bg-white shadow-xs text-blue-700' },
-              { id: 'Dinner', icon: Moon, color: 'text-purple-600', activeBg: 'bg-white shadow-xs text-purple-700' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => { setActiveMealTab(tab.id as any); setExpandedBoyId(null); }}
-                className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
-                  activeMealTab === tab.id 
-                    ? tab.activeBg + ' ring-1 ring-slate-200/80' 
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                }`}
-              >
-                <tab.icon size={14} className={tab.color} />
-                {tab.id}
-              </button>
-            ))}
+              { 
+                id: 'Breakfast', 
+                icon: Sunrise, 
+                selectedClasses: 'bg-orange-600 text-white shadow-md ring-2 ring-orange-500/50 border-orange-700',
+                unselectedClasses: 'bg-orange-50/70 hover:bg-orange-100/80 text-orange-950 border-orange-200/70',
+                selectedIcon: 'text-white',
+                unselectedIcon: 'text-orange-600'
+              },
+              { 
+                id: 'Lunch', 
+                icon: Sun, 
+                selectedClasses: 'bg-blue-600 text-white shadow-md ring-2 ring-blue-500/50 border-blue-700',
+                unselectedClasses: 'bg-blue-50/70 hover:bg-blue-100/80 text-blue-950 border-blue-200/70',
+                selectedIcon: 'text-white',
+                unselectedIcon: 'text-blue-600'
+              },
+              { 
+                id: 'Dinner', 
+                icon: Moon, 
+                selectedClasses: 'bg-purple-700 text-white shadow-md ring-2 ring-purple-600/50 border-purple-800',
+                unselectedClasses: 'bg-purple-50/70 hover:bg-purple-100/80 text-purple-950 border-purple-200/70',
+                selectedIcon: 'text-white',
+                unselectedIcon: 'text-purple-600'
+              }
+            ].map(tab => {
+              const isSelected = activeMealTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => handleSelectMealTab(tab.id as any)}
+                  aria-pressed={isSelected}
+                  className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all border cursor-pointer active:scale-95 ${
+                    isSelected ? tab.selectedClasses : tab.unselectedClasses
+                  }`}
+                >
+                  <tab.icon size={16} className={isSelected ? tab.selectedIcon : tab.unselectedIcon} />
+                  <span>{tab.id}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -743,8 +799,8 @@ const Deliveries = () => {
           )}
 
           {staff.filter(s => selectedBranch === 'All' || s.branchId === selectedBranch).map(boy => {
-            const boyCustomers = deliveriesToday.filter(c => c.deliveryBoyId === boy.id);
-            if (boyCustomers.length === 0) return null;
+            const boyCustomers = deliveriesToday.filter(c => doesCustomerBelongToBoy(c, boy));
+            const hasDeliveries = boyCustomers.length > 0;
             const isExpanded = expandedBoyId === boy.id;
             let boyTotalBoxes = 0;
             let boyStarBoxes = 0;
@@ -763,30 +819,41 @@ const Deliveries = () => {
               <div key={boy.id} className="glass-card rounded-2xl border border-white/80 shadow-glass overflow-hidden transition-all">
                 <div onClick={() => setExpandedBoyId(isExpanded ? null : boy.id)} className={`p-4 sm:p-5 flex flex-col xl:flex-row justify-between items-start xl:items-center cursor-pointer gap-4 ${isExpanded ? 'bg-slate-50/80 border-b border-slate-200/60' : 'hover:bg-slate-50/50'}`}>
                   <div className="flex items-center gap-3.5 w-full xl:w-auto">
-                    <div className="w-12 h-12 bg-primary-50 text-primary-600 rounded-xl flex items-center justify-center shrink-0 border border-primary-100 shadow-xs">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border shadow-xs ${
+                      hasDeliveries 
+                        ? 'bg-primary-50 text-primary-600 border-primary-100' 
+                        : 'bg-slate-100 text-slate-400 border-slate-200'
+                    }`}>
                       <Truck size={22} />
                     </div>
                     <div>
-                      <h3 className="text-base sm:text-lg font-bold font-display text-slate-900 tracking-tight">{boy.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base sm:text-lg font-bold font-display text-slate-900 tracking-tight">{boy.name}</h3>
+                        {!hasDeliveries && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+                            Available / Standby
+                          </span>
+                        )}
+                      </div>
                       <p className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5"><Phone size={13}/> {boy.mobile || 'No contact'}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full xl:w-auto flex-1 md:flex-none">
                     <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
                       <p className="text-[10px] font-medium text-slate-400">Stops</p>
-                      <p className="font-bold text-slate-800 text-sm">{boyCustomers.length}</p>
+                      <p className={`font-bold text-sm ${hasDeliveries ? 'text-slate-800' : 'text-slate-400'}`}>{boyCustomers.length}</p>
                     </div>
                     <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
                       <p className="text-[10px] font-medium text-slate-400">Boxes</p>
-                      <p className="font-bold text-primary-600 text-sm">{boyTotalBoxes}</p>
+                      <p className={`font-bold text-sm ${hasDeliveries ? 'text-primary-600' : 'text-slate-400'}`}>{boyTotalBoxes}</p>
                     </div>
                     <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
                       <p className="text-[10px] font-medium text-slate-400">Regular</p>
-                      <p className="font-bold text-slate-600 text-sm">{boyTotalBoxes - boyStarBoxes}</p>
+                      <p className={`font-bold text-sm ${hasDeliveries ? 'text-slate-600' : 'text-slate-400'}`}>{boyTotalBoxes - boyStarBoxes}</p>
                     </div>
                     <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
                       <p className="text-[10px] font-medium text-amber-600">Starred</p>
-                      <p className="font-bold text-amber-700 text-sm">{boyStarBoxes}</p>
+                      <p className={`font-bold text-sm ${boyStarBoxes > 0 ? 'text-amber-700' : 'text-slate-400'}`}>{boyStarBoxes}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 sm:flex sm:flex-wrap xl:flex-nowrap items-center gap-2 w-full xl:w-auto justify-end">
@@ -797,12 +864,14 @@ const Deliveries = () => {
                     >
                       <Smartphone size={14} /> <span>Driver App</span>
                     </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleOpenOptimizer(boy, boyCustomers); }} 
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
-                    >
-                      <Compass size={14} /> <span>Shortest Route</span>
-                    </button>
+                    {hasDeliveries && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleOpenOptimizer(boy, boyCustomers); }} 
+                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                      >
+                        <Compass size={14} /> <span>Shortest Route</span>
+                      </button>
+                    )}
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleShareRoute(boy, boyCustomers); }} 
                       className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
@@ -817,21 +886,29 @@ const Deliveries = () => {
 
                 {isExpanded && (
                   <div className="animate-in slide-in-from-top-1 duration-200">
-                    <div className="p-3 bg-slate-50/70 border-b border-slate-200/70 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5">
-                      <div className="flex items-center gap-2 text-xs">
-                        <div className="w-5 h-5 rounded-md bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
-                          <Compass size={12} />
-                        </div>
-                        <span className="font-semibold text-slate-700">Hub ➔ Delivery Sequence ➔ Hub:</span>
-                        <span className="text-slate-500 hidden md:inline">Calculates shortest round-trip sequence to save travel time.</span>
+                    {!hasDeliveries ? (
+                      <div className="p-6 text-center text-slate-400 bg-slate-50/50">
+                        <Truck size={28} className="mx-auto mb-2 text-slate-300" />
+                        <p className="text-xs font-semibold text-slate-600">No {activeMealTab} stops currently assigned to {boy.name}.</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Assign customers to this delivery partner in Customers page or dispatch standby routes.</p>
                       </div>
-                      <button 
-                        onClick={() => handleOpenOptimizer(boy, boyCustomers)}
-                        className="w-full sm:w-auto px-3 py-1.5 bg-slate-900 hover:bg-black text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-xs shrink-0 active:scale-95 transition-all"
-                      >
-                        <Zap size={12} className="text-amber-400" /> Optimize Sequence
-                      </button>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="p-3 bg-slate-50/70 border-b border-slate-200/70 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5">
+                          <div className="flex items-center gap-2 text-xs">
+                            <div className="w-5 h-5 rounded-md bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                              <Compass size={12} />
+                            </div>
+                            <span className="font-semibold text-slate-700">Hub ➔ Delivery Sequence ➔ Hub:</span>
+                            <span className="text-slate-500 hidden md:inline">Calculates shortest round-trip sequence to save travel time.</span>
+                          </div>
+                          <button 
+                            onClick={() => handleOpenOptimizer(boy, boyCustomers)}
+                            className="w-full sm:w-auto px-3 py-1.5 bg-slate-900 hover:bg-black text-white text-[11px] font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-xs shrink-0 active:scale-95 transition-all"
+                          >
+                            <Zap size={12} className="text-amber-400" /> Optimize Sequence
+                          </button>
+                        </div>
 
                     {/* MOBILE CARD VIEW: Visible on small screens (< 768px) */}
                     <div className="block md:hidden p-3 space-y-3 bg-slate-50/50 divide-y divide-slate-200/70">
@@ -1061,6 +1138,8 @@ const Deliveries = () => {
                         </tbody>
                       </table>
                     </div>
+                  </>
+                )}
                   </div>
                 )}
               </div>
@@ -1078,8 +1157,8 @@ const Deliveries = () => {
           </div>
         )}
       </div>
-      </div>
-      )}
+    </div>
+  )}
 
       {/* Driver Portal Link Share Modal */}
       <ShareDriverLinkModal

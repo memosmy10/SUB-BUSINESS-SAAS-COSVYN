@@ -4,6 +4,8 @@ import {
   calculateRemainingDeliveries, 
   getCustomerActiveDaysLeft,
   formatDateDDMMYYYY,
+  getDefaultMealSessionForTime,
+  normalizePhone,
   GlobalCustomer,
   GlobalPlan,
   PauseEvent
@@ -194,6 +196,71 @@ describe('ScaleKitchen Database Persistence & Data Integrity Tests', () => {
       expect(formatDateDDMMYYYY('2026-10-26')).toBe('26/10/2026');
       expect(formatDateDDMMYYYY('2026-01-05')).toBe('05/01/2026');
       expect(formatDateDDMMYYYY('')).toBe('');
+    });
+  });
+
+  describe('5. Automatic Meal Session Selection Boundaries (Issue 1)', () => {
+    it('should select Breakfast from 12:00 AM (00:00:00) to 10:59:59 AM', () => {
+      // 00:00:00
+      const midnight = new Date(2026, 9, 27, 0, 0, 0);
+      expect(getDefaultMealSessionForTime(midnight)).toBe('Breakfast');
+
+      // 08:30:00
+      const morning = new Date(2026, 9, 27, 8, 30, 0);
+      expect(getDefaultMealSessionForTime(morning)).toBe('Breakfast');
+
+      // 10:59:59 (Exact upper boundary)
+      const lateBreakfast = new Date(2026, 9, 27, 10, 59, 59);
+      expect(getDefaultMealSessionForTime(lateBreakfast)).toBe('Breakfast');
+    });
+
+    it('should select Lunch from 11:00 AM (11:00:00) to 4:59:59 PM (16:59:59)', () => {
+      // 11:00:00 (Exact start)
+      const elevenAm = new Date(2026, 9, 27, 11, 0, 0);
+      expect(getDefaultMealSessionForTime(elevenAm)).toBe('Lunch');
+
+      // 13:45:00 (Afternoon)
+      const afternoon = new Date(2026, 9, 27, 13, 45, 0);
+      expect(getDefaultMealSessionForTime(afternoon)).toBe('Lunch');
+
+      // 16:59:59 (Exact upper boundary)
+      const lateLunch = new Date(2026, 9, 27, 16, 59, 59);
+      expect(getDefaultMealSessionForTime(lateLunch)).toBe('Lunch');
+    });
+
+    it('should select Dinner from 5:00 PM (17:00:00) to 11:59:59 PM (23:59:59)', () => {
+      // 17:00:00 (Exact start)
+      const fivePm = new Date(2026, 9, 27, 17, 0, 0);
+      expect(getDefaultMealSessionForTime(fivePm)).toBe('Dinner');
+
+      // 20:15:00 (Evening)
+      const night = new Date(2026, 9, 27, 20, 15, 0);
+      expect(getDefaultMealSessionForTime(night)).toBe('Dinner');
+
+      // 23:59:59 (End of day)
+      const lateDinner = new Date(2026, 9, 27, 23, 59, 59);
+      expect(getDefaultMealSessionForTime(lateDinner)).toBe('Dinner');
+    });
+  });
+
+  describe('6. Driver Independent Authentication & Phone Sanitization (Issue 2)', () => {
+    it('should normalize driver mobile numbers to 10-digit lookup keys', () => {
+      expect(normalizePhone('+91 8309995962')).toBe('8309995962');
+      expect(normalizePhone('08309995962')).toBe('8309995962');
+      expect(normalizePhone('83099 95962')).toBe('8309995962');
+      expect(normalizePhone('91-8309995962')).toBe('8309995962');
+      expect(normalizePhone('+918309995962')).toBe('8309995962');
+    });
+
+    it('should reject invalid PIN formats', () => {
+      const isValidPin = (pin: string) => /^\d{4}$/.test(pin.trim());
+      expect(isValidPin('1234')).toBe(true);
+      expect(isValidPin('0000')).toBe(true);
+      expect(isValidPin('9876')).toBe(true);
+      expect(isValidPin('123')).toBe(false);
+      expect(isValidPin('12345')).toBe(false);
+      expect(isValidPin('12a4')).toBe(false);
+      expect(isValidPin('')).toBe(false);
     });
   });
 });

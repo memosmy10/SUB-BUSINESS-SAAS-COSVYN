@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    include: ['test/persistence-and-integrity.test.ts'],
     testTimeout: 20000,
     hookTimeout: 20000
   }

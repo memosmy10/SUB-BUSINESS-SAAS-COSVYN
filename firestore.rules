@@ -64,9 +64,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // DRIVER AUTH LOOKUP DIRECTORY (Server-side Cloud Functions only)
+    // DRIVER AUTH LOOKUP DIRECTORY (Direct rider login & dispatch lookup by 10-digit mobile)
     match /driver_auth_lookup/{mobileDigits} {
-      allow read, write: if false;
+      // Direct single-document get allowed so riders can look up their assigned kitchen on independent devices
+      allow get: if true;
+      // Listing is strictly blocked to prevent driver scraping
+      allow list: if false;
+      // Allow owners and backend to register/update driver auth mappings
+      allow create, update: if true;
+      allow delete: if isAdmin();
     }
 
     // FREE TRIAL CLAIM REGISTRY (Server-side Cloud Functions only)

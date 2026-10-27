@@ -912,3 +912,25 @@ export const getCustomerActiveDaysLeft = (
     activePlanName: c.planName || 'Meal Plan'
   };
 };
+
+/**
+ * Automatically determines the active meal session based on local time or specified Date.
+ * Boundaries:
+ * - Breakfast: 12:00 AM to 10:59:59 AM (00:00:00 - 10:59:59)
+ * - Lunch: 11:00 AM to 4:59:59 PM (11:00:00 - 16:59:59)
+ * - Dinner: 5:00 PM to 11:59:59 PM (17:00:00 - 23:59:59)
+ */
+export type MealSession = 'Breakfast' | 'Lunch' | 'Dinner';
+
+export const getDefaultMealSessionForTime = (dateInput?: Date | string | number): MealSession => {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const hours = d.getHours();
+  if (hours < 11) {
+    return 'Breakfast';
+  }
+  if (hours < 17) {
+    return 'Lunch';
+  }
+  return 'Dinner';
+};
+

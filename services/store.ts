@@ -778,15 +778,17 @@ export const INITIAL_BUSINESS_PROFILE: BusinessProfile = {
 export const encodeDriverToken = (
   bizId: string, 
   boyId?: string, 
-  _mobile?: string,
+  mobile?: string,
   _pin?: string,
-  _name?: string
+  name?: string
 ): string => {
   if (!bizId) return '';
   try {
     const payload = {
       b: bizId,
       s: boyId || '',
+      m: mobile ? mobile.replace(/\D/g, '').slice(-10) : '',
+      n: name || '',
       t: Date.now()
     };
     const json = JSON.stringify(payload);
@@ -801,7 +803,7 @@ export const encodeDriverToken = (
 
 /**
  * Decodes a secure driver token into connection parameters.
- * SECURITY (Phase 1): Never extracts or yields a PIN from tokens.
+ * SECURITY: Never extracts or yields a PIN from tokens. PIN is verified separately.
  */
 export const decodeDriverToken = (token: string): { 
   bizId: string; 
@@ -822,9 +824,9 @@ export const decodeDriverToken = (token: string): {
       return {
         bizId: parsed.b,
         boyId: parsed.s || undefined,
-        mobile: undefined,
+        mobile: parsed.m || undefined,
         pin: undefined,
-        name: undefined
+        name: parsed.n || undefined
       };
     }
   } catch (e) {

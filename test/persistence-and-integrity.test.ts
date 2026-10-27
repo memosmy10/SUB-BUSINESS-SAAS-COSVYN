@@ -262,5 +262,26 @@ describe('ScaleKitchen Database Persistence & Data Integrity Tests', () => {
       expect(isValidPin('12a4')).toBe(false);
       expect(isValidPin('')).toBe(false);
     });
+
+    it('should correctly encode and decode driver tokens with rider mobile and name while keeping PIN secure', async () => {
+      const { encodeDriverToken, decodeDriverToken } = await import('../services/store');
+      const bizId = 'biz_kitchen_xyz';
+      const staffId = 'staff_rider_456';
+      const mobile = '+91 8309995962';
+      const name = 'Abhi';
+
+      const token = encodeDriverToken(bizId, staffId, mobile, '1234', name);
+      expect(typeof token).toBe('string');
+      expect(token.length).toBeGreaterThan(10);
+
+      const decoded = decodeDriverToken(token);
+      expect(decoded).not.toBeNull();
+      expect(decoded?.bizId).toBe(bizId);
+      expect(decoded?.boyId).toBe(staffId);
+      expect(decoded?.mobile).toBe('8309995962');
+      expect(decoded?.name).toBe('Abhi');
+      // PIN MUST NOT be contained in the token
+      expect(decoded?.pin).toBeUndefined();
+    });
   });
 });

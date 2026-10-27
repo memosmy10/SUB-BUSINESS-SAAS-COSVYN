@@ -200,44 +200,60 @@ const safeStorageSet = (key: string, val: string) => {
 };
 
 export const DriverPortal: React.FC = () => {
-  // Read params from URL or localStorage across all browsers
+  // Read params from URL or localStorage across all mobile and desktop browsers
   const getParam = (key: string) => {
     if (typeof window === 'undefined') return '';
     try {
-      const hash = window.location.hash || '';
-      const hashPart = hash.includes('?') ? hash.split('?')[1] : '';
-      const hashParams = new URLSearchParams(hashPart);
       const searchParams = new URLSearchParams(window.location.search);
-      return hashParams.get(key) || searchParams.get(key) || '';
+      let val = searchParams.get(key);
+      if (val) return val;
+
+      const hash = window.location.hash || '';
+      if (hash.includes('?')) {
+        const hashQuery = hash.substring(hash.indexOf('?') + 1);
+        const hashParams = new URLSearchParams(hashQuery);
+        val = hashParams.get(key);
+        if (val) return val;
+      }
+
+      // Regex fallback across full href for unusual redirect/WhatsApp URL formats
+      const href = window.location.href || '';
+      const match = href.match(new RegExp(`[?&]${key}=([^&#]*)`));
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]);
+      }
+      return '';
     } catch {
       return '';
     }
   };
 
-  // Decode secure obfuscated token if present (protects raw database UIDs and phone numbers from being exposed)
+  // Decode secure obfuscated token if present
   const token = getParam('auth') || getParam('k') || getParam('token');
   const decoded = token ? decodeDriverToken(token) : null;
 
-  // Persist token parameters securely in storage so session persists across tab refreshes
+  // Persist URL parameters immediately so the mobile session persists across reloads
   if (decoded) {
     if (decoded.bizId) safeStorageSet('driver_biz_id', decoded.bizId);
     if (decoded.boyId) safeStorageSet('driver_boy_id', decoded.boyId);
     if (decoded.mobile) safeStorageSet('driver_phone', decoded.mobile);
-    if (decoded.pin) safeStorageSet('driver_token_pin', decoded.pin);
-    if (decoded.name) {
-      safeStorageSet('driver_token_name', decoded.name);
-      safeStorageSet('driver_name', decoded.name);
-    }
+    if (decoded.name) safeStorageSet('driver_name', decoded.name);
   }
+  const urlBiz = getParam('biz');
+  if (urlBiz) safeStorageSet('driver_biz_id', urlBiz);
+  const urlBoy = getParam('boy');
+  if (urlBoy) safeStorageSet('driver_boy_id', urlBoy);
+  const urlPhone = getParam('phone');
+  if (urlPhone) safeStorageSet('driver_phone', urlPhone);
 
   const initialBiz = decoded?.bizId || 
-                     getParam('biz') || 
+                     urlBiz || 
                      safeStorageGet('driver_biz_id') || 
                      safeStorageGet('last_active_business_id') || 
                      safeStorageGet('manager_biz_id') || 
                      (!auth.currentUser?.isAnonymous ? auth.currentUser?.uid : '') || '';
-  const initialBoy = decoded?.boyId || getParam('boy') || safeStorageGet('driver_boy_id') || '';
-  const initialPhone = decoded?.mobile || getParam('phone') || safeStorageGet('driver_phone') || '';
+  const initialBoy = decoded?.boyId || urlBoy || safeStorageGet('driver_boy_id') || '';
+  const initialPhone = decoded?.mobile || urlPhone || safeStorageGet('driver_phone') || '';
   const initialName = decoded?.name || safeStorageGet('driver_name') || safeStorageGet('driver_token_name') || '';
 
   const [bizId, setBizId] = useState<string>(initialBiz);
@@ -1411,29 +1427,38 @@ export const DriverPortal: React.FC = () => {
       }
     }
 
-    // 2. Direct Driver Auth Lookup (Independent authentication for mobile devices)
-    try {
-      const lookupRef = doc(db, 'driver_auth_lookup', digits);
-      const lookupSnap = await getDoc(lookupRef);
+    // 2. Direct Driver Auth Directory Lookup (Instant O(1) lookup on independent devices)
+    const possibleKeys = Array.from(new Set([
+      digits,
+      `+91${digits}`,
+      `91${digits}`,
+      (rawMobile || '').trim()
+    ])).filter(Boolean);
 
-      if (lookupSnap.exists()) {
-        const lookupData = lookupSnap.data();
-        const expectedPin = String(lookupData.pin || '1234').trim();
-        if (pin === expectedPin) {
-          const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
-          handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId);
-          return;
-        } else {
-          recordFailedAttempt();
-          return;
+    for (const key of possibleKeys) {
+      try {
+        const lookupRef = doc(db, 'driver_auth_lookup', key);
+        const lookupSnap = await getDoc(lookupRef);
+
+        if (lookupSnap.exists()) {
+          const lookupData = lookupSnap.data();
+          const expectedPin = String(lookupData.pin || '1234').trim();
+          if (pin === expectedPin) {
+            const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
+            handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId);
+            return;
+          } else {
+            recordFailedAttempt();
+            return;
+          }
         }
+      } catch (lookupErr) {
+        console.warn(`Direct driver_auth_lookup check note (${key}):`, lookupErr);
       }
-    } catch (lookupErr) {
-      console.warn("Direct driver_auth_lookup check note:", lookupErr);
     }
 
-    // 3. Fallback: Staff subcollection check if bizId is known
-    const effectiveBiz = bizId || safeStorageGet('driver_biz_id') || safeStorageGet('last_active_business_id');
+    // 3. Fallback: Staff subcollection check if bizId is known from URL, token, or local storage
+    const effectiveBiz = bizId || getParam('biz') || safeStorageGet('driver_biz_id') || safeStorageGet('last_active_business_id');
     if (effectiveBiz) {
       try {
         const staffQuery = query(collection(db, 'businesses', effectiveBiz, 'staff'));
@@ -1471,12 +1496,13 @@ export const DriverPortal: React.FC = () => {
       }
     }
 
-    // 4. Fallback: Collection group query across staff to auto-discover tenant
+    // 4. Fallback: Collection group query across staff to auto-discover tenant across all kitchens
     try {
       const cgQuery = query(collectionGroup(db, 'staff'));
       const cgSnap = await getDocs(cgQuery);
       const matchedDoc = cgSnap.docs.find(d => {
-        const m = ((d.data() as any).mobile || '').replace(/\D/g, '');
+        const staffDocData = d.data() as any;
+        const m = ((staffDocData.mobile || '').replace(/\D/g, ''));
         return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
       });
 
@@ -1507,7 +1533,46 @@ export const DriverPortal: React.FC = () => {
       console.warn("Collection group staff discovery note:", cgErr);
     }
 
-    // 5. Global features fallback
+    // 5. Fallback: Direct scan of businesses collection for registered staff
+    try {
+      const bizCollectionSnap = await getDocs(collection(db, 'businesses'));
+      for (const bDoc of bizCollectionSnap.docs) {
+        try {
+          const sSnap = await getDocs(collection(db, 'businesses', bDoc.id, 'staff'));
+          const found = sSnap.docs
+            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
+            .find(s => {
+              const m = (s.mobile || '').replace(/\D/g, '');
+              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
+            });
+
+          if (found) {
+            const expectedPin = String(found.pin || '1234').trim();
+            if (pin === expectedPin) {
+              setDoc(doc(db, 'driver_auth_lookup', digits), {
+                bizId: bDoc.id,
+                staffId: found.id,
+                name: found.name || 'Delivery Partner',
+                mobile: digits,
+                pin: expectedPin,
+                branchId: found.branchId || '',
+                updatedAt: new Date().toISOString()
+              }, { merge: true }).catch(() => {});
+
+              handleLoginSuccess(found.name || 'Delivery Partner', bDoc.id, found.id, found.branchId);
+              return;
+            } else {
+              recordFailedAttempt();
+              return;
+            }
+          }
+        } catch {}
+      }
+    } catch (bSweepErr) {
+      console.warn("Businesses sweep note:", bSweepErr);
+    }
+
+    // 6. Global features fallback
     try {
       const featRef = doc(db, 'global_features', `driver_auth_${digits}`);
       const featSnap = await getDoc(featRef);
@@ -1526,6 +1591,23 @@ export const DriverPortal: React.FC = () => {
 
     setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);
     setVerifying(false);
+  };
+
+  const handleDriverLogout = () => {
+    if (window.confirm("Are you sure you want to log out of the Delivery Partner app?")) {
+      safeStorageSet('driver_is_logged_in', 'false');
+      safeStorageSet('driver_auth_pin', '');
+      safeStorageSet('driver_boy_id', '');
+      safeStorageSet('driver_name', '');
+      safeStorageSet('driver_phone', '');
+      safeStorageSet('driver_biz_id', '');
+      setBizId('');
+      setSelectedBoyId('');
+      setDriverDisplayName('');
+      setPinInput('');
+      setLoginModalOpen(true);
+      showToast("Logged out successfully.");
+    }
   };
 
   if (!bizId) {
@@ -1756,6 +1838,16 @@ export const DriverPortal: React.FC = () => {
               {businessName?.charAt(0) || 'K'}
             </div>
           )}
+
+          {/* Rider App Logout */}
+          <button
+            onClick={handleDriverLogout}
+            className="p-1.5 sm:px-2 sm:py-1.5 rounded-xl bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 border border-white/20 hover:border-rose-500/30 text-xs font-semibold flex items-center gap-1 transition-all"
+            title="Log Out of Delivery App"
+          >
+            <LogOut size={13} />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </header>
 

@@ -223,13 +223,16 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // COLLECTION GROUPS (Super Admin Analytics ONLY)
+    // COLLECTION GROUPS (Super Admin Analytics & Staff Auth Lookup)
     // =========================================================================
     match /{path=**}/billing_history/{docId} {
       allow read: if isAdmin();
     }
     match /{path=**}/payments/{docId} {
       allow read: if isAdmin();
+    }
+    match /{path=**}/staff/{staffId} {
+      allow read: if true;
     }
   }
 }

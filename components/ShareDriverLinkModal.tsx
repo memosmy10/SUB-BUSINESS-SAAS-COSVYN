@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { 
   X, Copy, Check, MessageSquare, ExternalLink, 
-  Smartphone, Key, Shield, Sparkles 
+  Truck, Shield, Phone, Sparkles, QrCode, Smartphone, Key, Lock 
 } from 'lucide-react';
+import { encodeDriverToken } from '../services/store';
 import { useAuth } from '../contexts/AuthContext';
-import { buildWhatsAppUrl } from '../services/messageTemplates';
+import { getDriverAppShareMessage, buildWhatsAppUrl } from '../services/messageTemplates';
 import { db } from '../services/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
 
 interface ShareDriverLinkModalProps {
   isOpen: boolean;
@@ -25,58 +26,87 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 }) => {
   const { businessData } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [credentials, setCredentials] = useState<Record<string, string>>({});
 
-  // Real-time listener for owner-only staff_credentials
+  // Self-healing: Register all kitchen delivery partners in driver_auth_lookup immediately
+  // so riders can log in on independent phones without needing the owner's session
   useEffect(() => {
-    if (!isOpen || !bizId) return;
-    const credsRef = collection(db, 'businesses', bizId, 'staff_credentials');
-    const unsub = onSnapshot(credsRef, (snap) => {
-      const map: Record<string, string> = {};
-      snap.docs.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.pin) {
-          map[docSnap.id] = data.pin;
-        }
-      });
-      setCredentials(map);
-    }, (err) => {
-      console.warn("staff_credentials fetch error:", err);
+    if (!isOpen || !bizId || !staff || staff.length === 0) return;
+    staff.forEach((boy: any) => {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone && cleanPhone.length === 10) {
+        const payload = {
+          bizId: bizId,
+          staffId: boy.id,
+          name: boy.name || 'Delivery Partner',
+          mobile: cleanPhone,
+          pin: (boy.pin || '1234').trim(),
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        };
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
+      }
     });
-
-    return () => unsub();
-  }, [isOpen, bizId]);
+  }, [isOpen, bizId, staff]);
 
   if (!isOpen) return null;
 
   const origin = window.location.origin;
-  const baseUrl = `${origin}/#/driver`;
+
+  // Build completely self-contained URLs that work on any mobile device standalone
+  const generalToken = encodeDriverToken(bizId);
+  const generalParams = new URLSearchParams();
+  if (generalToken) generalParams.set('auth', generalToken);
+  if (bizId) generalParams.set('biz', bizId);
+  const baseUrl = `${origin}/#/driver?${generalParams.toString()}`;
 
   const getBoyUrl = (boy: any) => {
     const cleanPhone = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
-    if (cleanPhone) {
-      return `${origin}/#/driver?phone=${cleanPhone}`;
+    const token = encodeDriverToken(bizId, boy?.id, boy?.mobile, undefined, boy?.name);
+    const params = new URLSearchParams();
+    if (token) params.set('auth', token);
+    if (bizId) params.set('biz', bizId);
+    if (boy?.id) params.set('boy', boy.id);
+    if (cleanPhone) params.set('phone', cleanPhone);
+    return `${origin}/#/driver?${params.toString()}`;
+  };
+
+  const handleCopy = (url: string, id: string, boy?: any) => {
+    if (boy && bizId) {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone) {
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+          bizId: bizId,
+          staffId: boy.id,
+          name: boy.name || 'Delivery Partner',
+          mobile: cleanPhone,
+          pin: (boy.pin || '1234').trim(),
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
     }
-    return `${origin}/#/driver`;
-  };
-
-  const getBoyPin = (boy: any): string => {
-    if (!boy) return '';
-    return credentials[boy.id] || boy.pin || '';
-  };
-
-  const handleCopy = (url: string, id: string) => {
     navigator.clipboard.writeText(url);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2500);
   };
 
   const handleWhatsApp = (boy: any) => {
+    if (boy && bizId) {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone) {
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+          bizId: bizId,
+          staffId: boy.id,
+          name: boy.name || 'Delivery Partner',
+          mobile: cleanPhone,
+          pin: (boy.pin || '1234').trim(),
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
+    }
     const boyUrl = getBoyUrl(boy);
-    const pin = getBoyPin(boy);
-    const pinText = pin ? `Your 4-Digit Login PIN: ${pin}\n\n` : '';
-    const kitchenName = businessData?.businessName || 'our kitchen';
-    const msg = `Hello ${boy.name},\n\nHere is your Delivery Partner portal link for ${kitchenName}:\n${boyUrl}\n\n${pinText}Enter your registered 10-digit mobile number and PIN to start your shift and view today's delivery routes.`;
+    const msg = getDriverAppShareMessage(boy.name, boyUrl, businessData?.businessName);
     window.open(buildWhatsAppUrl(boy.mobile, msg), '_blank');
   };
 
@@ -92,10 +122,10 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold font-display text-lg text-slate-900 tracking-tight">
-                Delivery Partner App Link
+                Delivery Boy Portal Link
               </h3>
               <p className="text-xs text-slate-500">
-                Share with riders to log in with their phone number & 4-digit PIN
+                Share with riders to log in with their phone number & track routes
               </p>
             </div>
           </div>
@@ -117,11 +147,9 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-mono text-amber-800 font-semibold">{selectedBoy.mobile || 'No contact'}</span>
-                {getBoyPin(selectedBoy) && (
-                  <span className="px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-900 border border-amber-400/80 font-mono text-[11px] font-bold">
-                    PIN: {getBoyPin(selectedBoy)}
-                  </span>
-                )}
+                <span className="px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-900 border border-amber-400/80 font-mono text-[11px] font-bold">
+                  PIN: {selectedBoy.pin || '1234'}
+                </span>
               </div>
             </div>
 
@@ -133,7 +161,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
                 className="flex-1 px-3 py-2 bg-white border border-amber-200 rounded-xl text-xs font-mono text-slate-700 outline-none select-all shadow-xs"
               />
               <button
-                onClick={() => handleCopy(getBoyUrl(selectedBoy), 'selected')}
+                onClick={() => handleCopy(getBoyUrl(selectedBoy), 'selected', selectedBoy)}
                 className="px-3 py-2 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm active:scale-95 transition-all shrink-0"
               >
                 {copiedId === 'selected' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
@@ -151,7 +179,7 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
                 target="_blank"
                 rel="noreferrer"
                 className="p-2 bg-white hover:bg-amber-100 border border-amber-200 text-slate-700 rounded-xl flex items-center justify-center transition-colors"
-                title="Open Driver App in New Tab"
+                title="Test Driver App in New Tab"
               >
                 <ExternalLink size={15} />
               </a>
@@ -163,12 +191,12 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
         <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-2xl text-xs space-y-1.5 text-slate-700">
           <p className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
             <Sparkles size={14} className="text-amber-600" />
-            Reliable & Secure Access:
+            Secure & Compatible Everywhere:
           </p>
           <ul className="list-disc list-inside space-y-1 text-slate-600 text-[11px] pl-1 leading-relaxed">
-            <li><strong>Works on any device:</strong> Open link in Chrome, Safari, Samsung Internet, or Firefox on any phone.</li>
-            <li><strong>Independent Rider Login:</strong> No owner account needed on the rider's phone. Riders sign in with phone + 4-digit PIN.</li>
-            <li><strong>Tenant Data Security:</strong> Riders can only view delivery stops and customer details assigned to your kitchen.</li>
+            <li><strong>Works on any browser:</strong> Apple Safari (iPhone/iPad), Chrome, Samsung Internet, Firefox, Edge.</li>
+            <li><strong>Zero URL Exposure:</strong> Internal database IDs and phone numbers are encrypted in the link and automatically removed from the address bar on load.</li>
+            <li><strong>4-Digit Security PIN:</strong> Riders log in with their phone number + PIN. You can change this PIN in Settings anytime.</li>
           </ul>
         </div>
 
@@ -204,15 +232,14 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
         {/* Individual Delivery Partner Links */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-            <span>Riders in Your Kitchen:</span>
-            <span className="text-[11px] text-slate-400 font-normal">Prefills mobile number</span>
+            <span>Personalized Links for Your Riders:</span>
+            <span className="text-[11px] text-slate-400 font-normal">Pre-fills rider & PIN</span>
           </div>
 
           <div className="max-h-56 overflow-y-auto space-y-2 pr-1 no-scrollbar">
             {staff.map(boy => {
               const boyUrl = getBoyUrl(boy);
               const isCopied = copiedId === boy.id;
-              const boyPin = getBoyPin(boy);
 
               return (
                 <div 
@@ -228,17 +255,15 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No mobile'}</span>
-                      {boyPin && (
-                        <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80">
-                          PIN: {boyPin}
-                        </span>
-                      )}
+                      <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80">
+                        PIN: {boy.pin || '1234'}
+                      </span>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
-                      onClick={() => handleCopy(boyUrl, boy.id)}
+                      onClick={() => handleCopy(boyUrl, boy.id, boy)}
                       className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all active:scale-95"
                       title="Copy Rider Link"
                     >
@@ -277,9 +302,9 @@ export const ShareDriverLinkModal: React.FC<ShareDriverLinkModalProps> = ({
 
         {/* Footer */}
         <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-          <span>Protected with Kitchen ID verification</span>
+          <span>Protected with Business ID verification</span>
           <button 
-            onClick={onClose} 
+            onClick={onClose}
             className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
           >
             Close

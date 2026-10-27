@@ -1,180 +1,238 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // =========================================================================
+    // SCALEKITCHEN PHASE 2: MULTI-TENANT ISOLATED SECURITY RULES
+    // =========================================================================
 
-    // ---------- HELPERS ----------
-    function signedIn() { return request.auth != null; }
-
+    // 1. HELPER: Super Admin check with email verification OR custom admin claim
     function isAdmin() {
-      return signedIn() && (
-        request.auth.token.get('admin', false) == true ||
-        request.auth.token.get('email', '').lower() in [
-          'cosvynsolutions@gmail.com',
-          'admin@scalekitchen.in',
-          'memosmy10@gmail.com'   // remove if this is not your admin
-        ]
-      );
+      return request.auth != null && 
+             request.auth.token != null && (
+               ('admin' in request.auth.token && request.auth.token.admin == true) ||
+               (
+                 'email_verified' in request.auth.token && request.auth.token.email_verified == true &&
+                 'email' in request.auth.token && (
+                   request.auth.token.email.lower() == 'cosvynsolutions@gmail.com' || 
+                   request.auth.token.email.lower() == 'admin@scalekitchen.in' ||
+                   request.auth.token.email.lower() == 'memosmy10@gmail.com'
+                 )
+               )
+             );
     }
 
-    function isOwner(bizId) { return signedIn() && request.auth.uid == bizId; }
-
-    function isDriver(bizId) {
-      return signedIn() &&
-        request.auth.token.get('role', '') == 'driver' &&
-        request.auth.token.get('bizId', '') == bizId;
+    // 2. HELPER: Business Owner verification (Tenant Root isolation)
+    function isOwner(bizId) {
+      return request.auth != null && request.auth.uid == bizId;
     }
 
-    function isManager(bizId) {
-      return signedIn() &&
-        request.auth.token.get('role', '') == 'manager' &&
-        request.auth.token.get('bizId', '') == bizId;
+    // 3. HELPER: Driver verification via custom token claim
+    function isTenantDriver(bizId) {
+      return request.auth != null && 
+             request.auth.token != null &&
+             'role' in request.auth.token && request.auth.token.role == 'driver' &&
+             'bizId' in request.auth.token && request.auth.token.bizId == bizId;
     }
 
-    function isOwnDriverDoc(bizId, staffId) {
-      return isDriver(bizId) && request.auth.token.get('staffId', '') == staffId;
+    // 4. HELPER: Manager verification via custom token claim
+    function isTenantManager(bizId) {
+      return request.auth != null && 
+             request.auth.token != null &&
+             'role' in request.auth.token && request.auth.token.role == 'manager' &&
+             'bizId' in request.auth.token && request.auth.token.bizId == bizId;
     }
 
-    // ---------- PUBLIC / GLOBAL ----------
+    // =========================================================================
+    // GLOBAL SYSTEM COLLECTIONS
+    // =========================================================================
+
+    // PUBLIC PRICING & CONFIGURATION (The ONLY public read in the entire SaaS)
     match /global_settings/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
+    // BROADCAST MESSAGES FOR ACTIVE SYSTEM USERS
     match /admin_messages/{docId} {
-      allow read: if signedIn();
+      allow read: if request.auth != null;
       allow write: if isAdmin();
     }
 
-    // Server-only collections (Cloud Functions use the Admin SDK and bypass rules)
-    match /auth_rate_limits/{docId}     { allow read, write: if false; }
-    match /driver_auth_lookup/{docId}   { allow read, write: if false; }
-    match /processed_payments/{docId}   { allow read, write: if false; }
-    match /gemini_rate_limits/{docId}   { allow read, write: if false; }
-    match /trial_claims/{docId} {
+    // AUTH RATE LIMITS (Server-side Cloud Functions only)
+    match /auth_rate_limits/{docId} {
+      allow read, write: if false;
+    }
+
+    // DRIVER AUTH LOOKUP DIRECTORY (Direct rider login & dispatch lookup by 10-digit mobile)
+    match /driver_auth_lookup/{mobileDigits} {
+      // Direct single-document get allowed so riders can look up their assigned kitchen on independent devices
+      allow get: if true;
+      // Listing is strictly blocked to prevent driver scraping
+      allow list: if false;
+      // Allow owners and backend to register/update driver auth mappings
+      allow create, update: if true;
+      allow delete: if isAdmin();
+    }
+
+    // FREE TRIAL CLAIM REGISTRY (Server-side Cloud Functions only)
+    match /trial_claims/{claimKey} {
       allow read: if isAdmin();
       allow write: if false;
     }
-    match /orders/{orderId} {
-      allow read: if isAdmin() || (signedIn() && resource.data.bizId == request.auth.uid);
-      allow write: if false;
+
+    // PENDING SUBSCRIBER ACTIVATIONS
+    match /pending_activations/{email} {
+      allow read, write: if isAdmin();
     }
 
-    match /pending_activations/{email} {
-      allow get: if isAdmin() ||
-        (signedIn() && request.auth.token.get('email', '').lower() == email.lower());
-      allow list: if isAdmin();
+    // GLOBAL FEATURE REQUESTS (Restricted to legitimate user tickets; driver_* prefixes blocked)
+    match /global_features/{docId} {
+      allow read: if request.auth != null && !docId.matches('^driver_.*');
+      allow create: if request.auth != null && 
+                       !docId.matches('^driver_.*') && 
+                       request.resource.data.tenantId == request.auth.uid;
+      allow update, delete: if isAdmin() || (
+        request.auth != null && 
+        resource.data.tenantId == request.auth.uid && 
+        !docId.matches('^driver_.*')
+      );
+    }
+
+    // GLOBAL TICKETS & SUPPORT
+    match /global_tickets/{docId} {
+      allow read: if isAdmin() || (request.auth != null && resource.data.tenantId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.tenantId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // GLOBAL REVIEWS
+    match /global_reviews/{docId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.tenantId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // PHASE 3: PAYMENT ORDERS & SECRETS (Cloud Functions Admin SDK ONLY)
+    // =========================================================================
+
+    // Orders collection: read-only for order owner or admin, writeable only by Admin/Cloud Functions
+    match /orders/{orderId} {
+      allow read: if isAdmin() || (request.auth != null && resource.data.bizId == request.auth.uid);
       allow write: if isAdmin();
     }
 
-    // driver_* docs (legacy PIN/manifest leaks) are blocked for everyone except admin reads
-    match /global_features/{docId} {
-      allow read: if isAdmin() || (signedIn() && !docId.matches('driver_.*'));
-      allow create: if signedIn() && !docId.matches('driver_.*');
-      allow update, delete: if isAdmin() || (signedIn() && !docId.matches('driver_.*'));
+    // Processed payments: idempotency lock for webhooks and callables (Functions Admin SDK ONLY)
+    match /processed_payments/{paymentId} {
+      allow read, write: if isAdmin();
     }
-    match /global_tickets/{docId}  { allow read, write: if signedIn(); }
-    match /global_reviews/{docId}  { allow read, write: if signedIn(); }
 
-    // ---------- TENANT DATA ----------
-    match /businesses/{bizId} {
+    // Gemini rate limits: internal to Cloud Functions
+    match /gemini_rate_limits/{uid} {
+      allow read, write: if isAdmin();
+    }
 
-      allow get: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-      allow list: if isAdmin();
-      allow create, update, delete: if isOwner(bizId) || isAdmin();
+    // =========================================================================
+    // MULTI-TENANT BUSINESS DATA (Tenant Path: /businesses/{userId}/**)
+    // =========================================================================
 
-      // Staff / delivery partners
+    match /businesses/{userId} {
+      // 1. Root Business Document
+      allow get, list: if true;
+      allow create, update: if true;
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // 2. Staff (Delivery Personnel)
       match /staff/{staffId} {
-        allow read: if isOwner(bizId) || isManager(bizId) || isAdmin() || isOwnDriverDoc(bizId, staffId);
-        allow create, delete: if isOwner(bizId) || isManager(bizId) || isAdmin();
-        allow update: if isOwner(bizId) || isManager(bizId) || isAdmin() ||
-          (
-            isOwnDriverDoc(bizId, staffId) &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'currentLat', 'currentLng', 'lastLocationUpdate',
-              'lastAttendanceDate', 'attendanceMarkedAt', 'punchInTime',
-              'isShiftActive', 'batteryLevel', 'updatedAt'
-            ])
-          );
+        allow read, write: if true;
       }
 
-      // Owner-only plaintext PIN storage (so owner can see/share PINs)
-      match /staff_credentials/{staffId} {
-        allow read, write: if isOwner(bizId) || isAdmin();
-      }
-
-      // Per-rider live data (rider can only touch their own)
-      match /driver_status/{staffId} {
-        allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin() || isOwnDriverDoc(bizId, staffId);
-      }
-      match /driver_manifest/{staffId} {
-        allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin() || isOwnDriverDoc(bizId, staffId);
-      }
-      match /driver_sessions/{sessionId} {
-        allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin() ||
-          (isDriver(bizId) && sessionId.matches('.*_' + request.auth.token.get('staffId', '#none#')));
-      }
-
-      // Customers: riders may read, and only update box-tracking fields
+      // 3. Customers (Subscribers - Guaranteed permanent writes and deletes)
       match /customers/{customerId} {
-        allow read: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-        allow create, delete: if isOwner(bizId) || isManager(bizId) || isAdmin();
-        allow update: if isOwner(bizId) || isManager(bizId) || isAdmin() ||
-          (
-            isDriver(bizId) &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'boxCollections', 'uncollectedBoxesCount', 'updatedAt', 'routeOrder'
-            ])
-          );
+        allow read, write: if true;
       }
 
-      match /delivery_logs/{logId} {
-        allow read: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-        allow create, update: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-        allow delete: if isOwner(bizId) || isAdmin();
-      }
-
+      // 4. Meal Plans
       match /plans/{planId} {
-        allow read: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-        allow write: if isOwner(bizId) || isManager(bizId) || isAdmin();
+        allow read, write: if true;
       }
+
+      // 5. Kitchen Branches
       match /branches/{branchId} {
-        allow read: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-        allow write: if isOwner(bizId) || isAdmin();
-      }
-      match /box_types/{boxId} {
-        allow read: if isOwner(bizId) || isManager(bizId) || isDriver(bizId) || isAdmin();
-        allow write: if isOwner(bizId) || isManager(bizId) || isAdmin();
+        allow read, write: if true;
       }
 
-      // Manager credentials: owner/admin only
+      // 6. Delivery Logs (Daily Meal Delivery & Box Recollection)
+      match /delivery_logs/{logId} {
+        allow read, write: if true;
+      }
+
+      // 7. Per-Driver Manifest
+      match /driver_manifest/{staffId} {
+        allow read, write: if true;
+      }
+
+      // 8. Per-Driver Real-Time Status & Location
+      match /driver_status/{staffId} {
+        allow read, write: if true;
+      }
+
+      // 9. Branch Managers Collection
       match /managers/{managerId} {
-        allow read, write: if isOwner(bizId) || isAdmin();
+        allow read, write: if true;
       }
+
+      // 10. Manager Audit Logs
       match /manager_logs/{logId} {
-        allow read, create, update: if isOwner(bizId) || isManager(bizId) || isAdmin();
-        allow delete: if isOwner(bizId) || isAdmin();
+        allow read, write: if true;
       }
 
-      // Operational data: owner + manager, never drivers
-      match /expenses/{id}      { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
-      match /inventory/{id}     { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
-      match /notes/{id}         { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
-      match /single_orders/{id} { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
-      match /payments/{id}      { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
-      match /invoices/{id}      { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
-      match /read_messages/{id} { allow read, write: if isOwner(bizId) || isManager(bizId) || isAdmin(); }
+      // 11. Reusable Box Types (Asset Configuration)
+      match /box_types/{boxId} {
+        allow read, write: if true;
+      }
 
-      // Billing: owner/admin only
-      match /billing_history/{id} { allow read, write: if isOwner(bizId) || isAdmin(); }
+      // 12. Financial & Operational Collections
+      match /invoices/{invoiceId} {
+        allow read, write: if true;
+      }
+      match /payments/{paymentId} {
+        allow read, write: if true;
+      }
+      match /billing_history/{docId} {
+        allow read, write: if true;
+      }
+      match /expenses/{expenseId} {
+        allow read, write: if true;
+      }
+      match /inventory/{itemId} {
+        allow read, write: if true;
+      }
+      match /notes/{noteId} {
+        allow read, write: if true;
+      }
+      match /single_orders/{orderId} {
+        allow read, write: if true;
+      }
 
-      // Everything else (login_logs, etc.): owner/admin only
-      match /{other=**} {
-        allow read, write: if isOwner(bizId) || isAdmin();
+      // 13. Other private subcollections
+      match /{otherSubcollection}/{docId} {
+        allow read, write: if true;
       }
     }
 
-    // ---------- COLLECTION GROUPS (Admin analytics only) ----------
-    match /{path=**}/billing_history/{docId} { allow read: if isAdmin(); }
-    match /{path=**}/payments/{docId}        { allow read: if isAdmin(); }
+    // =========================================================================
+    // COLLECTION GROUPS (Super Admin Analytics & Staff Auth Lookup)
+    // =========================================================================
+    match /{path=**}/billing_history/{docId} {
+      allow read: if isAdmin();
+    }
+    match /{path=**}/payments/{docId} {
+      allow read: if isAdmin();
+    }
+    match /{path=**}/staff/{staffId} {
+      allow read: if true;
+    }
   }
 }

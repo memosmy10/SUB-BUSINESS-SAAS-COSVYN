@@ -14,13 +14,6 @@ import {
 import { signInAnonymously, signInWithCustomToken } from 'firebase/auth';
 import { BranchManager, ALL_SAAS_PAGES, getTodayStr } from '../services/store';
 
-/**
- * TEMPORARY MIGRATION FLAG:
- * Kept strictly for backward compatibility during Phase 1 deployment transition.
- * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
- * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
- */
-const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 
 // Import SaaS page components so managers can seamlessly access their permitted views
 import Dashboard from './Dashboard';
@@ -183,8 +176,7 @@ export const ManagerPortal: React.FC = () => {
 
     try {
       let matched: BranchManager | null = null;
-
-      // 1. Primary: Server-verified Cloud Function callable with lockout enforcement
+      // 1. Primary & Only: Server-verified Cloud Function callable with lockout enforcement
       try {
         const result = await managerLoginCallable({
           email: emailInput.trim(),
@@ -193,46 +185,29 @@ export const ManagerPortal: React.FC = () => {
         });
 
         if (result?.data?.token) {
-          // Sign in with Firebase custom token granting manager claims
           await signInWithCustomToken(auth, result.data.token);
           matched = result.data.manager as unknown as BranchManager;
+        } else {
+          throw new Error("No token returned by server.");
         }
       } catch (callableErr: any) {
-        const errorMsg = callableErr?.message || '';
+        console.error("Manager login error:", callableErr?.code, callableErr?.message, callableErr);
         const errorCode = callableErr?.code || '';
+        const errorMsg = callableErr?.message || '';
 
-        // Lockout or credential failure from server -> surface directly
         if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
           setAuthError(errorMsg);
-          setAuthLoading(false);
-          return;
-        }
-
-        if (ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
-          console.warn("[Migration Fallback] Callable managerLogin unavailable, falling back to client query:", callableErr);
+        } else if (
+          errorCode === 'functions/unauthenticated' ||
+          errorCode === 'functions/not-found' ||
+          errorMsg.includes('Invalid email or password')
+        ) {
+          setAuthError('Invalid email or password.');
         } else {
-          setAuthError(errorMsg || 'Invalid email or password.');
-          setAuthLoading(false);
-          return;
+          setAuthError('Cannot reach server. Check internet and try again.');
         }
-      }
-
-      // 2. Temporary Migration Fallback: client-side verification if Cloud Function is not yet deployed
-      if (!matched && ENABLE_LEGACY_CLIENT_AUTH_FALLBACK) {
-        const mgrRef = collection(db, 'businesses', bizId, 'managers');
-        const snap = await getDocs(mgrRef);
-        const managersList = snap.docs.map(d => ({ id: d.id, ...d.data() })) as BranchManager[];
-        const legacyMatch = managersList.find(
-          m => m.email?.trim().toLowerCase() === emailInput.trim().toLowerCase() && 
-               m.password === passwordInput
-        );
-
-        if (!legacyMatch) {
-          setAuthError('Invalid email or password. Please verify credentials provided by kitchen owner.');
-          setAuthLoading(false);
-          return;
-        }
-        matched = legacyMatch;
+        setAuthLoading(false);
+        return;
       }
 
       if (!matched) {

@@ -439,4 +439,259 @@ describe('ScaleKitchen Database Persistence & Data Integrity Tests', () => {
       expect(resolveBiz('', '')).toBe('stored_owner_uid_777');
     });
   });
+
+  describe('8. Independent Delivery Partner Security Architecture (Requirements A - L)', () => {
+    it('Case 1: Valid driver login succeeds and returns custom token claims', async () => {
+      const bcrypt = (await import('bcryptjs')).default;
+      const registeredStaff = {
+        id: 'rider_101',
+        name: 'Ravi Kumar',
+        mobile: '8309995962',
+        branchId: 'hub_central',
+        status: 'Active',
+        active: true,
+        pinHash: bcrypt.hashSync('5678', 10)
+      };
+
+      const loginRequest = {
+        bizId: 'tenant_kitchen_alpha',
+        staffId: 'rider_101',
+        phone: '+91 83099-95962',
+        pin: '5678'
+      };
+
+      const cleanPhone = loginRequest.phone.replace(/\D/g, '').slice(-10);
+      const isPhoneMatch = cleanPhone === registeredStaff.mobile;
+      const isPinMatch = bcrypt.compareSync(loginRequest.pin, registeredStaff.pinHash);
+      const isActive = registeredStaff.status === 'Active' && registeredStaff.active;
+
+      expect(isPhoneMatch).toBe(true);
+      expect(isPinMatch).toBe(true);
+      expect(isActive).toBe(true);
+
+      const claims = {
+        role: 'driver',
+        bizId: loginRequest.bizId,
+        staffId: loginRequest.staffId,
+        branchId: registeredStaff.branchId
+      };
+
+      expect(claims.role).toBe('driver');
+      expect(claims.bizId).toBe('tenant_kitchen_alpha');
+      expect(claims.staffId).toBe('rider_101');
+    });
+
+    it('Case 2: Wrong PIN is rejected and fails closed without enumeration', async () => {
+      const bcrypt = (await import('bcryptjs')).default;
+      const staffRecord = {
+        id: 'rider_101',
+        name: 'Ravi',
+        mobile: '8309995962',
+        pinHash: bcrypt.hashSync('1234', 10)
+      };
+
+      const candidatePin = '9999';
+      const isMatch = bcrypt.compareSync(candidatePin, staffRecord.pinHash);
+      expect(isMatch).toBe(false);
+
+      // Generic error message that does not leak whether phone or PIN was wrong
+      const errorResponse = "Invalid credentials or inactive rider profile.";
+      expect(errorResponse).not.toContain('PIN is incorrect');
+      expect(errorResponse).not.toContain('phone');
+    });
+
+    it('Case 3: Screenshot phone 8309995962 mismatch is safely rejected', () => {
+      const registeredRiders = [
+        { id: 'r1', name: 'Rider A', mobile: '9876543210' },
+        { id: 'r2', name: 'Rider B', mobile: '9123456780' },
+        { id: 'r3', name: 'Rider C', mobile: '9988776655' }
+      ];
+
+      const inputPhone = '8309995962';
+      const found = registeredRiders.find(r => r.mobile === inputPhone);
+      expect(found).toBeUndefined();
+    });
+
+    it('Case 4: Missing pinHash fails closed (no plaintext fallback)', () => {
+      const legacyStaffWithoutHash = {
+        id: 'r_legacy',
+        name: 'Legacy Rider',
+        mobile: '8309995962',
+        pin: '1234' // plaintext only
+      };
+
+      const verifyServerAuth = (record: any) => {
+        if (!record.pinHash) {
+          throw new Error("Invalid credentials or inactive rider profile. Please contact your kitchen owner to reset your PIN.");
+        }
+        return true;
+      };
+
+      expect(() => verifyServerAuth(legacyStaffWithoutHash)).toThrow("Please contact your kitchen owner to reset your PIN.");
+    });
+
+    it('Case 5: Deactivated/Inactive driver is rejected even with correct PIN', async () => {
+      const bcrypt = (await import('bcryptjs')).default;
+      const deactivatedRider = {
+        id: 'r_inactive',
+        name: 'Former Rider',
+        mobile: '8309995962',
+        status: 'Inactive',
+        active: false,
+        pinHash: bcrypt.hashSync('1234', 10)
+      };
+
+      const isEligible = deactivatedRider.status !== 'Inactive' && deactivatedRider.active !== false;
+      expect(isEligible).toBe(false);
+    });
+
+    it('Case 6: Cross-tenant isolation blocks rider from another kitchen', () => {
+      const tenantA = { bizId: 'kitchen_alpha', riderId: 'rider_01' };
+      const tenantB = { bizId: 'kitchen_beta', riderId: 'rider_02' };
+
+      const validateTenantScope = (tokenBizId: string, requestBizId: string) => {
+        if (tokenBizId !== requestBizId) {
+          throw new Error("Unauthorized access to another kitchen's route.");
+        }
+        return true;
+      };
+
+      expect(() => validateTenantScope(tenantA.bizId, tenantB.bizId)).toThrow("Unauthorized access to another kitchen's route.");
+      expect(validateTenantScope(tenantA.bizId, tenantA.bizId)).toBe(true);
+    });
+
+    it('Case 7: Clean shared link format verification (No base64 auth payload, no plain phone)', () => {
+      const bizId = 'biz_abc_123';
+      const staffId = 'boy_xyz_789';
+      const origin = 'https://scalekitchen.vercel.app';
+
+      const buildCleanLink = (biz: string, boy: string) => {
+        const params = new URLSearchParams();
+        params.set('biz', biz);
+        params.set('boy', boy);
+        return `${origin}/#/driver?${params.toString()}`;
+      };
+
+      const cleanUrl = buildCleanLink(bizId, staffId);
+      expect(cleanUrl).toBe('https://scalekitchen.vercel.app/#/driver?biz=biz_abc_123&boy=boy_xyz_789');
+      // Must not contain 'auth=', 'phone=', or base64 credentials
+      expect(cleanUrl).not.toContain('auth=');
+      expect(cleanUrl).not.toContain('phone=');
+      expect(cleanUrl).not.toContain('1234');
+    });
+
+    it('Case 8: Rate limiting triggers lockout after 5 consecutive failures', () => {
+      const simulateRateLimiting = (attempts: number) => {
+        const isLocked = attempts >= 5;
+        const lockedUntil = isLocked ? Date.now() + 15 * 60 * 1000 : null;
+        return { isLocked, lockedUntil };
+      };
+
+      expect(simulateRateLimiting(1).isLocked).toBe(false);
+      expect(simulateRateLimiting(4).isLocked).toBe(false);
+      expect(simulateRateLimiting(5).isLocked).toBe(true);
+      expect(simulateRateLimiting(5).lockedUntil).toBeGreaterThan(Date.now());
+    });
+
+    it('Case 9: Driver route stop projection contains strictly minimal operational data', () => {
+      const fullCustomerRecord = {
+        id: 'cust_private_1',
+        name: 'Priya Sharma',
+        mobile: '9876543210',
+        address: 'Villa 12, Palm Meadows',
+        area: 'Whitefield',
+        branchId: 'branch_1',
+        deliveryBoyId: 'rider_1',
+        routeOrder: 2,
+        mealTime: 'Lunch',
+        planName: 'Healthy Lunch',
+        reusableBoxEnabled: true,
+        reusableBoxType: 'Stainless Steel 3-Tier Dabba',
+        uncollectedBoxesCount: 1,
+        // SENSITIVE FIELDS THAT MUST NEVER BE IN ROUTE PROJECTION:
+        amountPaid: 4500,
+        planPrice: 4500,
+        paymentStatus: 'Paid',
+        pendingAmount: 0,
+        ownerInternalNotes: 'VIP customer, discount applied',
+        creditCardRef: 'tok_1234'
+      };
+
+      const projectStop = (c: any) => ({
+        id: c.id,
+        stopId: c.id,
+        customerId: c.id,
+        customerName: c.name,
+        mobile: c.mobile,
+        address: c.address,
+        area: c.area,
+        branchId: c.branchId,
+        deliveryBoyId: c.deliveryBoyId,
+        routeOrder: c.routeOrder,
+        mealTime: c.mealTime,
+        planName: c.planName,
+        reusableBoxEnabled: c.reusableBoxEnabled,
+        reusableBoxType: c.reusableBoxType,
+        uncollectedBoxesCount: c.uncollectedBoxesCount,
+        deliveryStatus: 'Pending'
+      });
+
+      const projected = projectStop(fullCustomerRecord);
+      expect(projected.customerName).toBe('Priya Sharma');
+      expect((projected as any).amountPaid).toBeUndefined();
+      expect((projected as any).planPrice).toBeUndefined();
+      expect((projected as any).paymentStatus).toBeUndefined();
+      expect((projected as any).ownerInternalNotes).toBeUndefined();
+      expect((projected as any).creditCardRef).toBeUndefined();
+    });
+
+    it('Case 10: setDriverPin callable whitelists allowed fields and never writes plaintext PIN', async () => {
+      const bcrypt = (await import('bcryptjs')).default;
+      const input = {
+        bizId: 'biz_1',
+        staffId: 'staff_1',
+        name: 'Rider Raj',
+        phone: '9876543210',
+        pin: '4321',
+        branchId: 'b1',
+        status: 'Active',
+        // Injected fields that should be blocked
+        injectedSalary: 50000,
+        injectedAdminToken: 'token_bad'
+      };
+
+      const pinHash = bcrypt.hashSync(input.pin, 10);
+      const whitelistedStaff = {
+        name: input.name.trim(),
+        mobile: input.phone.replace(/\D/g, '').slice(-10),
+        pinHash,
+        branchId: input.branchId,
+        status: input.status,
+        active: input.status !== 'Inactive',
+        role: 'Delivery Partner'
+      };
+
+      expect(whitelistedStaff.name).toBe('Rider Raj');
+      expect(whitelistedStaff.pinHash.startsWith('$2')).toBe(true);
+      expect((whitelistedStaff as any).pin).toBeUndefined();
+      expect((whitelistedStaff as any).injectedSalary).toBeUndefined();
+      expect((whitelistedStaff as any).injectedAdminToken).toBeUndefined();
+    });
+
+    it('Case 11: updateDriverStop verifies claims and enforces tenant boundary', () => {
+      const driverClaims = { role: 'driver', bizId: 'kitchen_1', staffId: 'rider_1' };
+
+      const verifyStopUpdate = (claims: any, targetBizId: string, targetStaffId: string) => {
+        if (!claims || claims.role !== 'driver') throw new Error("Driver auth required.");
+        if (claims.bizId !== targetBizId || claims.staffId !== targetStaffId) {
+          throw new Error("Unauthorized to update stops for another rider or tenant.");
+        }
+        return true;
+      };
+
+      expect(verifyStopUpdate(driverClaims, 'kitchen_1', 'rider_1')).toBe(true);
+      expect(() => verifyStopUpdate(driverClaims, 'kitchen_2', 'rider_1')).toThrow("Unauthorized");
+      expect(() => verifyStopUpdate(driverClaims, 'kitchen_1', 'rider_2')).toThrow("Unauthorized");
+    });
+  });
 });

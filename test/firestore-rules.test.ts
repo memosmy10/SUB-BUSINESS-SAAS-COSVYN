@@ -278,11 +278,46 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       branchId: 'branch_2'
     });
 
-    it('Driver A CAN read customers, plans, branches for their own business', async () => {
+    it('Driver A CAN read business profile, customers, plans, and branches for their own business', async () => {
       const db = driverContext().firestore();
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/customers/cust_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/plans/plan_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/branches/branch_1')));
+    });
+
+    it('Driver A CAN read their OWN staff doc', async () => {
+      const db = driverContext().firestore();
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/staff/driver_1')));
+    });
+
+    it('Driver A CANNOT read another driver staff doc', async () => {
+      const db = driverContext().firestore();
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/staff/driver_2')));
+    });
+
+    it('Driver A CANNOT list the staff collection', async () => {
+      const db = driverContext().firestore();
+      await assertFails(getDocs(collection(db, 'businesses/biz_a/staff')));
+    });
+
+    it('Driver A CANNOT read or write staff_credentials', async () => {
+      const db = driverContext().firestore();
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/staff_credentials/driver_1')));
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/staff_credentials/driver_1'), { pin: '1234' }));
+    });
+
+    it('Driver A CANNOT read or write driver_auth_lookup', async () => {
+      const db = driverContext().firestore();
+      await assertFails(getDoc(doc(db, 'driver_auth_lookup/9876543210')));
+      await assertFails(setDoc(doc(db, 'driver_auth_lookup/9876543210'), { pin: '1234' }));
+    });
+
+    it('Driver A CANNOT read or write global_features driver_* docs', async () => {
+      const db = driverContext().firestore();
+      await assertFails(getDoc(doc(db, 'global_features/driver_auth_9876543210')));
+      await assertFails(setDoc(doc(db, 'global_features/driver_auth_9876543210'), { pin: '1234' }));
+      await assertFails(getDoc(doc(db, 'global_features/driver_manifest_driver_1')));
     });
 
     it('Driver A CANNOT read customers from Business B', async () => {
@@ -299,10 +334,23 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertFails(getDoc(doc(db, 'businesses/biz_a/notes/note_1')));
     });
 
-    it('Driver A CANNOT read other drivers or pinHash', async () => {
+    it('Driver A CAN update customer ONLY with boxCollections, uncollectedBoxesCount, routeOrder, updatedAt', async () => {
       const db = driverContext().firestore();
-      // Staff contains pinHash; driver cannot read staff docs directly
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/staff/driver_1')));
+      await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
+        uncollectedBoxesCount: 2,
+        routeOrder: 5,
+        updatedAt: '2026-10-17T10:00:00Z'
+      }));
+    });
+
+    it('Driver A CANNOT update non-whitelisted customer keys (e.g. name, mobile, paymentStatus)', async () => {
+      const db = driverContext().firestore();
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
+        name: 'Hacked Customer'
+      }));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
+        paymentStatus: 'Paid'
+      }));
     });
 
     it('Driver A CAN update their own staff doc with whitelisted GPS/status keys', async () => {
@@ -348,19 +396,26 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       }));
     });
 
-    it('Driver A CAN read and write their own driver_manifest and driver_status', async () => {
+    it('Driver A CAN read and write their own driver_manifest, driver_status, and driver_sessions', async () => {
       const db = driverContext().firestore();
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_1')));
       await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/driver_status/driver_1'), {
         status: 'Online',
         lastUpdate: '2026-10-17'
       }));
+      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/driver_sessions/2026-10-17_driver_1'), {
+        status: 'Active',
+        date: '2026-10-17'
+      }));
     });
 
-    it('Driver A CANNOT access another driver manifest or status', async () => {
+    it('Driver A CANNOT access another driver manifest, status, or session', async () => {
       const db = driverContext().firestore();
       await assertFails(getDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_other')));
       await assertFails(setDoc(doc(db, 'businesses/biz_a/driver_status/driver_other'), {
+        status: 'Hacked'
+      }));
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/driver_sessions/2026-10-17_driver_other'), {
         status: 'Hacked'
       }));
     });

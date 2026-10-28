@@ -86,11 +86,6 @@ export const deleteDriverCallable = httpsCallable<
   { success: boolean }
 >(functions, 'deleteDriver');
 
-export const purgeLegacyDriverDocsCallable = httpsCallable<
-  Record<string, never>,
-  { success: boolean; deletedCount: number }
->(functions, 'purgeLegacyDriverDocs');
-
 // Phase 3: Server-side Payment Callables
 export const createRazorpayOrderCallable = httpsCallable<
   { planId: string },

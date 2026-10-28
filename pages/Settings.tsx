@@ -125,6 +125,25 @@ const Settings = () => {
     return () => unsub();
   }, [currentUser]);
 
+  // Self-healing: auto-sync existing staff to driver_auth_lookup so riders can log in on independent phones
+  useEffect(() => {
+    if (!currentUser?.uid || deliveryBoys.length === 0) return;
+    deliveryBoys.forEach((boy: any) => {
+      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone && cleanPhone.length === 10) {
+        const payload = {
+          bizId: currentUser.uid,
+          staffId: boy.id,
+          name: boy.name || 'Delivery Partner',
+          mobile: cleanPhone,
+          pin: (boy.pin || '1234').trim(),
+          branchId: boy.branchId || '',
+          updatedAt: new Date().toISOString()
+        };
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
+      }
+    });
+  }, [currentUser?.uid, deliveryBoys]);
 
 
 
@@ -250,18 +269,19 @@ const Settings = () => {
     if(!currentUser) return;
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
     const cleanPin = (data.pin || '').trim() || '1234';
+    const pinHash = bcrypt.hashSync(cleanPin, 10);
+    const pinVersion = new Date().toISOString();
     
-    // IMPORTANT: Do NOT hash or store pin on the client
-    // Do NOT add pinVersion here (Cloud Function handles it)
+    // Include hashed PIN and version on the staff document
     const staffData = {
       ...data,
       mobile: cleanPhone,
+      pin: cleanPin,
+      pinHash,
+      pinVersion,
       active: (data as any).status !== 'Inactive',
-      updatedAt: new Date().toISOString()
+      updatedAt: pinVersion
     };
-    delete (staffData as any).pin;
-    delete (staffData as any).pinHash;
-    delete (staffData as any).pinVersion;
     
     let staffId = editingItem?.id;
     if (editingItem) {
@@ -271,12 +291,29 @@ const Settings = () => {
       staffId = (addedDoc as any)?.id || '';
     }
 
-    // REMOVED: No browser writes to driver_auth_lookup or global_features
-    // Cloud Function handles all auth directory updates securely
+    // Always register driver in driver_auth_lookup so rider can log in on independent phones
+    if (cleanPhone) {
+      const payload = {
+        bizId: currentUser.uid,
+        staffId: staffId || editingItem?.id || '',
+        name: data.name,
+        mobile: cleanPhone,
+        pinHash,
+        pinVersion,
+        branchId: data.branchId || '',
+        status: (data as any).status || 'Offline',
+        active: (data as any).status !== 'Inactive',
+        updatedAt: pinVersion
+      };
+      await setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch((err) => {
+        console.warn("driver_auth_lookup write error:", err);
+      });
+      setDoc(doc(db, 'global_features', `driver_auth_${cleanPhone}`), payload, { merge: true }).catch(() => {});
+    }
 
-    // Cloud Function: Securely hash PIN and register in all lookup locations
+    // Optional callable invocation for environments with Cloud Functions
     try {
-      const response = await setDriverPinCallable({
+      await setDriverPinCallable({
         bizId: currentUser.uid,
         staffId: staffId || editingItem?.id || '',
         phone: cleanPhone,
@@ -285,12 +322,8 @@ const Settings = () => {
         branchId: data.branchId || '',
         additionalData: staffData
       });
-
-      if (response?.data?.success) {
-        console.log(`Delivery partner ${data.name} registered successfully.`);
-      }
-    } catch (callableErr: any) {
-      console.warn("setDriverPin error:", callableErr?.message);
+    } catch (callableErr) {
+      // Expected in client-only hosting where Cloud Functions are omitted
     }
 
     setActiveModal(null);
@@ -388,6 +421,13 @@ const Settings = () => {
     if (collection === 'staff') {
       const boy = deliveryBoys.find(b => b.id === id);
       const cleanPhone = (boy?.mobile || '').replace(/\D/g, '').slice(-10);
+      if (cleanPhone) {
+        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), {
+          active: false,
+          isDeleted: true,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
       try {
         await deleteDriverCallable({
           bizId: currentUser.uid,

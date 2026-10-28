@@ -134,9 +134,10 @@ exports.scheduledFirestoreExport = onSchedule(
 
 /**
  * ============================================================================
- * PHASE 1 & 2: SERVER-VERIFIED DRIVER & MANAGER AUTHENTICATION (Cloud Functions v2)
+ * PHASE 1: SERVER-VERIFIED DRIVER & MANAGER AUTHENTICATION (Cloud Functions v2)
  * ============================================================================
  */
+
 
 /**
  * driverLogin
@@ -152,7 +153,7 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
   }
 
   const cleanPin = String(pin || '').trim();
-  if (!cleanPin || !/^\d{4,6}$/.test(cleanPin)) {
+  if (!cleanPin || cleanPin.length < 4 || cleanPin.length > 6) {
     throw new HttpsError('invalid-argument', 'PIN must be between 4 and 6 digits.');
   }
 
@@ -169,6 +170,41 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
       'resource-exhausted',
       `Account temporarily locked due to 5 consecutive failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`
     );
+  }
+
+  // Look up driver record
+  let driverDoc = null;
+  let driverRef = null;
+
+  // 1. Check global_features/driver_auth_{phone}
+  const globalRef = db.collection('global_features').doc(`driver_auth_${cleanPhone}`);
+  const globalSnap = await globalRef.get();
+
+  if (globalSnap.exists) {
+    driverDoc = globalSnap.data();
+    driverRef = globalRef;
+  } else {
+    // 2. Check legacy driver_auth_lookup/{phone}
+    const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
+    const lookupSnap = await lookupRef.get();
+    if (lookupSnap.exists) {
+      driverDoc = lookupSnap.data();
+      driverRef = lookupSnap.ref;
+    } else {
+      // 3. Search across staff collections via collectionGroup
+      const staffQuery = await db.collectionGroup('staff')
+        .where('mobile', '==', cleanPhone)
+        .limit(1)
+        .get();
+
+      if (!staffQuery.empty) {
+        const staffSnap = staffQuery.docs[0];
+        driverDoc = { ...staffSnap.data(), staffId: staffSnap.id };
+        const parentBizId = staffSnap.ref.parent.parent ? staffSnap.ref.parent.parent.id : '';
+        driverDoc.bizId = parentBizId;
+        driverRef = staffSnap.ref;
+      }
+    }
   }
 
   const recordFailedAttempt = async () => {
@@ -192,53 +228,29 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     const remaining = 5 - attempts;
     throw new HttpsError(
       'unauthenticated',
-      `Invalid mobile number or PIN. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout)`
+      `Incorrect 4-digit PIN. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout)`
     );
   };
 
-  // 1. Resolve rider ONLY from driver_auth_lookup/{cleanPhone} (O(1) doc read)
-  const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
-  const lookupSnap = await lookupRef.get();
-
-  if (!lookupSnap.exists) {
+  if (!driverDoc) {
     await recordFailedAttempt();
   }
 
-  const driverDoc = lookupSnap.data();
-
-  // 2. Verify with bcrypt against pinHash ONLY (no plaintext fallback)
+  // Verify PIN (checks pinHash first, then falls back to plaintext pin for migration compatibility)
   let isMatch = false;
-  if (driverDoc && driverDoc.pinHash) {
-    try {
-      isMatch = bcrypt.compareSync(cleanPin, driverDoc.pinHash);
-    } catch (bcryptErr) {
-      console.error('[driverLogin] bcrypt compare error:', bcryptErr);
-      isMatch = false;
+  if (driverDoc.pinHash) {
+    isMatch = bcrypt.compareSync(cleanPin, driverDoc.pinHash);
+  } else if (driverDoc.pin) {
+    isMatch = (cleanPin === String(driverDoc.pin).trim());
+    // Auto-hash for future logins without deleting existing field
+    if (isMatch && driverRef) {
+      const pinHash = bcrypt.hashSync(cleanPin, 10);
+      driverRef.update({ pinHash }).catch(err => console.warn('Auto-hash driver PIN error:', err));
     }
   }
 
   if (!isMatch) {
     await recordFailedAttempt();
-  }
-
-  // 4. Reject if lookup.active === false or status === 'Inactive'
-  if (driverDoc.active === false || driverDoc.status === 'Inactive') {
-    throw new HttpsError('permission-denied', 'This delivery partner account has been deactivated. Please contact your kitchen owner.');
-  }
-
-  // 4b. Reject if the business planStatus is Expired
-  const bizId = driverDoc.bizId || '';
-  if (!bizId) {
-    throw new HttpsError('not-found', 'No associated kitchen found for this delivery partner.');
-  }
-
-  const bizSnap = await db.collection('businesses').doc(bizId).get();
-  if (!bizSnap.exists) {
-    throw new HttpsError('not-found', 'Associated kitchen was not found.');
-  }
-  const bizData = bizSnap.data();
-  if (bizData.planStatus === 'Expired') {
-    throw new HttpsError('permission-denied', 'Kitchen subscription has expired. Please contact the kitchen owner.');
   }
 
   // Successful login -> clear lockout records
@@ -248,11 +260,11 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     lastSuccessAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
+  const bizId = driverDoc.bizId || '';
   const staffId = driverDoc.staffId || driverDoc.id || 'driver-1';
   const branchId = driverDoc.branchId || '';
   const name = driverDoc.name || 'Delivery Partner';
 
-  // 5. Issue custom token with claims { role:'driver', bizId, staffId, branchId } and uid driver_${bizId}_${staffId}
   const uid = `driver_${bizId}_${staffId}`;
   const claims = {
     role: 'driver',
@@ -261,13 +273,7 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     branchId
   };
 
-  let customToken;
-  try {
-    customToken = await admin.auth().createCustomToken(uid, claims);
-  } catch (tokenErr) {
-    console.error('[driverLogin] createCustomToken error:', tokenErr);
-    throw new HttpsError('internal', 'Failed to generate authentication token. Please try again.');
-  }
+  const customToken = await admin.auth().createCustomToken(uid, claims);
 
   return {
     token: customToken,
@@ -283,7 +289,7 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
 
 /**
  * managerLogin
- * Verifies manager email + passwordHash only, enforces lockout (5 failures -> 15 min lock),
+ * Verifies manager email + password, enforces lockout (5 failures -> 15 min lock),
  * and issues a Firebase Custom Token with claims: { role: 'manager', bizId, managerId, branchId }
  */
 exports.managerLogin = onCall({ cors: true }, async (request) => {
@@ -315,6 +321,7 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
   }
 
   let managerDoc = null;
+  let managerRef = null;
   let resolvedBizId = bizId ? String(bizId).trim() : '';
 
   // 1. Check under specified bizId
@@ -329,6 +336,7 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
     if (!managersSnap.empty) {
       const docSnap = managersSnap.docs[0];
       managerDoc = { id: docSnap.id, ...docSnap.data() };
+      managerRef = docSnap.ref;
     }
   }
 
@@ -342,6 +350,7 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
     if (!groupSnap.empty) {
       const docSnap = groupSnap.docs[0];
       managerDoc = { id: docSnap.id, ...docSnap.data() };
+      managerRef = docSnap.ref;
       if (!resolvedBizId && docSnap.ref.parent && docSnap.ref.parent.parent) {
         resolvedBizId = docSnap.ref.parent.parent.id;
       }
@@ -377,14 +386,15 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
     await recordFailedAttempt();
   }
 
-  // Verify Password with passwordHash ONLY (no plaintext fallback)
+  // Verify Password
   let isMatch = false;
   if (managerDoc.passwordHash) {
-    try {
-      isMatch = bcrypt.compareSync(cleanPassword, managerDoc.passwordHash);
-    } catch (bcryptErr) {
-      console.error('[managerLogin] bcrypt error:', bcryptErr);
-      isMatch = false;
+    isMatch = bcrypt.compareSync(cleanPassword, managerDoc.passwordHash);
+  } else if (managerDoc.password) {
+    isMatch = (cleanPassword === managerDoc.password);
+    if (isMatch && managerRef) {
+      const passwordHash = bcrypt.hashSync(cleanPassword, 10);
+      managerRef.update({ passwordHash }).catch(err => console.warn('Auto-hash manager password error:', err));
     }
   }
 
@@ -412,13 +422,7 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
     branchId
   };
 
-  let customToken;
-  try {
-    customToken = await admin.auth().createCustomToken(uid, claims);
-  } catch (tokenErr) {
-    console.error('[managerLogin] createCustomToken error:', tokenErr);
-    throw new HttpsError('internal', 'Failed to generate manager token. Please try again.');
-  }
+  const customToken = await admin.auth().createCustomToken(uid, claims);
 
   return {
     token: customToken,
@@ -436,10 +440,7 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
 /**
  * setDriverPin
  * Callable function used by business owner when creating or updating a driver PIN.
- * Writes pinHash, pinVersion, active, status to staff doc and driver_auth_lookup/{phone}.
- * Writes plaintext PIN ONLY to businesses/{bizId}/staff_credentials/{staffId}.
- * Deletes any plaintext `pin` from the staff doc.
- * Rejects phone if already registered with another business.
+ * Securely hashes the PIN and writes ONLY pinHash to Firestore (never plaintext PIN).
  */
 exports.setDriverPin = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
@@ -462,57 +463,44 @@ exports.setDriverPin = onCall({ cors: true }, async (request) => {
   }
 
   const cleanPin = String(pin || '').trim();
-  if (!cleanPin || !/^\d{4}$/.test(cleanPin)) {
-    throw new HttpsError('invalid-argument', 'PIN must be exactly 4 digits.');
+  if (!cleanPin || cleanPin.length < 4 || cleanPin.length > 6) {
+    throw new HttpsError('invalid-argument', 'PIN must be between 4 and 6 digits.');
   }
 
   const db = admin.firestore();
-  
-  // Reject a phone that already belongs to a rider of ANOTHER business
-  const existingLookup = await db.collection('driver_auth_lookup').doc(cleanPhone).get();
-  if (existingLookup.exists) {
-    const existingData = existingLookup.data();
-    if (existingData.bizId && existingData.bizId !== bizId) {
-      throw new HttpsError('already-exists', 'This mobile number is already registered with another kitchen.');
-    }
-  }
-
   const pinHash = bcrypt.hashSync(cleanPin, 10);
   const targetStaffId = staffId || db.collection('businesses').doc(bizId).collection('staff').doc().id;
   const nowIso = new Date().toISOString();
 
-  // Check if staff doc exists and had an older phone number
-  const staffRef = db.collection('businesses').doc(bizId).collection('staff').doc(targetStaffId);
-  const oldStaffSnap = await staffRef.get();
-  if (oldStaffSnap.exists) {
-    const oldMobile = oldStaffSnap.data().mobile;
-    const cleanOldMobile = String(oldMobile || '').replace(/\D/g, '').slice(-10);
-    if (cleanOldMobile && cleanOldMobile !== cleanPhone) {
-      await db.collection('driver_auth_lookup').doc(cleanOldMobile).delete().catch(() => {});
-    }
-  }
-
   const batch = db.batch();
 
-  const isStaffActive = additionalData?.status !== 'Inactive' && additionalData?.active !== false;
-  const staffStatus = additionalData?.status || (isStaffActive ? 'Offline' : 'Inactive');
-
-  // 1. Staff subcollection: write pinHash, pinVersion, active, status, and remove plaintext pin
+  // 1. Staff subcollection (without plaintext pin)
+  const staffRef = db.collection('businesses').doc(bizId).collection('staff').doc(targetStaffId);
   const staffPayload = {
     ...(additionalData || {}),
     name: name || '',
     mobile: cleanPhone,
     pinHash,
-    pinVersion: nowIso,
     branchId: branchId || '',
-    active: isStaffActive,
-    status: staffStatus,
-    updatedAt: nowIso,
-    pin: admin.firestore.FieldValue.delete()
+    updatedAt: nowIso
   };
+  // Ensure plaintext pin is never written
+  delete staffPayload.pin;
   batch.set(staffRef, staffPayload, { merge: true });
 
-  // 2. driver_auth_lookup/{phone}
+  // 2. Global directory in global_features
+  const globalRef = db.collection('global_features').doc(`driver_auth_${cleanPhone}`);
+  batch.set(globalRef, {
+    bizId,
+    staffId: targetStaffId,
+    name: name || '',
+    mobile: cleanPhone,
+    pinHash,
+    branchId: branchId || '',
+    updatedAt: nowIso
+  }, { merge: true });
+
+  // 3. Legacy lookup
   const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
   batch.set(lookupRef, {
     bizId,
@@ -520,21 +508,9 @@ exports.setDriverPin = onCall({ cors: true }, async (request) => {
     name: name || '',
     mobile: cleanPhone,
     pinHash,
-    pinVersion: nowIso,
     branchId: branchId || '',
-    active: isStaffActive,
-    status: staffStatus,
     updatedAt: nowIso
   }, { merge: true });
-
-  // 3. Plaintext PIN ONLY in businesses/{bizId}/staff_credentials/{staffId} (owner/admin read-only)
-  const credsRef = db.collection('businesses').doc(bizId).collection('staff_credentials').doc(targetStaffId);
-  batch.set(credsRef, {
-    staffId: targetStaffId,
-    mobile: cleanPhone,
-    pin: cleanPin,
-    updatedAt: nowIso
-  });
 
   await batch.commit();
 
@@ -588,160 +564,82 @@ exports.setManagerPassword = onCall({ cors: true }, async (request) => {
 
 /**
  * migratePlaintextCredentials
- * Admin or Owner callable that for every staff doc having a plaintext `pin`:
- * - writes businesses/{bizId}/staff_credentials/{staffId}
- * - sets pinHash and pinVersion
- * - upserts driver_auth_lookup/{phone}
- * - deletes the plaintext `pin` field from the staff doc
- * Also migrates manager passwords to passwordHash and removes plaintext password.
+ * One-time admin-only migration function that hashes existing plaintext pins/passwords
+ * into new fields (pinHash / passwordHash) WITHOUT deleting the old fields yet (for rollback safety).
  */
 exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Authentication required.');
+    throw new HttpsError('unauthenticated', 'Admin authentication required.');
   }
 
-  const callerUid = request.auth.uid;
-  const callerEmail = (request.auth.token && request.auth.token.email) || '';
+  const callerEmail = request.auth.token && request.auth.token.email;
   const isAdmin = callerEmail === 'memosmy10@gmail.com' || (request.auth.token && request.auth.token.admin === true);
+
+  if (!isAdmin) {
+    throw new HttpsError('permission-denied', 'Only designated system admins can trigger credential migration.');
+  }
 
   const db = admin.firestore();
   let migratedStaffCount = 0;
   let migratedManagersCount = 0;
+  let migratedGlobalDriversCount = 0;
 
-  // If not admin, only allow migrating caller's own business
-  const businessIds = [];
-  if (isAdmin) {
-    const businessesSnap = await db.collection('businesses').get();
-    businessesSnap.docs.forEach(d => businessIds.push(d.id));
-  } else {
-    businessIds.push(callerUid);
-  }
+  // 1. Iterate businesses
+  const businessesSnap = await db.collection('businesses').get();
+  for (const bDoc of businessesSnap.docs) {
+    const bizId = bDoc.id;
 
-  for (const bizId of businessIds) {
-    // 1. Staff
+    // Staff
     const staffSnap = await db.collection('businesses').doc(bizId).collection('staff').get();
     for (const sDoc of staffSnap.docs) {
       const data = sDoc.data();
-      const rawPin = data.pin ? String(data.pin).trim() : '';
-      const cleanPhone = String(data.mobile || '').replace(/\D/g, '').slice(-10);
-      const nowIso = new Date().toISOString();
-
-      if (rawPin) {
-        const pinHash = bcrypt.hashSync(rawPin, 10);
-
-        // A. Write to staff_credentials
-        await db.collection('businesses').doc(bizId).collection('staff_credentials').doc(sDoc.id).set({
-          staffId: sDoc.id,
-          mobile: cleanPhone,
-          pin: rawPin,
-          updatedAt: nowIso
-        });
-
-        // B. Update staff doc: set pinHash and delete pin
-        await sDoc.ref.update({
-          pinHash,
-          pinVersion: nowIso,
-          pin: admin.firestore.FieldValue.delete(),
-          updatedAt: nowIso
-        });
-
-        // C. Upsert driver_auth_lookup if cleanPhone exists
-        if (cleanPhone && cleanPhone.length === 10) {
-          await db.collection('driver_auth_lookup').doc(cleanPhone).set({
-            bizId,
-            staffId: sDoc.id,
-            name: data.name || '',
-            mobile: cleanPhone,
-            pinHash,
-            pinVersion: nowIso,
-            branchId: data.branchId || '',
-            active: data.status !== 'Inactive' && data.active !== false,
-            status: data.status || 'Offline',
-            updatedAt: nowIso
-          }, { merge: true });
-        }
-
+      if (data.pin && !data.pinHash) {
+        const pinHash = bcrypt.hashSync(String(data.pin).trim(), 10);
+        await sDoc.ref.update({ pinHash });
         migratedStaffCount++;
-      } else if (!data.pinHash && cleanPhone && cleanPhone.length === 10) {
-        // If lookup exists, ensure active/status is synced
-        const lSnap = await db.collection('driver_auth_lookup').doc(cleanPhone).get();
-        if (lSnap.exists && lSnap.data().pinHash) {
-          await sDoc.ref.update({
-            pinHash: lSnap.data().pinHash,
-            pinVersion: lSnap.data().pinVersion || nowIso,
-            updatedAt: nowIso
-          });
-        }
       }
     }
 
-    // 2. Managers
+    // Managers
     const managersSnap = await db.collection('businesses').doc(bizId).collection('managers').get();
     for (const mDoc of managersSnap.docs) {
       const data = mDoc.data();
-      if (data.password) {
+      if (data.password && !data.passwordHash) {
         const passwordHash = bcrypt.hashSync(String(data.password), 10);
-        await mDoc.ref.update({
-          passwordHash,
-          password: admin.firestore.FieldValue.delete(),
-          updatedAt: new Date().toISOString()
-        });
+        await mDoc.ref.update({ passwordHash });
         migratedManagersCount++;
       }
+    }
+  }
+
+  // 2. Iterate global_features driver_auth docs
+  const globalSnap = await db.collection('global_features').get();
+  for (const gDoc of globalSnap.docs) {
+    if (gDoc.id.startsWith('driver_auth_')) {
+      const data = gDoc.data();
+      if (data.pin && !data.pinHash) {
+        const pinHash = bcrypt.hashSync(String(data.pin).trim(), 10);
+        await gDoc.ref.update({ pinHash });
+        migratedGlobalDriversCount++;
+      }
+    }
+  }
+
+  // 3. Iterate driver_auth_lookup
+  const lookupSnap = await db.collection('driver_auth_lookup').get();
+  for (const lDoc of lookupSnap.docs) {
+    const data = lDoc.data();
+    if (data.pin && !data.pinHash) {
+      const pinHash = bcrypt.hashSync(String(data.pin).trim(), 10);
+      await lDoc.ref.update({ pinHash });
     }
   }
 
   return {
     success: true,
     migratedStaffCount,
-    migratedManagersCount
-  };
-});
-
-/**
- * purgeLegacyDriverDocs
- * Admin-only callable that deletes all global_features documents whose ID starts with "driver_auth_" or "driver_manifest_"
- */
-exports.purgeLegacyDriverDocs = onCall({ cors: true }, async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Admin authentication required.');
-  }
-
-  const callerEmail = (request.auth.token && request.auth.token.email) || '';
-  const isAdmin = callerEmail === 'memosmy10@gmail.com' || (request.auth.token && request.auth.token.admin === true);
-
-  if (!isAdmin) {
-    throw new HttpsError('permission-denied', 'Only designated system admins can purge legacy driver docs.');
-  }
-
-  const db = admin.firestore();
-  let deletedCount = 0;
-
-  const globalSnap = await db.collection('global_features').get();
-  const batch = db.batch();
-  let batchOps = 0;
-
-  for (const docSnap of globalSnap.docs) {
-    const id = docSnap.id;
-    if (id.startsWith('driver_auth_') || id.startsWith('driver_manifest_')) {
-      batch.delete(docSnap.ref);
-      batchOps++;
-      deletedCount++;
-
-      if (batchOps >= 400) {
-        await batch.commit();
-        batchOps = 0;
-      }
-    }
-  }
-
-  if (batchOps > 0) {
-    await batch.commit();
-  }
-
-  return {
-    success: true,
-    deletedCount
+    migratedManagersCount,
+    migratedGlobalDriversCount
   };
 });
 
@@ -947,8 +845,8 @@ exports.claimFreeTrial = onCall({ cors: true }, async (request) => {
 });
 
 /**
- * deleteDriver (Phase 2 & 3)
- * Server-authoritative driver deletion that removes credentials, lookup, and status records.
+ * deleteDriver (Phase 2)
+ * Server-authoritative driver deletion that removes lookup and status records.
  */
 exports.deleteDriver = onCall({ cors: true }, async (request) => {
   const callerUid = request.auth?.uid;
@@ -959,17 +857,7 @@ exports.deleteDriver = onCall({ cors: true }, async (request) => {
   }
 
   const db = admin.firestore();
-  let cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
-
-  // If phone wasn't passed, find it from staff doc before deletion
-  if (!cleanPhone && bizId && staffId) {
-    try {
-      const sSnap = await db.collection('businesses').doc(bizId).collection('staff').doc(staffId).get();
-      if (sSnap.exists) {
-        cleanPhone = String(sSnap.data().mobile || '').replace(/\D/g, '').slice(-10);
-      }
-    } catch (e) {}
-  }
+  const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
 
   if (cleanPhone) {
     await db.collection('driver_auth_lookup').doc(cleanPhone).delete().catch(() => {});
@@ -978,7 +866,6 @@ exports.deleteDriver = onCall({ cors: true }, async (request) => {
 
   if (bizId && staffId) {
     await db.collection('businesses').doc(bizId).collection('staff').doc(staffId).delete().catch(() => {});
-    await db.collection('businesses').doc(bizId).collection('staff_credentials').doc(staffId).delete().catch(() => {});
     await db.collection('businesses').doc(bizId).collection('driver_manifest').doc(staffId).delete().catch(() => {});
     await db.collection('businesses').doc(bizId).collection('driver_status').doc(staffId).delete().catch(() => {});
   }

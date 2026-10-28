@@ -34,7 +34,6 @@ import AdminPlans from './pages/admin/AdminPlans';
 import AdminLogin from './pages/admin/AdminLogin';
 import AdminMessages from './pages/admin/AdminMessages';
 import AdminInvoiceCredits from './pages/admin/AdminInvoiceCredits';
-import { ArchitectureBanner } from './components/ArchitectureBanner';
 
 // Legal Pages
 import Terms from './pages/legal/Terms';
@@ -584,7 +583,6 @@ const App = () => {
     <ErrorBoundary>
       <AuthProvider>
         <HashRouter>
-          <ArchitectureBanner />
           <SubscriptionManager />
           <Routes>
             <Route path="/" element={<LandingPage />} />

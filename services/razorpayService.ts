@@ -108,37 +108,19 @@ export const resolvePlanMeta = (
 };
 
 /**
- * Resolves active Razorpay Key ID from local storage or environment
+ * Resolves active platform Razorpay Key ID strictly from environment variables (.env).
+ * Enterprise standard: Keys are never hardcoded in source code or entered via web UI.
  */
 export const getActiveRazorpayKeyId = (): string => {
   try {
-    const customKey = localStorage.getItem('razorpay_custom_key_id');
-    if (customKey && customKey.trim().length > 5) {
-      return customKey.trim();
-    }
     const envKey = (import.meta as any).env?.VITE_RAZORPAY_KEY_ID;
-    if (envKey && envKey.trim().length > 5) {
+    if (envKey && typeof envKey === 'string' && envKey.trim().length > 5) {
       return envKey.trim();
     }
   } catch (e) {
-    console.warn('Error reading Razorpay key:', e);
+    console.warn('Error reading VITE_RAZORPAY_KEY_ID from environment:', e);
   }
   return '';
-};
-
-/**
- * Sets active Razorpay Key ID
- */
-export const setActiveRazorpayKeyId = (keyId: string) => {
-  try {
-    if (!keyId || keyId.trim() === '') {
-      localStorage.removeItem('razorpay_custom_key_id');
-    } else {
-      localStorage.setItem('razorpay_custom_key_id', keyId.trim());
-    }
-  } catch (e) {
-    console.warn('Error saving Razorpay key:', e);
-  }
 };
 
 export interface FulfillPaymentProps {
@@ -336,155 +318,11 @@ export interface ServerPaymentProps {
 }
 
 /**
- * Prompts the user to enter their real Razorpay API Key ID if it has not yet been configured.
- * Once entered, directly opens the real Razorpay Checkout window.
- */
-export const showKeyConfigModal = ({
-  planMeta,
-  planId,
-  userEmail,
-  userContact,
-  businessName,
-  userId,
-  onSuccess,
-  onFailure
-}: {
-  planMeta: PlanMeta;
-  planId: string;
-  userEmail: string;
-  userContact: string;
-  businessName: string;
-  userId: string;
-  onSuccess: (result: any) => void;
-  onFailure?: (err: any) => void;
-}) => {
-  const existingModal = document.getElementById('scalekitchen-razorpay-key-modal');
-  if (existingModal) {
-    existingModal.remove();
-  }
-
-  const modalContainer = document.createElement('div');
-  modalContainer.id = 'scalekitchen-razorpay-key-modal';
-  modalContainer.className = 'fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200';
-
-  modalContainer.innerHTML = `
-    <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full overflow-hidden text-left animate-in zoom-in-95 duration-200">
-      <!-- Header -->
-      <div class="p-6 border-b border-slate-100 bg-gradient-to-r from-blue-50/80 via-white to-indigo-50/50 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-11 h-11 rounded-2xl bg-[#0d40e6] text-white flex items-center justify-center shadow-md font-bold text-sm">
-            RP
-          </div>
-          <div>
-            <h3 class="font-extrabold text-base text-slate-900 tracking-tight">
-              Razorpay Live Gateway
-            </h3>
-            <p class="text-xs text-slate-500 font-medium">Connect API Key ID to proceed</p>
-          </div>
-        </div>
-        <button id="sk-key-modal-close" class="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-      </div>
-
-      <!-- Content -->
-      <div class="p-6 space-y-5">
-        <div class="p-4 rounded-2xl bg-blue-50/60 border border-blue-100 flex items-center justify-between">
-          <div>
-            <p class="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Item Details</p>
-            <p class="text-sm font-bold text-slate-900 mt-0.5">${planMeta.label}</p>
-          </div>
-          <div class="text-right">
-            <p class="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Payable</p>
-            <p class="text-xl font-black text-slate-900">₹${planMeta.amountInRupees.toLocaleString('en-IN')}</p>
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-xs font-bold text-slate-700 mb-1.5">
-            Your Razorpay Key ID <span class="text-rose-500">*</span>
-          </label>
-          <input 
-            id="sk-modal-key-input" 
-            type="text" 
-            placeholder="rzp_live_xxxxxxxxxxxx (or rzp_test_...)" 
-            class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-[#0d40e6] focus:ring-2 focus:ring-blue-500/20 text-slate-900"
-            autoFocus
-          />
-          <p class="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
-            Found under <strong>Razorpay Dashboard &gt; Settings &gt; API Keys</strong>.
-          </p>
-        </div>
-
-        <button 
-          id="sk-modal-submit-key" 
-          class="w-full py-3.5 bg-[#0d40e6] hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-        >
-          <span>Connect & Open Razorpay Checkout</span>
-        </button>
-      </div>
-
-      <!-- Footer -->
-      <div class="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-[11px] text-slate-400">
-        <span>Official Razorpay Payment Gateway</span>
-        <button id="sk-modal-cancel" class="text-slate-500 hover:text-slate-800 font-semibold text-xs">
-          Cancel
-        </button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(modalContainer);
-
-  const cleanup = () => {
-    modalContainer.remove();
-  };
-
-  document.getElementById('sk-key-modal-close')?.addEventListener('click', () => {
-    cleanup();
-    if (onFailure) onFailure(new Error('Payment cancelled.'));
-  });
-
-  document.getElementById('sk-modal-cancel')?.addEventListener('click', () => {
-    cleanup();
-    if (onFailure) onFailure(new Error('Payment cancelled.'));
-  });
-
-  document.getElementById('sk-modal-submit-key')?.addEventListener('click', () => {
-    const input = document.getElementById('sk-modal-key-input') as HTMLInputElement;
-    const keyVal = input?.value?.trim() || '';
-
-    if (!keyVal || keyVal.length < 8) {
-      alert('Please enter a valid Razorpay Key ID (starting with rzp_live_ or rzp_test_).');
-      return;
-    }
-
-    setActiveRazorpayKeyId(keyVal);
-    cleanup();
-
-    // Immediately launch real Razorpay Checkout with the newly saved key!
-    handleRazorpayPayment({
-      planId,
-      planName: planMeta.label,
-      amount: planMeta.amountInRupees,
-      userEmail,
-      userContact,
-      businessName,
-      userId,
-      creditsToAdd: planMeta.credits,
-      durationMonths: planMeta.durationMonths,
-      onSuccess,
-      onFailure
-    });
-  });
-};
-
-/**
  * Universal Real Razorpay Checkout Orchestrator.
  * 
  * Directly opens the official Razorpay Checkout pop-up window:
  * 1. Synchronizes price and duration with real-time Firestore database (global_settings/saas_config)
- * 2. Checks active Razorpay Key ID
+ * 2. Resolves official platform Razorpay Key ID (never prompts user for keys)
  * 3. Mounts official Razorpay modal with exact price in integer paise
  * 4. Fulfills the purchase in Firestore upon successful payment verification
  */
@@ -501,7 +339,7 @@ export const handleRazorpayPayment = async ({
   onSuccess,
   onFailure
 }: ServerPaymentProps) => {
-  // 1. Fetch real-time pricing from Firestore global_settings/saas_config
+  // 1. Fetch real-time pricing and platform key from Firestore global_settings/saas_config
   // This guarantees that any changes made by the admin in Admin Panel are immediately applied.
   let liveAmount = amount;
   let liveDuration = durationMonths;
@@ -580,25 +418,17 @@ export const handleRazorpayPayment = async ({
     return;
   }
 
-  // 4. Resolve active Razorpay Key ID
-  const activeKeyId = serverOrderRes?.keyId || getActiveRazorpayKeyId();
+  // 4. Resolve official platform Razorpay Key ID strictly from environment (.env)
+  const activeKeyId = getActiveRazorpayKeyId() || serverOrderRes?.keyId || '';
 
-  // If no key ID configured, show clean Key Connect modal
   if (!activeKeyId) {
-    showKeyConfigModal({
-      planMeta,
-      planId,
-      userEmail,
-      userContact,
-      businessName,
-      userId: resolvedUid,
-      onSuccess,
-      onFailure
-    });
+    const configErr = new Error('Payment gateway is not configured. Please define VITE_RAZORPAY_KEY_ID in your .env file.');
+    alert(configErr.message);
+    if (onFailure) onFailure(configErr);
     return;
   }
 
-  // 5. Open Real Razorpay Checkout with authoritative amount in integer paise
+  // 5. Open Real Razorpay Checkout directly with authoritative amount in integer paise
   try {
     const amountInPaise = Math.round(planMeta.amountInRupees * 100);
 

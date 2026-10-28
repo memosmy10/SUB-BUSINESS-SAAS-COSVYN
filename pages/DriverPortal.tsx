@@ -387,50 +387,6 @@ export const DriverPortal: React.FC = () => {
     return () => unsub();
   }, [bizId, isDemoMode]);
 
-  // Real-time listener for account deactivation or PIN updates made by Kitchen Manager in Settings
-  useEffect(() => {
-    const cleanPhone = (phoneInput || safeStorageGet('driver_phone') || '').replace(/\D/g, '').slice(-10);
-    if (!cleanPhone) return;
-
-    const authDocRef = doc(db, 'driver_auth_lookup', cleanPhone);
-    const unsub = onSnapshot(authDocRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        
-        // Immediate Deactivation Enforcement (Test 10)
-        if (data.active === false || data.isDeleted === true) {
-          safeStorageSet('driver_is_logged_in', 'false');
-          safeStorageSet('driver_session_expires', '0');
-          setLoginError("This delivery partner account has been deactivated or removed by the kitchen manager.");
-          setLoginModalOpen(true);
-          return;
-        }
-
-        // Enforce updated PIN if changed by manager
-        if (data.pinVersion) {
-          const currentVersion = safeStorageGet('driver_pin_version');
-          if (!isKitchenOwnerUser && currentVersion && currentVersion !== data.pinVersion) {
-            safeStorageSet('driver_is_logged_in', 'false');
-            safeStorageSet('driver_session_expires', '0');
-            setPinInput('');
-            setLoginError("Your access PIN was updated by the kitchen manager. Please enter your new 4-digit PIN to continue.");
-            setLoginModalOpen(true);
-          }
-        }
-
-        if (data.bizId && !bizId) {
-          setBizId(data.bizId);
-        }
-        if (data.staffId && !selectedBoyId) {
-          setSelectedBoyId(data.staffId);
-        }
-      }
-    }, (err) => {
-      console.warn("Driver auth stream listener warn:", err);
-    });
-
-    return () => unsub();
-  }, [phoneInput, isKitchenOwnerUser, bizId, selectedBoyId]);
 
   // Sync to localStorage
   useEffect(() => {
@@ -1356,310 +1312,94 @@ export const DriverPortal: React.FC = () => {
   const handleVerifyLogin = async (mobileOverride?: string, boyIdOverride?: string) => {
     const rawMobile = mobileOverride || phoneInput;
     const digits = (rawMobile || '').replace(/\D/g, '').slice(-10);
-    const pin = pinInput.trim();
+    const pin = (pinInput || '').trim();
 
-    if (!digits || digits.length < 10) {
-      setLoginError("Please enter your valid 10-digit registered mobile number.");
-      return;
-    }
-    if (!pin || pin.length !== 4) {
-      setLoginError("Please enter your 4-digit security PIN.");
+    if (!digits || digits.length !== 10) {
+      setLoginError('Please enter a valid 10-digit mobile number.');
       return;
     }
 
-    // Rate-limiting & brute-force protection
-    const now = Date.now();
-    const lockoutUntil = Number(safeStorageGet('driver_lockout_until') || 0);
-    if (lockoutUntil && now < lockoutUntil) {
-      const waitSec = Math.ceil((lockoutUntil - now) / 1000);
-      setLoginError(`Too many failed login attempts. Please wait ${waitSec} seconds before trying again.`);
+    if (!pin || pin.length < 4 || pin.length > 6) {
+      setLoginError('PIN must be 4-6 digits.');
       return;
     }
 
     setVerifying(true);
     setLoginError(null);
 
-    const recordFailedAttempt = () => {
-      const attempts = (Number(safeStorageGet('driver_failed_attempts') || 0)) + 1;
-      safeStorageSet('driver_failed_attempts', String(attempts));
-      if (attempts >= 5) {
-        safeStorageSet('driver_lockout_until', String(Date.now() + 60000)); // 60-second lockout
-        setLoginError("Too many failed login attempts. Please wait 1 minute before trying again.");
-      } else {
-        setLoginError("Unable to verify your mobile number or PIN. Please check your details and try again.");
-      }
-      setVerifying(false);
-    };
-
-    const handleLoginSuccess = (name: string, bId?: string, sId?: string, brId?: string, pinVersion?: string) => {
-      safeStorageSet('driver_failed_attempts', '0');
-      safeStorageSet('driver_lockout_until', '0');
-      setIsKitchenOwnerUser(false);
-      safeStorageSet('driver_is_logged_in', 'true');
-      safeStorageSet('driver_session_expires', String(Date.now() + 7 * 24 * 60 * 60 * 1000));
-      safeStorageSet('driver_session_token', btoa(`${digits}:${sId || 'staff'}:${Date.now()}`));
-      if (pinVersion) safeStorageSet('driver_pin_version', pinVersion);
-      setDriverDisplayName(name);
-      safeStorageSet('driver_name', name);
-      safeStorageSet('driver_phone', digits);
-      // Clean up any legacy plaintext PIN storage to preserve security
-      safeStorageSet('driver_auth_pin', '');
-      safeStorageSet('driver_token_pin', '');
-      if (bId) {
-        setBizId(bId);
-        safeStorageSet('driver_biz_id', bId);
-      }
-      if (sId) {
-        setSelectedBoyId(sId);
-        safeStorageSet('driver_boy_id', sId);
-      }
-      if (brId) safeStorageSet('driver_branch_id', brId);
-      setLoginModalOpen(false);
-      setPinInput('');
-      setVerifying(false);
-      showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
-    };
-
-    // Helper: Secure PIN verification (bcrypt hash check with backward-compatible plaintext fallback & auto-migration)
-    const verifyPinAgainstRecord = (candidatePin: string, record: any): boolean => {
-      if (record.pinHash) {
-        try {
-          if (bcrypt.compareSync(candidatePin, record.pinHash)) {
-            return true;
-          }
-        } catch (e) {
-          console.warn("bcrypt comparison note:", e);
-        }
-      }
-      if (record.pin) {
-        return candidatePin === String(record.pin).trim();
-      }
-      return false;
-    };
-
-    // 1. Primary: Server-verified Cloud Function callable (if deployed)
     try {
+      // ONLY PATH: Call driverLogin Cloud Function
       const result = await driverLoginCallable({
         phone: digits,
         pin: pin
       });
 
       if (result?.data?.token) {
+        // Sign in with the custom token returned by the function
         await signInWithCustomToken(auth, result.data.token);
+
         const driverInfo = result.data.driver;
-        handleLoginSuccess(driverInfo.name, driverInfo.bizId, driverInfo.staffId, driverInfo.branchId);
-        return;
-      }
-    } catch (callableErr: any) {
-      const errorMsg = callableErr?.message || '';
-      const errorCode = callableErr?.code || '';
+        const name = driverInfo.name || 'Delivery Partner';
+        const bizId = driverInfo.bizId;
+        const staffId = driverInfo.staffId;
+        const branchId = driverInfo.branchId || '';
+        const pinVersion = (result.data as any)?.pinVersion; // If function returns this
 
-      if (errorCode === 'functions/resource-exhausted' || errorMsg.includes('locked') || errorMsg.includes('attempts remaining')) {
-        setLoginError(errorMsg);
+        // Store in localStorage for session persistence
+        safeStorageSet('driver_is_logged_in', 'true');
+        safeStorageSet('driver_session_expires', String(Date.now() + 7 * 24 * 60 * 60 * 1000));
+        safeStorageSet('driver_session_token', btoa(`${digits}:${staffId}:${Date.now()}`));
+        if (pinVersion) safeStorageSet('driver_pin_version', pinVersion);
+        setDriverDisplayName(name);
+        safeStorageSet('driver_name', name);
+        safeStorageSet('driver_phone', digits);
+        safeStorageSet('driver_failed_attempts', '0');
+        safeStorageSet('driver_lockout_until', '0');
+
+        setBizId(bizId);
+        safeStorageSet('driver_biz_id', bizId);
+
+        if (staffId) {
+          setSelectedBoyId(staffId);
+          safeStorageSet('driver_boy_id', staffId);
+        }
+
+        if (branchId) safeStorageSet('driver_branch_id', branchId);
+
+        setLoginModalOpen(false);
+        setPinInput('');
         setVerifying(false);
-        return;
+        showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
+      }
+    } catch (error: any) {
+      setVerifying(false);
+
+      const errorMsg = error?.message || '';
+      const errorCode = error?.code || '';
+
+      // Show real error from Cloud Function (no hiding)
+      if (errorCode === 'functions/resource-exhausted' || 
+          errorMsg.includes('locked') || 
+          errorMsg.includes('attempts remaining')) {
+        setLoginError(errorMsg);
+      } else if (errorCode === 'functions/unauthenticated' || 
+                 errorMsg.includes('Incorrect') ||
+                 errorMsg.includes('not found')) {
+        // Real auth error from function
+        setLoginError(errorMsg);
+        // Record failed attempt locally for UI feedback
+        const attempts = parseInt(safeStorageGet('driver_failed_attempts') || '0') + 1;
+        safeStorageSet('driver_failed_attempts', String(attempts));
+      } else {
+        // Network or other error
+        setLoginError(
+          `Connection error: ${errorMsg || 'Unable to reach the server. Please check your internet and try again.'}`
+        );
       }
     }
-
-    // 2. Direct Driver Auth Directory Lookup (Instant O(1) lookup on independent devices)
-    const possibleKeys = Array.from(new Set([
-      digits,
-      `+91${digits}`,
-      `91${digits}`,
-      (rawMobile || '').trim()
-    ])).filter(Boolean);
-
-    for (const key of possibleKeys) {
-      try {
-        const lookupRef = doc(db, 'driver_auth_lookup', key);
-        const lookupSnap = await getDoc(lookupRef);
-
-        if (lookupSnap.exists()) {
-          const lookupData = lookupSnap.data();
-
-          // Deactivation Check (Test 10)
-          if (lookupData.active === false || lookupData.isDeleted === true || lookupData.status === 'Inactive') {
-            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-            setVerifying(false);
-            return;
-          }
-
-          if (verifyPinAgainstRecord(pin, lookupData)) {
-            // Auto-migrate plaintext PIN to bcrypt hash if not yet hashed
-            if (!lookupData.pinHash) {
-              const pinHash = bcrypt.hashSync(pin, 10);
-              setDoc(lookupRef, { pinHash, active: true, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
-            }
-            const verifiedName = lookupData.name || decoded?.name || 'Delivery Partner';
-            handleLoginSuccess(verifiedName, lookupData.bizId, lookupData.staffId, lookupData.branchId, lookupData.pinVersion);
-            return;
-          } else {
-            recordFailedAttempt();
-            return;
-          }
-        }
-      } catch (lookupErr) {
-        console.warn(`Direct driver_auth_lookup check note (${key}):`, lookupErr);
-      }
-    }
-
-    // 3. Fallback: Staff subcollection check if bizId is known from URL, token, or local storage
-    const effectiveBiz = bizId || getParam('biz') || safeStorageGet('driver_biz_id') || safeStorageGet('last_active_business_id');
-    if (effectiveBiz) {
-      try {
-        const staffQuery = query(collection(db, 'businesses', effectiveBiz, 'staff'));
-        const snap = await getDocs(staffQuery);
-        const matched = snap.docs
-          .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-          .find(s => {
-            const m = (s.mobile || '').replace(/\D/g, '');
-            return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-          });
-
-        if (matched) {
-          // Deactivation check
-          if (((matched as any).status as string) === 'Inactive' || (matched as any).isDeleted) {
-            setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-            setVerifying(false);
-            return;
-          }
-
-          if (verifyPinAgainstRecord(pin, matched)) {
-            const pinHash = (matched as any).pinHash || bcrypt.hashSync(pin, 10);
-            // Auto-heal driver_auth_lookup mapping with bcrypt hash
-            setDoc(doc(db, 'driver_auth_lookup', digits), {
-              bizId: effectiveBiz,
-              staffId: matched.id,
-              name: matched.name,
-              mobile: digits,
-              pinHash: pinHash,
-              branchId: matched.branchId || '',
-              active: true,
-              updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
-
-            handleLoginSuccess(matched.name, effectiveBiz, matched.id, matched.branchId);
-            return;
-          } else {
-            recordFailedAttempt();
-            return;
-          }
-        }
-      } catch (staffErr) {
-        console.warn("Direct staff query fallback check note:", staffErr);
-      }
-    }
-
-    // 4. Fallback: Collection group query across staff to auto-discover tenant across all kitchens
-    try {
-      const cgQuery = query(collectionGroup(db, 'staff'));
-      const cgSnap = await getDocs(cgQuery);
-      const matchedDoc = cgSnap.docs.find(d => {
-        const staffDocData = d.data() as any;
-        const m = ((staffDocData.mobile || '').replace(/\D/g, ''));
-        return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-      });
-
-      if (matchedDoc) {
-        const staffData = matchedDoc.data() as any;
-        const parentBizId = matchedDoc.ref.parent.parent?.id;
-
-        if (staffData.status === 'Inactive' || staffData.isDeleted) {
-          setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-          setVerifying(false);
-          return;
-        }
-
-        if (verifyPinAgainstRecord(pin, staffData)) {
-          const pinHash = staffData.pinHash || bcrypt.hashSync(pin, 10);
-          if (parentBizId) {
-            setDoc(doc(db, 'driver_auth_lookup', digits), {
-              bizId: parentBizId,
-              staffId: matchedDoc.id,
-              name: staffData.name || 'Delivery Partner',
-              mobile: digits,
-              pinHash: pinHash,
-              branchId: staffData.branchId || '',
-              active: true,
-              updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
-          }
-          handleLoginSuccess(staffData.name || 'Delivery Partner', parentBizId, matchedDoc.id, staffData.branchId);
-          return;
-        } else {
-          recordFailedAttempt();
-          return;
-        }
-      }
-    } catch (cgErr) {
-      console.warn("Collection group staff discovery note:", cgErr);
-    }
-
-    // 5. Fallback: Direct scan of businesses collection for registered staff
-    try {
-      const bizCollectionSnap = await getDocs(collection(db, 'businesses'));
-      for (const bDoc of bizCollectionSnap.docs) {
-        try {
-          const sSnap = await getDocs(collection(db, 'businesses', bDoc.id, 'staff'));
-          const found = sSnap.docs
-            .map(d => ({ id: d.id, ...d.data() } as DeliveryBoyStaff))
-            .find(s => {
-              const m = (s.mobile || '').replace(/\D/g, '');
-              return m && (m.endsWith(digits) || digits.endsWith(m.slice(-10)));
-            });
-
-          if (found) {
-            if (((found as any).status as string) === 'Inactive' || (found as any).isDeleted) {
-              setLoginError("This delivery partner account has been deactivated. Please contact your kitchen owner.");
-              setVerifying(false);
-              return;
-            }
-
-            if (verifyPinAgainstRecord(pin, found)) {
-              const pinHash = (found as any).pinHash || bcrypt.hashSync(pin, 10);
-              setDoc(doc(db, 'driver_auth_lookup', digits), {
-                bizId: bDoc.id,
-                staffId: found.id,
-                name: found.name || 'Delivery Partner',
-                mobile: digits,
-                pinHash: pinHash,
-                branchId: found.branchId || '',
-                active: true,
-                updatedAt: new Date().toISOString()
-              }, { merge: true }).catch(() => {});
-
-              handleLoginSuccess(found.name || 'Delivery Partner', bDoc.id, found.id, found.branchId);
-              return;
-            } else {
-              recordFailedAttempt();
-              return;
-            }
-          }
-        } catch {}
-      }
-    } catch (bSweepErr) {
-      console.warn("Businesses sweep note:", bSweepErr);
-    }
-
-    // 6. Global features fallback
-    try {
-      const featRef = doc(db, 'global_features', `driver_auth_${digits}`);
-      const featSnap = await getDoc(featRef);
-      if (featSnap.exists()) {
-        const featData = featSnap.data();
-        if (verifyPinAgainstRecord(pin, featData)) {
-          handleLoginSuccess(featData.name || 'Delivery Partner', featData.bizId, featData.staffId, featData.branchId);
-          return;
-        } else {
-          recordFailedAttempt();
-          return;
-        }
-      }
-    } catch (featErr) {}
-
-    setLoginError(`No delivery partner found matching mobile number "${phoneInput}". Please verify that this mobile number is registered in your kitchen settings.`);
-    setVerifying(false);
   };
+
+  const handleVerifyPin = handleVerifyLogin;
 
   const handleDriverLogout = () => {
     if (window.confirm("Are you sure you want to log out of the Delivery Partner app?")) {

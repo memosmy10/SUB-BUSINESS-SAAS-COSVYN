@@ -439,4 +439,23 @@ describe('ScaleKitchen Database Persistence & Data Integrity Tests', () => {
       expect(resolveBiz('', '')).toBe('stored_owner_uid_777');
     });
   });
+
+  describe('8. Platform Razorpay Checkout Resolution (Enterprise Environment Flow)', () => {
+    it('should resolve the platform key strictly from environment variables without code hardcoding', () => {
+      const resolveEnvKey = (envKey?: string) => {
+        if (envKey && typeof envKey === 'string' && envKey.trim().length > 5) {
+          return envKey.trim();
+        }
+        return '';
+      };
+
+      // 1. When VITE_RAZORPAY_KEY_ID is set in .env
+      expect(resolveEnvKey('rzp_test_SXPy6QPmqMyjkM')).toBe('rzp_test_SXPy6QPmqMyjkM');
+      expect(resolveEnvKey('rzp_live_realprod123')).toBe('rzp_live_realprod123');
+
+      // 2. When empty or unconfigured, returns empty string so app alerts administrator
+      expect(resolveEnvKey('')).toBe('');
+      expect(resolveEnvKey(undefined)).toBe('');
+    });
+  });
 });

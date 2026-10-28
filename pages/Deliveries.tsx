@@ -65,27 +65,6 @@ const Deliveries = () => {
     return () => clearInterval(interval);
   }, [isMealManuallySelected]);
 
-  // Self-healing: Register all delivery partners in driver_auth_lookup immediately
-  // so riders can log in on independent phones without requiring owner SaaS login
-  useEffect(() => {
-    const targetBiz = getTargetBusinessId(currentUser?.uid) || currentUser?.uid;
-    if (!targetBiz || staff.length === 0) return;
-    staff.forEach((boy: any) => {
-      const cleanPhone = (boy.mobile || '').replace(/\D/g, '').slice(-10);
-      if (cleanPhone && cleanPhone.length === 10) {
-        const payload = {
-          bizId: targetBiz,
-          staffId: boy.id,
-          name: boy.name || 'Delivery Partner',
-          mobile: cleanPhone,
-          pin: (boy.pin || '1234').trim(),
-          branchId: boy.branchId || '',
-          updatedAt: new Date().toISOString()
-        };
-        setDoc(doc(db, 'driver_auth_lookup', cleanPhone), payload, { merge: true }).catch(() => {});
-      }
-    });
-  }, [currentUser?.uid, staff]);
 
   const handleSelectMealTab = (tabId: MealSession) => {
     setIsMealManuallySelected(true);

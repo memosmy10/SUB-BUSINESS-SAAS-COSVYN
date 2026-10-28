@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, Download, Loader2, UserCheck, UserX, Clock, MapPin, Calendar,
   Building2, Bike, Users, IndianRupee, RefreshCw, Eye, Phone, MessageSquare, 
-  Mail, Activity, CheckCircle, AlertCircle, X, ShieldAlert, Sparkles, TrendingUp, Shield
+  Mail, Activity, CheckCircle, AlertCircle, X, ShieldAlert, Sparkles, TrendingUp, Shield,
+  Key, Trash2
 } from 'lucide-react';
 import { 
   useAdminTenants, 
@@ -11,11 +12,14 @@ import {
   fetchBusinessDetailedDossier 
 } from '../../services/dbService';
 import { getDaysDifference, formatDateDDMMYYYY } from '../../services/store';
+import { migrateCredentialsCallable, purgeLegacyDriverDocsCallable } from '../../services/firebase';
 
 const AdminUsers = () => {
   const { tenants, loading } = useAdminTenants();
   const [activeTab, setActiveTab] = useState<'owners' | 'signups'>('owners');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [isPurging, setIsPurging] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState('');
   
   // Selected business for Dossier Modal
@@ -91,6 +95,42 @@ const AdminUsers = () => {
       setTimeout(() => setSyncStatusText(''), 4000);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleMigrateCredentials = async () => {
+    if (isMigrating) return;
+    if (!window.confirm("Migrate all plaintext delivery staff PINs and manager passwords to hashed credentials and staff_credentials subcollections?")) return;
+    setIsMigrating(true);
+    setSyncStatusText("Migrating credentials to bcrypt hashes and staff_credentials...");
+    try {
+      const res = await migrateCredentialsCallable();
+      setSyncStatusText(`Migration complete! Migrated: ${res.data.migratedStaffCount} staff PINs, ${res.data.migratedManagersCount} managers, ${res.data.migratedGlobalDriversCount} auth lookups.`);
+      setTimeout(() => setSyncStatusText(''), 6000);
+    } catch (err: any) {
+      console.error("Migration failed:", err);
+      setSyncStatusText(`Migration error: ${err.message || 'Failed'}`);
+      setTimeout(() => setSyncStatusText(''), 6000);
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const handlePurgeLegacyDocs = async () => {
+    if (isPurging) return;
+    if (!window.confirm("Permanently purge legacy global_features docs (driver_auth_* and driver_manifest_*) to prevent credential and customer leaks?")) return;
+    setIsPurging(true);
+    setSyncStatusText("Purging legacy driver docs from global_features...");
+    try {
+      const res = await purgeLegacyDriverDocsCallable();
+      setSyncStatusText(`Purge complete! Deleted ${res.data.deletedCount} legacy driver documents.`);
+      setTimeout(() => setSyncStatusText(''), 6000);
+    } catch (err: any) {
+      console.error("Purge failed:", err);
+      setSyncStatusText(`Purge error: ${err.message || 'Failed'}`);
+      setTimeout(() => setSyncStatusText(''), 6000);
+    } finally {
+      setIsPurging(false);
     }
   };
 
@@ -244,7 +284,27 @@ const AdminUsers = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
+          <button 
+            onClick={handleMigrateCredentials}
+            disabled={isMigrating}
+            className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shadow-sm active:scale-95 disabled:opacity-50"
+            title="Migrate plaintext rider PINs and manager passwords into staff_credentials subcollection and bcrypt hashes"
+          >
+            <Key size={14} className={isMigrating ? "animate-spin" : ""} />
+            {isMigrating ? "Migrating..." : "Migrate Credentials"}
+          </button>
+
+          <button 
+            onClick={handlePurgeLegacyDocs}
+            disabled={isPurging}
+            className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold transition-all shadow-sm active:scale-95 disabled:opacity-50"
+            title="Purge legacy global_features documents (driver_auth_* and driver_manifest_*) to prevent data leakage"
+          >
+            <Trash2 size={14} className={isPurging ? "animate-spin" : ""} />
+            {isPurging ? "Purging..." : "Purge Legacy Docs"}
+          </button>
+
           <button 
             onClick={handleManualSyncAll}
             disabled={isSyncing}

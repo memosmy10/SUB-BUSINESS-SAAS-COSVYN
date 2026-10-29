@@ -77,6 +77,19 @@ const Customers = () => {
     return () => unsub();
   }, [effectiveBizId]);
 
+  // Make the customer roster view responsive and occupy the full screen width without white borders
+  useEffect(() => {
+    const parentContainer = document.querySelector('main > div.max-w-7xl');
+    if (parentContainer) {
+      parentContainer.classList.remove('max-w-7xl');
+      parentContainer.classList.add('w-full', 'max-w-none');
+      return () => {
+        parentContainer.classList.add('max-w-7xl');
+        parentContainer.classList.remove('w-full', 'max-w-none');
+      };
+    }
+  }, []);
+
   // Combine standard and custom box types from settings
   const availableBoxTypes = useMemo(() => {
     const map = new Map<string, any>();
@@ -409,7 +422,7 @@ const Customers = () => {
   };
 
   return (
-    <div className="space-y-6 pb-20 pt-1 animate-in fade-in duration-300">
+    <div className="w-full max-w-none space-y-6 pb-20 pt-1 animate-in fade-in duration-300">
       
       {/* Top Overview Cards & Primary Actions */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-4">
@@ -468,22 +481,39 @@ const Customers = () => {
       </div>
 
       {/* Customer Directory Table */}
-      <div className="glass-card rounded-2xl border border-white/80 overflow-hidden shadow-glass">
-         <div className="overflow-x-auto lg:overflow-x-hidden">
-            <table className="w-full text-left border-collapse min-w-[1000px] lg:min-w-0 table-auto">
+      <div className="glass-card rounded-2xl border border-white/80 overflow-hidden shadow-glass w-full">
+         {/* Custom styled visible horizontal side-scroll container */}
+         <style>{`
+           .customer-table-scroll::-webkit-scrollbar {
+             height: 10px;
+           }
+           .customer-table-scroll::-webkit-scrollbar-track {
+             background: #f1f5f9;
+             border-radius: 6px;
+           }
+           .customer-table-scroll::-webkit-scrollbar-thumb {
+             background: #cbd5e1;
+             border-radius: 6px;
+           }
+           .customer-table-scroll::-webkit-scrollbar-thumb:hover {
+             background: #94a3b8;
+           }
+         `}</style>
+         <div className="overflow-x-auto w-full customer-table-scroll pb-2">
+            <table className="w-full text-left border-collapse min-w-[1320px] table-auto">
                <thead className="bg-slate-50/70 backdrop-blur-sm text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200/70">
                   <tr>
-                     <th className="p-3.5 w-8 text-center"></th>
+                     <th className="p-3.5 w-10 text-center"></th>
                      <th className="p-3.5 w-12 text-center">#</th>
-                     <th className="p-3.5">Customer</th>
-                     <th className="p-3.5 text-center">Special</th>
-                     <th className="p-3.5">
+                     <th className="p-3.5 min-w-[180px]">Customer</th>
+                     <th className="p-3.5 w-24 text-center">Special</th>
+                     <th className="p-3.5 min-w-[300px]">
                         <TimingFilter 
                           selected={filters.timings} 
                           onChange={(vals) => setFilters({...filters, timings: vals})} 
                         />
                      </th>
-                     <th className="p-3.5">
+                     <th className="p-3.5 min-w-[180px]">
                         <DeliveryBoyFilter 
                           staff={staff}
                           value={filters.deliveryBoyId}
@@ -492,22 +522,22 @@ const Customers = () => {
                           onToggleSort={toggleDeliveryBoySort}
                         />
                      </th>
-                     <th className="p-3.5">Locality</th>
-                     <th className="p-3.5 text-center">
+                     <th className="p-3.5 min-w-[130px]">Locality</th>
+                     <th className="p-3.5 w-28 text-center">
                         <StatusFilter 
                           value={filters.paymentStatus} 
                           onChange={(val) => setFilters({...filters, paymentStatus: val})} 
                         />
                      </th>
-                     <th className="p-3.5 text-center">Days Remaining</th>
-                     <th className="p-3.5">
+                     <th className="p-3.5 w-32 text-center">Days Remaining</th>
+                     <th className="p-3.5 min-w-[120px]">
                         <BranchFilter 
                           branches={branches}
                           value={filters.branchId}
                           onChange={(val) => setFilters({...filters, branchId: val})}
                         />
                      </th>
-                     <th className="p-3.5 text-right">Actions</th>
+                     <th className="p-3.5 min-w-[120px] text-right sticky right-0 bg-slate-50/95 backdrop-blur-md z-10 shadow-[-6px_0_12px_rgba(0,0,0,0.06)] border-l border-slate-200/70">Actions</th>
                   </tr>
                </thead>
                <tbody className="text-slate-800 text-xs font-normal divide-y divide-slate-100">
@@ -714,9 +744,9 @@ const Customers = () => {
                                </div>
                             )}
                           </td>
-                          <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[90px]">{branch?.name || 'Main Kitchen'}</td>
-                          <td className="p-3.5 text-right">
-                            <div className="flex items-center justify-end gap-1">
+                          <td className="p-3.5 text-slate-600 text-xs font-medium truncate max-w-[120px]">{branch?.name || 'Main Kitchen'}</td>
+                          <td className="p-3.5 text-right sticky right-0 bg-white/95 group-hover:bg-slate-50/95 backdrop-blur-md z-10 shadow-[-6px_0_12px_rgba(0,0,0,0.06)] border-l border-slate-100 transition-colors min-w-[120px]">
+                            <div className="flex items-center justify-end gap-1.5">
                                 <button 
                                   onClick={(e) => { e.stopPropagation(); setActiveCustomer(c); setIsRenewal(true); setIsAddModalOpen(true); }} 
                                   className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"

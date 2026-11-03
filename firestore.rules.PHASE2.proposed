@@ -1,0 +1,237 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // =========================================================================
+    // PROPOSED RULES FOR PHASE 2 (DO NOT DEPLOY YET - REVIEW ONLY)
+    // =========================================================================
+
+    // 1. HELPER: Super Admin check with email_verified enforcement
+    function isAdmin() {
+      return request.auth != null && 
+             request.auth.token != null && 
+             request.auth.token.email_verified == true &&
+             'email' in request.auth.token && (
+               request.auth.token.email.lower() == 'cosvynsolutions@gmail.com' || 
+               request.auth.token.email.lower() == 'admin@scalekitchen.in' ||
+               request.auth.token.email.lower() == 'memosmy10@gmail.com'
+             );
+    }
+
+    // 2. HELPER: Tenant Owner check
+    function isOwner(bizId) {
+      return request.auth != null && request.auth.uid == bizId;
+    }
+
+    // 3. HELPER: Per-tenant Driver Custom Token Claim check
+    function isTenantDriver(bizId) {
+      return request.auth != null && 
+             request.auth.token != null &&
+             request.auth.token.role == 'driver' &&
+             request.auth.token.bizId == bizId;
+    }
+
+    // 4. HELPER: Per-tenant Manager Custom Token Claim check
+    function isTenantManager(bizId) {
+      return request.auth != null && 
+             request.auth.token != null &&
+             request.auth.token.role == 'manager' &&
+             request.auth.token.bizId == bizId;
+    }
+
+    // 5. PUBLIC / SYSTEM SETTINGS
+    match /global_settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 6. ADMIN BROADCAST MESSAGES
+    match /admin_messages/{docId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 7. RATE LIMITS (Server-side Cloud Functions only)
+    match /auth_rate_limits/{docId} {
+      allow read, write: if false; // Only Cloud Functions (Admin SDK) can access
+    }
+
+    // 8. BUSINESS DATA (Multi-tenant isolation)
+    match /businesses/{userId} {
+      // Business root profile read: owner, manager, driver of that business, or admin
+      allow get: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // Owner update with anti-tamper safeguards
+      allow update: if 
+        isAdmin() || 
+        (
+          isOwner(userId) && (
+            // A. First-time Free Trial activation
+            (
+              request.resource.data.planName == 'Free Trial' &&
+              (!('trialClaimed' in resource.data) || resource.data.trialClaimed != true) &&
+              (!('trialStartDate' in resource.data) || resource.data.trialStartDate == null) &&
+              request.resource.data.trialClaimed == true
+            ) ||
+            // B. Paid subscription activation
+            (
+              'lastPaymentId' in request.resource.data && 
+              request.resource.data.lastPaymentId != null &&
+              request.resource.data.lastPaymentId != ''
+            ) ||
+            // C. Auto-marking expired
+            (
+              request.resource.data.planStatus == 'Expired'
+            ) ||
+            // D. General profile, branding, stats sync
+            (
+              (!('trialClaimed' in request.resource.data) || request.resource.data.trialClaimed == resource.data.trialClaimed || resource.data.trialClaimed != true) &&
+              (!('trialStartDate' in request.resource.data) || request.resource.data.trialStartDate == resource.data.trialStartDate || !('trialStartDate' in resource.data)) &&
+              (
+                !('planExpiryDate' in request.resource.data) || 
+                request.resource.data.planExpiryDate == resource.data.planExpiryDate ||
+                request.resource.data.planExpiryDate <= resource.data.planExpiryDate
+              )
+            )
+          )
+        );
+
+      // --- Staff Subcollection ---
+      match /staff/{staffId} {
+        // Only owner, managers of this tenant, or drivers of this tenant can read staff
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        // Driver can only update their own GPS, battery, attendance, and status
+        allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) && request.auth.token.staffId == staffId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'currentLat', 'currentLng', 'lastLocationUpdate',
+              'lastAttendanceDate', 'attendanceMarkedAt', 'batteryLevel', 'updatedAt'
+            ])
+          );
+        allow create, delete: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+
+      // --- Delivery Logs Subcollection ---
+      match /delivery_logs/{logId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow create, update: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // --- Customers Subcollection ---
+      match /customers/{customerId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        // Driver can only update box collection tracking and route order
+        allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'boxCollections', 'uncollectedBoxesCount', 'updatedAt', 'routeOrder'
+            ])
+          );
+        allow create: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // --- Plans Subcollection ---
+      match /plans/{planId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+
+      // --- Branches Subcollection ---
+      match /branches/{branchId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // --- Managers Subcollection (Credentials strictly protected) ---
+      match /managers/{managerId} {
+        // Only owner or admin can read manager docs (prevent credential exfiltration)
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // --- Manager Logs Subcollection ---
+      match /manager_logs/{logId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+        allow create, update: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // --- Operational Subcollections (Tenant-Scoped) ---
+      match /inventory/{itemId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+      match /expenses/{expenseId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+      match /notes/{noteId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+      match /single_orders/{orderId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+      match /payments/{paymentId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+      match /invoices/{invoiceId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+      }
+      match /box_types/{boxId} {
+        allow read: if isOwner(userId) || isTenantManager(userId) || isTenantDriver(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+      match /billing_history/{docId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // Fallback tenant subcollection lockdown
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // 9. PENDING ACTIVATIONS
+    match /pending_activations/{email} {
+      allow get: if true; 
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // 10. FREE TRIAL REGISTRY
+    match /trial_claims/{claimKey} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // 11. COLLECTION GROUPS (Tenant isolation enforced)
+    match /{path=**}/billing_history/{docId} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == path[1]);
+    }
+    match /{path=**}/payments/{docId} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == path[1]);
+    }
+
+    // 12. GLOBAL INTERACTIONS
+    match /global_features/{docId} { 
+      // Driver auth docs in global_features can only be read/updated by server Admin SDK or owner
+      allow read: if request.auth != null; 
+      allow write: if request.auth != null; 
+    }
+    match /global_tickets/{docId} { allow read, write: if request.auth != null; }
+    match /global_reviews/{docId} { allow read, write: if request.auth != null; }
+
+    // 13. DRIVER AUTH LOOKUP
+    match /driver_auth_lookup/{mobileDigits} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+  }
+}

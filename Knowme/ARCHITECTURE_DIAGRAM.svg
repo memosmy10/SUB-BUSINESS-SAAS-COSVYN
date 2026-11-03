@@ -1,0 +1,354 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1200" width="100%" height="100%" style="background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+
+    <linearGradient id="blueCard" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+
+    <linearGradient id="accentOrange" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+
+    <linearGradient id="accentCyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+
+    <linearGradient id="accentGreen" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+
+    <linearGradient id="accentPurple" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+
+    <!-- Filters -->
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+
+    <filter id="glowOrange" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Markers -->
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#06b6d4" />
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#f59e0b" />
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#8b5cf6" />
+    </marker>
+  </defs>
+
+  <!-- Background Canvas Grid -->
+  <rect width="100%" height="100%" fill="url(#bgGradient)"/>
+  
+  <g opacity="0.05">
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#ffffff" stroke-width="1"/>
+    </pattern>
+    <rect width="100%" height="100%" fill="url(#grid)" />
+  </g>
+
+  <!-- ==================== HEADER SECTION ==================== -->
+  <g transform="translate(60, 40)">
+    <rect x="0" y="0" width="60" height="60" rx="16" fill="url(#accentOrange)"/>
+    <!-- Kitchen Utensils / Box Icon -->
+    <path d="M 20 20 L 40 20 L 36 42 L 24 42 Z" fill="#ffffff" opacity="0.9"/>
+    <circle cx="30" cy="16" r="3" fill="#ffffff"/>
+    <text x="80" y="32" fill="#ffffff" font-size="28" font-weight="800" letter-spacing="-0.5">ScaleKitchen OS — End-to-End Technical Architecture</text>
+    <text x="80" y="54" fill="#94a3b8" font-size="14" font-weight="500">Multi-Tenant Cloud Kitchen SaaS • Real-Time Fleet Logistics • Subscription &amp; Eco-Box Lifecycle</text>
+    
+    <!-- Status Badges -->
+    <rect x="1250" y="14" width="130" height="32" rx="8" fill="#10b981" fill-opacity="0.15" stroke="#10b981" stroke-width="1"/>
+    <circle cx="1268" cy="30" r="4" fill="#10b981"/>
+    <text x="1282" y="35" fill="#34d399" font-size="12" font-weight="700">PRODUCTION</text>
+
+    <rect x="1395" y="14" width="85" height="32" rx="8" fill="#06b6d4" fill-opacity="0.15" stroke="#06b6d4" stroke-width="1"/>
+    <text x="1418" y="35" fill="#38bdf8" font-size="12" font-weight="700">v2.4.0</text>
+  </g>
+
+  <!-- ==================== ZONE 1: CLIENT ACCESS & USERS (TOP) ==================== -->
+  <g transform="translate(60, 130)">
+    <!-- Zone Box -->
+    <rect x="0" y="0" width="1480" height="150" rx="20" fill="#131d31" fill-opacity="0.6" stroke="#1e293b" stroke-width="1.5" />
+    <rect x="20" y="-12" width="160" height="24" rx="6" fill="#1e293b"/>
+    <text x="32" y="4" fill="#38bdf8" font-size="11" font-weight="800" letter-spacing="1">CLIENT &amp; ACTOR LAYER</text>
+
+    <!-- Node 1: Kitchen Owner -->
+    <g transform="translate(40, 28)">
+      <rect x="0" y="0" width="240" height="94" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <circle cx="36" cy="47" r="18" fill="#3b82f6" fill-opacity="0.2"/>
+      <text x="36" y="52" fill="#60a5fa" font-size="16" text-anchor="middle">👑</text>
+      <text x="68" y="40" fill="#ffffff" font-size="14" font-weight="700">Kitchen Owner Hub</text>
+      <text x="68" y="58" fill="#94a3b8" font-size="11">React SPA (Desktop / Tablet)</text>
+      <text x="68" y="74" fill="#f59e0b" font-size="10" font-weight="600">Plans, Billing, Customers, P&amp;L</text>
+    </g>
+
+    <!-- Node 2: Kitchen KDS / Chef -->
+    <g transform="translate(330, 28)">
+      <rect x="0" y="0" width="240" height="94" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <circle cx="36" cy="47" r="18" fill="#10b981" fill-opacity="0.2"/>
+      <text x="36" y="52" fill="#34d399" font-size="16" text-anchor="middle">👨‍🍳</text>
+      <text x="68" y="40" fill="#ffffff" font-size="14" font-weight="700">Kitchen Display (KDS)</text>
+      <text x="68" y="58" fill="#94a3b8" font-size="11">Prep &amp; Kitchen Sheet Station</text>
+      <text x="68" y="74" fill="#10b981" font-size="10" font-weight="600">Daily Portions, BOM &amp; VIP Alerts</text>
+    </g>
+
+    <!-- Node 3: Branch Manager -->
+    <g transform="translate(620, 28)">
+      <rect x="0" y="0" width="240" height="94" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <circle cx="36" cy="47" r="18" fill="#8b5cf6" fill-opacity="0.2"/>
+      <text x="36" y="52" fill="#a78bfa" font-size="16" text-anchor="middle">🏢</text>
+      <text x="68" y="40" fill="#ffffff" font-size="14" font-weight="700">Manager Hub</text>
+      <text x="68" y="58" fill="#94a3b8" font-size="11">Branch Dispatch Console</text>
+      <text x="68" y="74" fill="#8b5cf6" font-size="10" font-weight="600">Fleet Dispatch, Route Sequencing</text>
+    </g>
+
+    <!-- Node 4: Delivery Boy App (Highlighted) -->
+    <g transform="translate(910, 28)">
+      <rect x="0" y="0" width="260" height="94" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5" filter="url(#dropShadow)"/>
+      <circle cx="36" cy="47" r="18" fill="#f59e0b" fill-opacity="0.2"/>
+      <text x="36" y="52" fill="#fbbf24" font-size="16" text-anchor="middle">🛵</text>
+      <text x="68" y="40" fill="#ffffff" font-size="14" font-weight="700">Delivery Boy Portal (PWA)</text>
+      <text x="68" y="58" fill="#94a3b8" font-size="11">Mobile PWA (Android / iOS)</text>
+      <text x="68" y="74" fill="#f59e0b" font-size="10" font-weight="700">4-Digit PIN • Live GPS • Box Scan</text>
+    </g>
+
+    <!-- Node 5: Customer Touchpoint -->
+    <g transform="translate(1210, 28)">
+      <rect x="0" y="0" width="230" height="94" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <circle cx="36" cy="47" r="18" fill="#06b6d4" fill-opacity="0.2"/>
+      <text x="36" y="52" fill="#38bdf8" font-size="16" text-anchor="middle">💬</text>
+      <text x="68" y="40" fill="#ffffff" font-size="14" font-weight="700">Subscriber Client</text>
+      <text x="68" y="58" fill="#94a3b8" font-size="11">WhatsApp / Web Receipts</text>
+      <text x="68" y="74" fill="#06b6d4" font-size="10" font-weight="600">Meal Alerts, Invoices, Delivery Pin</text>
+    </g>
+  </g>
+
+  <!-- Connectors from Clients to App Engine -->
+  <path d="M 220 224 L 220 330" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrowCyan)"/>
+  <path d="M 450 224 L 450 330" fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrowGreen)"/>
+  <path d="M 740 224 L 740 330" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrowPurple)"/>
+  <path d="M 1040 224 L 1040 330" fill="none" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrowOrange)"/>
+  <path d="M 1325 224 L 1325 330" fill="none" stroke="#06b6d4" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrowCyan)"/>
+
+  <!-- ==================== ZONE 2: CORE SAAS APPLICATION ENGINES ==================== -->
+  <g transform="translate(60, 330)">
+    <rect x="0" y="0" width="1480" height="230" rx="20" fill="#131d31" fill-opacity="0.7" stroke="#3b82f6" stroke-width="1.5" />
+    <rect x="20" y="-12" width="240" height="24" rx="6" fill="#3b82f6"/>
+    <text x="32" y="4" fill="#ffffff" font-size="11" font-weight="800" letter-spacing="1">REACT 18 &amp; VITE BUSINESS ENGINES</text>
+
+    <!-- Engine 1: Subscription Engine -->
+    <g transform="translate(30, 30)">
+      <rect x="0" y="0" width="265" height="170" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <rect x="15" y="15" width="34" height="34" rx="8" fill="#3b82f6" fill-opacity="0.2"/>
+      <text x="32" y="38" fill="#60a5fa" font-size="16" text-anchor="middle">📅</text>
+      <text x="60" y="32" fill="#ffffff" font-size="13" font-weight="700">Subscription Engine</text>
+      <text x="60" y="48" fill="#38bdf8" font-size="10" font-weight="600">Multi-Plan &amp; Calendar Matrix</text>
+      
+      <line x1="15" y1="62" x2="250" y2="62" stroke="#334155" stroke-width="1"/>
+      <text x="15" y="82" fill="#cbd5e1" font-size="11">• 0-9, A-Z Sorted Plan Combobox</text>
+      <text x="15" y="102" fill="#cbd5e1" font-size="11">• Dynamic End-Date Auto Shift</text>
+      <text x="15" y="122" fill="#cbd5e1" font-size="11">• Pause / Vacation Calendar</text>
+      <text x="15" y="142" fill="#cbd5e1" font-size="11">• Multi-Meal: Breakfast / Lunch / Dinner</text>
+    </g>
+
+    <!-- Engine 2: Reusable Box Lifecycle -->
+    <g transform="translate(320, 30)">
+      <rect x="0" y="0" width="265" height="170" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <rect x="15" y="15" width="34" height="34" rx="8" fill="#10b981" fill-opacity="0.2"/>
+      <text x="32" y="38" fill="#34d399" font-size="16" text-anchor="middle">📦</text>
+      <text x="60" y="32" fill="#ffffff" font-size="13" font-weight="700">Eco-Dabba Tracker</text>
+      <text x="60" y="48" fill="#34d399" font-size="10" font-weight="600">Reusable Asset Management</text>
+      
+      <line x1="15" y1="62" x2="250" y2="62" stroke="#334155" stroke-width="1"/>
+      <text x="15" y="82" fill="#cbd5e1" font-size="11">• Day 2+ Recollection Protocol</text>
+      <text x="15" y="102" fill="#cbd5e1" font-size="11">• Clean / Dirty / Damaged Audit</text>
+      <text x="15" y="122" fill="#cbd5e1" font-size="11">• Security Deposit (₹) Ledger</text>
+      <text x="15" y="142" fill="#cbd5e1" font-size="11">• Customer Box Health Metric</text>
+    </g>
+
+    <!-- Engine 3: Kitchen Prep & KDS -->
+    <g transform="translate(610, 30)">
+      <rect x="0" y="0" width="265" height="170" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <rect x="15" y="15" width="34" height="34" rx="8" fill="#f59e0b" fill-opacity="0.2"/>
+      <text x="32" y="38" fill="#fbbf24" font-size="16" text-anchor="middle">🍳</text>
+      <text x="60" y="32" fill="#ffffff" font-size="13" font-weight="700">Kitchen Prep Engine</text>
+      <text x="60" y="48" fill="#fbbf24" font-size="10" font-weight="600">KDS Batch Aggregator</text>
+      
+      <line x1="15" y1="62" x2="250" y2="62" stroke="#334155" stroke-width="1"/>
+      <text x="15" y="82" fill="#cbd5e1" font-size="11">• Meal Variant Aggregation</text>
+      <text x="15" y="102" fill="#cbd5e1" font-size="11">• Star Customer / VIP Diet Tags</text>
+      <text x="15" y="122" fill="#cbd5e1" font-size="11">• Raw Inventory BOM Calculator</text>
+      <text x="15" y="142" fill="#cbd5e1" font-size="11">• Printable Kitchen Manifests</text>
+    </g>
+
+    <!-- Engine 4: Route Optimizer & Dispatch -->
+    <g transform="translate(900, 30)">
+      <rect x="0" y="0" width="265" height="170" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <rect x="15" y="15" width="34" height="34" rx="8" fill="#8b5cf6" fill-opacity="0.2"/>
+      <text x="32" y="38" fill="#a78bfa" font-size="16" text-anchor="middle">🗺️</text>
+      <text x="60" y="32" fill="#ffffff" font-size="13" font-weight="700">Route &amp; Fleet Engine</text>
+      <text x="60" y="48" fill="#a78bfa" font-size="10" font-weight="600">Dispatch &amp; Optimization</text>
+      
+      <line x1="15" y1="62" x2="250" y2="62" stroke="#334155" stroke-width="1"/>
+      <text x="15" y="82" fill="#cbd5e1" font-size="11">• Stop-Based Grouping (1 Stop/Cust)</text>
+      <text x="15" y="102" fill="#cbd5e1" font-size="11">• Nearest-Neighbor TSP Optimizer</text>
+      <text x="15" y="122" fill="#cbd5e1" font-size="11">• Dynamic Rider Re-Assignment</text>
+      <text x="15" y="142" fill="#cbd5e1" font-size="11">• Leaflet OpenStreetMap Live Pins</text>
+    </g>
+
+    <!-- Engine 5: Billing & Invoicing Engine -->
+    <g transform="translate(1190, 30)">
+      <rect x="0" y="0" width="260" height="170" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <rect x="15" y="15" width="34" height="34" rx="8" fill="#ec4899" fill-opacity="0.2"/>
+      <text x="32" y="38" fill="#f472b6" font-size="16" text-anchor="middle">🧾</text>
+      <text x="60" y="32" fill="#ffffff" font-size="13" font-weight="700">Billing &amp; Audit Engine</text>
+      <text x="60" y="48" fill="#f472b6" font-size="10" font-weight="600">GST, Invoices &amp; P&amp;L</text>
+      
+      <line x1="15" y1="62" x2="245" y2="62" stroke="#334155" stroke-width="1"/>
+      <text x="15" y="82" fill="#cbd5e1" font-size="11">• GST-Compliant Tax Invoices</text>
+      <text x="15" y="102" fill="#cbd5e1" font-size="11">• Thermal Print 80mm &amp; PDF</text>
+      <text x="15" y="122" fill="#cbd5e1" font-size="11">• Daily Cash vs Online Ledger</text>
+      <text x="15" y="142" fill="#cbd5e1" font-size="11">• Renewal History Tracking</text>
+    </g>
+  </g>
+
+  <!-- Connectors from App Engines to Universal Mesh & Data Store -->
+  <path d="M 500 560 L 500 640" fill="none" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrowOrange)"/>
+  <path d="M 1100 560 L 1100 640" fill="none" stroke="#06b6d4" stroke-width="2.5" marker-end="url(#arrowCyan)"/>
+
+  <!-- ==================== ZONE 3: REAL-TIME UNIVERSAL MESH ==================== -->
+  <g transform="translate(60, 640)">
+    <rect x="0" y="0" width="1480" height="190" rx="20" fill="#131d31" fill-opacity="0.8" stroke="#f59e0b" stroke-width="1.5" />
+    <rect x="20" y="-12" width="280" height="24" rx="6" fill="#f59e0b"/>
+    <text x="32" y="4" fill="#0f172a" font-size="11" font-weight="900" letter-spacing="1">UNIVERSAL REAL-TIME BRIDGE (global_features)</text>
+
+    <!-- Sub-node 1: Driver Auth & PIN Registry -->
+    <g transform="translate(30, 26)">
+      <rect x="0" y="0" width="330" height="138" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1" stroke-opacity="0.6"/>
+      <text x="20" y="32" fill="#fbbf24" font-size="13" font-weight="700">driver_auth_{10_digit_phone}</text>
+      <text x="20" y="52" fill="#94a3b8" font-size="11">Rider Security Directory</text>
+      <line x1="20" y1="64" x2="310" y2="64" stroke="#334155" stroke-width="1"/>
+      <text x="20" y="84" fill="#e2e8f0" font-size="11">Fields: mobile, pin, staffId, bizId, branchId</text>
+      <text x="20" y="104" fill="#e2e8f0" font-size="11">Bypasses Cross-Origin Iframe Restrictions</text>
+      <text x="20" y="124" fill="#10b981" font-size="10" font-weight="600">Zero-Friction Mobile Driver Sign-In</text>
+    </g>
+
+    <!-- Sub-node 2: Driver Manifest Stream -->
+    <g transform="translate(390, 26)">
+      <rect x="0" y="0" width="330" height="138" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1" stroke-opacity="0.6"/>
+      <text x="20" y="32" fill="#fbbf24" font-size="13" font-weight="700">driver_manifest_{bizId}</text>
+      <text x="20" y="52" fill="#94a3b8" font-size="11">Fleet Operational Snapshot</text>
+      <line x1="20" y1="64" x2="310" y2="64" stroke="#334155" stroke-width="1"/>
+      <text x="20" y="84" fill="#e2e8f0" font-size="11">Full copy of Customers, Plans, Staff</text>
+      <text x="20" y="104" fill="#e2e8f0" font-size="11">Synced via onSnapshot real-time listener</text>
+      <text x="20" y="124" fill="#10b981" font-size="10" font-weight="600">Allows instant offline route computation</text>
+    </g>
+
+    <!-- Sub-node 3: Driver Daily Logs Stream -->
+    <g transform="translate(750, 26)">
+      <rect x="0" y="0" width="330" height="138" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1" stroke-opacity="0.6"/>
+      <text x="20" y="32" fill="#fbbf24" font-size="13" font-weight="700">driver_logs_{bizId}_{YYYY-MM-DD}</text>
+      <text x="20" y="52" fill="#94a3b8" font-size="11">Live Delivery Completion Stream</text>
+      <line x1="20" y1="64" x2="310" y2="64" stroke="#334155" stroke-width="1"/>
+      <text x="20" y="84" fill="#e2e8f0" font-size="11">Logs: {customerId}_{meal}: Delivered/Pending</text>
+      <text x="20" y="104" fill="#e2e8f0" font-size="11">Box Status: Clean, Dirty, Damaged + Notes</text>
+      <text x="20" y="124" fill="#10b981" font-size="10" font-weight="600">Instant bidirectional dispatch feedback</text>
+    </g>
+
+    <!-- Sub-node 4: Driver GPS & Status -->
+    <g transform="translate(1110, 26)">
+      <rect x="0" y="0" width="340" height="138" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1" stroke-opacity="0.6"/>
+      <text x="20" y="32" fill="#fbbf24" font-size="13" font-weight="700">driver_status_{bizId}_{staffId}</text>
+      <text x="20" y="52" fill="#94a3b8" font-size="11">High-Frequency Telemetry Mesh</text>
+      <line x1="20" y1="64" x2="320" y2="64" stroke="#334155" stroke-width="1"/>
+      <text x="20" y="84" fill="#e2e8f0" font-size="11">Coords: currentLat, currentLng, speed</text>
+      <text x="20" y="104" fill="#e2e8f0" font-size="11">Attendance: Online/Offline, punchInTime</text>
+      <text x="20" y="124" fill="#10b981" font-size="10" font-weight="600">Real-time driver breadcrumbs on Live Map</text>
+    </g>
+  </g>
+
+  <!-- Connectors from Universal Mesh to Firestore Permanent Tenant Store -->
+  <path d="M 800 830 L 800 900" fill="none" stroke="#10b981" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+
+  <!-- ==================== ZONE 4: CLOUD FIRESTORE MULTI-TENANT DATABASE ==================== -->
+  <g transform="translate(60, 900)">
+    <rect x="0" y="0" width="1480" height="250" rx="20" fill="#131d31" fill-opacity="0.9" stroke="#10b981" stroke-width="1.5" />
+    <rect x="20" y="-12" width="280" height="24" rx="6" fill="#10b981"/>
+    <text x="32" y="4" fill="#0f172a" font-size="11" font-weight="900" letter-spacing="1">GOOGLE CLUSTERED FIRESTORE (PERMANENT STORE)</text>
+
+    <!-- Tenant Isolation Diagram -->
+    <g transform="translate(30, 28)">
+      <rect x="0" y="0" width="420" height="195" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <text x="20" y="30" fill="#34d399" font-size="14" font-weight="700">Root Document: /businesses/{userId}</text>
+      <text x="20" y="48" fill="#94a3b8" font-size="11">Complete Isolation per Tenant (Kitchen Owner UID)</text>
+      <line x1="20" y1="60" x2="400" y2="60" stroke="#334155" stroke-width="1"/>
+      
+      <!-- Subcollections list -->
+      <g transform="translate(20, 78)">
+        <text x="0" y="0" fill="#cbd5e1" font-size="11">📁 <tspan fill="#ffffff" font-weight="700">branches/</tspan> — Physical hub address &amp; geofence</text>
+        <text x="0" y="22" fill="#cbd5e1" font-size="11">📁 <tspan fill="#ffffff" font-weight="700">plans/</tspan> — Defined subscription offerings</text>
+        <text x="0" y="44" fill="#cbd5e1" font-size="11">📁 <tspan fill="#ffffff" font-weight="700">customers/</tspan> — Subscribed clients &amp; addresses</text>
+        <text x="0" y="66" fill="#cbd5e1" font-size="11">📁 <tspan fill="#ffffff" font-weight="700">staff/</tspan> — Cooks, riders, managers &amp; pins</text>
+        <text x="0" y="88" fill="#cbd5e1" font-size="11">📁 <tspan fill="#ffffff" font-weight="700">delivery_logs/</tspan> — Historical delivery &amp; box archive</text>
+        <text x="0" y="110" fill="#cbd5e1" font-size="11">📁 <tspan fill="#ffffff" font-weight="700">invoices/, expenses/, inventory/, notes/</tspan></text>
+      </g>
+    </g>
+
+    <!-- Security & RBAC Guard Box -->
+    <g transform="translate(480, 28)">
+      <rect x="0" y="0" width="460" height="195" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <rect x="20" y="18" width="28" height="28" rx="8" fill="#8b5cf6" fill-opacity="0.2"/>
+      <text x="34" y="37" fill="#a78bfa" font-size="14" text-anchor="middle">🛡️</text>
+      <text x="58" y="32" fill="#ffffff" font-size="14" font-weight="700">Cloud Security Rules (firestore.rules)</text>
+      <text x="58" y="48" fill="#a78bfa" font-size="11">Defense-in-Depth Authorization Guard</text>
+      <line x1="20" y1="60" x2="440" y2="60" stroke="#334155" stroke-width="1"/>
+
+      <g transform="translate(20, 80)">
+        <text x="0" y="0" fill="#cbd5e1" font-size="11"><tspan fill="#38bdf8" font-weight="700">1. Super Admin:</tspan> Unrestricted read/write across all tenants</text>
+        <text x="0" y="24" fill="#cbd5e1" font-size="11"><tspan fill="#f59e0b" font-weight="700">2. Kitchen Owner:</tspan> Bound strictly to {userId} == request.auth.uid</text>
+        <text x="0" y="48" fill="#cbd5e1" font-size="11"><tspan fill="#ec4899" font-weight="700">3. Anti-Tampering:</tspan> Owner cannot modify trialClaimed or planExpiryDate</text>
+        <text x="0" y="72" fill="#cbd5e1" font-size="11"><tspan fill="#10b981" font-weight="700">4. Driver Boundary:</tspan> Whitelisted writes: status, GPS, attendance only</text>
+        <text x="0" y="96" fill="#cbd5e1" font-size="11"><tspan fill="#a78bfa" font-weight="700">5. Anonymous Guard:</tspan> Background driver session authentication bridge</text>
+      </g>
+    </g>
+
+    <!-- Global Platform Settings & Messages -->
+    <g transform="translate(970, 28)">
+      <rect x="0" y="0" width="480" height="195" rx="14" fill="#1e293b" stroke="#334155" stroke-width="1" filter="url(#dropShadow)"/>
+      <text x="20" y="30" fill="#38bdf8" font-size="14" font-weight="700">Platform Meta Collections</text>
+      <text x="20" y="48" fill="#94a3b8" font-size="11">Global configuration &amp; cross-kitchen broadcasts</text>
+      <line x1="20" y1="60" x2="460" y2="60" stroke="#334155" stroke-width="1"/>
+
+      <g transform="translate(20, 80)">
+        <text x="0" y="0" fill="#ffffff" font-size="12" font-weight="700">/global_settings/platform_config</text>
+        <text x="0" y="18" fill="#94a3b8" font-size="11">Platform tier pricing, feature flags, maintenance mode</text>
+
+        <text x="0" y="46" fill="#ffffff" font-size="12" font-weight="700">/admin_messages/{id}</text>
+        <text x="0" y="64" fill="#94a3b8" font-size="11">Broadcast announcements to all kitchen owners &amp; managers</text>
+
+        <text x="0" y="92" fill="#ffffff" font-size="12" font-weight="700">Dual-Persistence Mechanism</text>
+        <text x="0" y="110" fill="#34d399" font-size="11">Browser IndexedDB + Memory Persistence for sandbox safety</text>
+      </g>
+    </g>
+  </g>
+
+</svg>

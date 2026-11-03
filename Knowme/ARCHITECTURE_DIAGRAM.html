@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScaleKitchen OS — System Architecture Diagram</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-col;
+    }
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 18px;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+    }
+    .title-group h1 {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      color: #ffffff;
+    }
+    .title-group p {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #f1f5f9;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+    .btn-primary {
+      background: #f59e0b;
+      color: #0f172a;
+      border-color: #fbbf24;
+    }
+    .btn-primary:hover {
+      background: #fbbf24;
+    }
+    .diagram-container {
+      width: 100%;
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 30px;
+      overflow: auto;
+    }
+    .svg-wrapper {
+      max-width: 1500px;
+      width: 100%;
+      background: #0f172a;
+      border-radius: 20px;
+      border: 1px solid #1e293b;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      transition: transform 0.2s ease-out;
+      transform-origin: center top;
+    }
+    .legend-bar {
+      background: #111827;
+      border-top: 1px solid #1f2937;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="top-bar">
+    <div class="brand">
+      <div class="logo-badge">SK</div>
+      <div class="title-group">
+        <h1>ScaleKitchen OS — System Architecture Diagram</h1>
+        <p>Interactive Vector Specification • High-Availability Multi-Tenant Cloud Architecture</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn" onclick="zoomIn()">Zoom In (+)</button>
+      <button class="btn" onclick="zoomOut()">Zoom Out (-)</button>
+      <button class="btn" onclick="resetZoom()">Reset View</button>
+      <a href="ARCHITECTURE_DIAGRAM.svg" download class="btn btn-primary">Download SVG</a>
+    </div>
+  </header>
+
+  <main class="diagram-container">
+    <div class="svg-wrapper" id="svgContainer">
+      <img src="ARCHITECTURE_DIAGRAM.svg" alt="ScaleKitchen Architecture Diagram" style="width: 100%; height: auto; display: block;" />
+    </div>
+  </main>
+
+  <footer class="legend-bar">
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #3b82f6;"></div>
+      <span>Frontend Client Layer (React 18 / Vite / Tailwind)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #f59e0b;"></div>
+      <span>Real-Time Universal Mesh (global_features)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #10b981;"></div>
+      <span>Permanent Tenant Store (Firebase Firestore)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #8b5cf6;"></div>
+      <span>Security &amp; Authorization Guard (firestore.rules)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #ec4899;"></div>
+      <span>Financial &amp; GST Audit Engine</span>
+    </div>
+  </footer>
+
+  <script>
+    let scale = 1;
+    const container = document.getElementById('svgContainer');
+
+    function zoomIn() {
+      scale = Math.min(scale + 0.15, 2.5);
+      container.style.transform = `scale(${scale})`;
+    }
+
+    function zoomOut() {
+      scale = Math.max(scale - 0.15, 0.6);
+      container.style.transform = `scale(${scale})`;
+    }
+
+    function resetZoom() {
+      scale = 1;
+      container.style.transform = `scale(1)`;
+    }
+  </script>
+</body>
+</html>

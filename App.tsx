@@ -48,8 +48,8 @@ import {
 import { getDaysDifference, calculateRemainingDeliveries, getCustomerActiveDaysLeft } from './services/store';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ADMIN_EMAIL, isAdminEmail } from './services/adminStore';
-import { doc, onSnapshot, updateDoc, getDoc, deleteDoc, setDoc } from 'firebase/firestore';
-import { db } from './services/firebase';
+import { doc, onSnapshot, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { db, verifyRazorpayPaymentCallable } from './services/firebase';
 import { useStreamCollection, recordOwnerDailyLogin, syncBusinessLiveStats } from './services/dbService';
 
 // --- ERROR BOUNDARY ---
@@ -114,73 +114,65 @@ const SubscriptionManager = () => {
     const capturePaymentParams = () => {
       try {
         const rawParams = new URLSearchParams(window.location.search);
-        const urlStatus = rawParams.get('status');
-        if (urlStatus === 'success') {
-          const planId = rawParams.get('plan_id');
-          const paymentId = rawParams.get('payment_id');
-          if (planId) {
-            localStorage.setItem('pending_subscription', JSON.stringify({
-              planId, paymentId: paymentId || 'manual_entry', timestamp: Date.now()
-            }));
-            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + window.history.state;
-            window.history.replaceState({}, document.title, cleanUrl);
-          }
+        if (rawParams.get('status') === 'success') {
+          localStorage.setItem('pending_subscription', JSON.stringify({
+            orderId: rawParams.get('razorpay_order_id') || rawParams.get('order_id') || '',
+            paymentId: rawParams.get('razorpay_payment_id') || rawParams.get('payment_id') || '',
+            signature: rawParams.get('razorpay_signature') || rawParams.get('signature') || ''
+          }));
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname + window.location.hash
+          );
         }
-      } catch (e) { console.error("URL Param processing failed:", e); }
+      } catch (error) {
+        console.error('Payment callback processing failed:', error);
+      }
     };
     capturePaymentParams();
-
-    const getPlanDetails = (planId: string) => {
-      let durationMonths = 1, internalPlanName = 'Monthly';
-      const pid = (planId || '').toLowerCase();
-      if (pid.includes('6months') || pid.includes('half')) { durationMonths = 6; internalPlanName = '6 Months'; }
-      else if (pid.includes('yearly') || pid.includes('annual')) { durationMonths = 12; internalPlanName = 'Yearly'; }
-      return { durationMonths, internalPlanName };
-    };
 
     const processActivation = async () => {
       if (!currentUser || !currentUser.email || status !== 'idle') return;
       const pendingStr = localStorage.getItem('pending_subscription');
-      let pendingFirestoreData = null;
+      let pendingFirestoreData: { orderId?: string; paymentId?: string; signature?: string } | null = null;
+      let pendingDocRef: ReturnType<typeof doc> | null = null;
       
       if (!pendingStr) {
          try {
-            const docRef = doc(db, 'pending_activations', currentUser.email);
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) { pendingFirestoreData = { ...docSnap.data(), ref: docRef }; }
-         } catch (e) {}
+            pendingDocRef = doc(db, 'pending_activations', currentUser.email);
+            const docSnap = await getDoc(pendingDocRef);
+            if (docSnap.exists()) pendingFirestoreData = docSnap.data();
+         } catch (error) {
+           console.error('Pending payment lookup failed:', error);
+           setStatus('error');
+           return;
+         }
       }
 
       if (pendingStr || pendingFirestoreData) {
         setStatus('processing');
         try {
-          let planId, paymentId;
-          if (pendingStr) {
-             const parsed = JSON.parse(pendingStr);
-             planId = parsed.planId; paymentId = parsed.paymentId;
-          } else {
-             planId = pendingFirestoreData.planId; paymentId = pendingFirestoreData.paymentId || 'external';
+          const paymentData = pendingStr
+            ? JSON.parse(pendingStr)
+            : pendingFirestoreData;
+          if (!paymentData?.orderId || !paymentData?.paymentId || !paymentData?.signature) {
+            throw new Error('Payment cannot be activated without a verifiable order, payment, and signature.');
           }
-          const { durationMonths, internalPlanName } = getPlanDetails(planId);
-          const now = new Date();
-          now.setMonth(now.getMonth() + durationMonths);
-          const newExpiryDate = now.toISOString().split('T')[0];
-          
-          await updateDoc(doc(db, 'businesses', currentUser.uid), {
-            planName: `COSVYN ONE (${internalPlanName})`,
-            planStatus: 'Active',
-            planExpiryDate: newExpiryDate,
-            lastPaymentId: paymentId,
-            updatedAt: new Date().toISOString()
+          const verification = await verifyRazorpayPaymentCallable({
+            orderId: paymentData.orderId,
+            paymentId: paymentData.paymentId,
+            signature: paymentData.signature
           });
+          if (!verification.data.success) throw new Error('Payment verification was unsuccessful.');
 
           if (pendingStr) localStorage.removeItem('pending_subscription');
-          if (pendingFirestoreData) await deleteDoc(pendingFirestoreData.ref);
+          if (pendingDocRef) await deleteDoc(pendingDocRef);
           
           setStatus('success');
           setTimeout(() => { setStatus('idle'); navigate('/app/dashboard', { replace: true }); }, 2000);
-        } catch (error) { 
-          console.error("Subscription Activation Error:", error);
+        } catch (error) {
+          console.error('Subscription verification failed:', error);
           setStatus('error'); 
         }
       }

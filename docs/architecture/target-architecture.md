@@ -78,7 +78,7 @@ The target architecture migrates the application from a single monolithic Single
 
 ### B. Delivery Boy Authentication Flow
 - **Current & Target Implementation:**
-  1. Kitchen Owner assigns PIN via `setDriverPin` callable. Plaintext PIN stored exclusively in owner-only `staff_credentials/{staffId}`.
+  1. Kitchen Owner assigns PIN via the `setDriverPin` callable. The PIN hash is stored only in the server-only `driver_auth_lookup` collection; plaintext PINs are not retained.
   2. Rider visits `apps/delivery` on mobile smartphone browser.
   3. Rider submits 10-digit mobile number + 4-digit PIN.
   4. Backend Cloud Function `driverLogin` performs:
@@ -108,5 +108,4 @@ The target architecture migrates the application from a single monolithic Single
 - **Phase 4 (Owner SaaS Extraction):** PENDING. Extract Kitchen Owner HQ into `apps/owner/`.
 - **Phase 5 (Branch Manager Portal Extraction):** PENDING. Extract Manager Portal into `apps/manager/`.
 - **Phase 6 (Admin Console Extraction):** PENDING. Extract Super Admin into `apps/admin/`.
-
 

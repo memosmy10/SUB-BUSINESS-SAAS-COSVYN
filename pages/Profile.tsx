@@ -57,7 +57,25 @@ const Profile = () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
-        await setDoc(docRef, newProfile, { merge: true }).catch(console.warn);
+        const profileToCreate = {
+          ownerName: newProfile.ownerName,
+          email: newProfile.email,
+          mobile: newProfile.mobile,
+          businessName: newProfile.businessName,
+          logoUrl: newProfile.logoUrl,
+          description: newProfile.description,
+          category: newProfile.category,
+          country: newProfile.country,
+          state: newProfile.state,
+          city: newProfile.city,
+          isProfileComplete: newProfile.isProfileComplete,
+          createdAt: newProfile.createdAt,
+          updatedAt: newProfile.updatedAt
+        };
+        await setDoc(docRef, profileToCreate, { merge: true }).catch((error) => {
+          console.error('Could not create the owner profile:', error);
+          alert('Could not save your owner profile. Please check your connection and try again.');
+        });
         setProfile(newProfile);
         setFormData(newProfile);
       }
@@ -506,7 +524,6 @@ const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
 
   const isOfferActive = offer.isActive && new Date() < new Date(offer.endsAt);
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
-  const effectivePrice = selectedPlan ? calculateEffectivePrice(selectedPlan.price, offer) : 0;
 
   const { currentUser } = useAuth();
 
@@ -516,10 +533,6 @@ const RenewSaaSModal = ({ profile, onClose, onSuccess }: any) => {
      
      handleRazorpayPayment({
         planId: selectedPlan.id,
-        planName: selectedPlan.label,
-        amount: effectivePrice,
-        durationMonths: selectedPlan.durationMonths,
-        userId: currentUser?.uid || profile?.id || '',
         userEmail: profile.email || currentUser?.email || '',
         userContact: profile.mobile || '',
         businessName: profile.businessName || 'Business Owner',

@@ -23,7 +23,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:all": "vitest run",
-    "test:rules": "vitest run test/firestore-rules.test.ts",
+    "test:rules": "vitest run --config vitest.rules.config.ts",
     "postinstall": "node scripts/patch-firestore.cjs"
   },
   "dependencies": {

@@ -10,7 +10,7 @@ webhooksRouter.post('/razorpay', async (req: Request, res: Response): Promise<vo
   const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
 
   const isValid = verifyRazorpayWebhookSignature(rawBody, signature);
-  if (!isValid && process.env.NODE_ENV === 'production') {
+  if (!isValid) {
     res.status(400).json({ success: false, error: 'INVALID_SIGNATURE' });
     return;
   }
@@ -25,7 +25,12 @@ webhooksRouter.post('/razorpay', async (req: Request, res: Response): Promise<vo
     action: `webhook_${event}`,
     resource: 'payment',
     resourceId: paymentEntity?.id || 'unknown_payment',
-    newValue: paymentEntity,
+    newValue: paymentEntity ? {
+      status: paymentEntity.status,
+      currency: paymentEntity.currency,
+      amount: paymentEntity.amount,
+      orderId: paymentEntity.order_id,
+    } : undefined,
     ipAddress: req.ip,
   });
 

@@ -15,13 +15,10 @@ import {
   setDoc,
   writeBatch
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, claimFreeTrialCallable, db } from './firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { SHARED_SAAS_PLANS, SHARED_OFFER, SaasPlan, SpecialOffer } from './saasStore';
 import { normalizePhone, normalizeEmail } from './store';
-
-// Hook to subscribe to a sub-collection of the current user or manager-connected business
-import { auth } from './firebase';
 
 /**
  * Resolves the branch assigned to the currently logged in manager (if any).
@@ -864,54 +861,13 @@ export const checkFreeTrialEligibility = async (
 };
 
 /**
- * Permanently records a Free Trial activation under the user's ID, phone, and email.
+ * Delegates trial activation to the callable; legacy contact arguments are ignored.
  */
 export const recordFreeTrialClaim = async (userId: string, email: string, mobile: string, originStartDate?: string) => {
-  if (!userId) return;
-  const normEmail = normalizeEmail(email);
-  const normPhone = normalizePhone(mobile);
-  const now = new Date().toISOString();
-  const trialStart = originStartDate || now;
-
-  const startObj = new Date(trialStart);
-  const expiryObj = new Date(startObj);
-  expiryObj.setDate(expiryObj.getDate() + 30);
-  const expiryDate = expiryObj.toISOString().split('T')[0];
-
-  const claimData = {
-    userId,
-    mobile: normPhone,
-    email: normEmail,
-    claimedAt: now,
-    trialStartDate: trialStart,
-    trialExpiryDate: expiryDate
-  };
-
-  const promises: Promise<any>[] = [
-    // 1. By User UID
-    setDoc(doc(db, 'trial_claims', `user_${userId}`), claimData, { merge: true })
-      .catch(err => console.warn("Failed recording user trial claim:", err))
-  ];
-
-  // 2. By Phone
-  if (normPhone && normPhone.length >= 10) {
-    promises.push(
-      setDoc(doc(db, 'trial_claims', `phone_${normPhone}`), claimData, { merge: true })
-        .catch(err => console.warn("Failed recording phone trial claim:", err))
-    );
+  if (!userId || auth.currentUser?.uid !== userId) {
+    throw new Error('You can only activate a trial for the signed-in business account.');
   }
-
-  // 3. By Email
-  if (normEmail) {
-    promises.push(
-      setDoc(doc(db, 'trial_claims', `email_${normEmail}`), claimData, { merge: true })
-        .catch(err => console.warn("Failed recording email trial claim:", err))
-    );
-  }
-
-  try {
-    await Promise.allSettled(promises);
-  } catch (e) {
-    console.warn("Notice: trial claims record settled with warning:", e);
-  }
+  const response = await claimFreeTrialCallable({ bizId: userId });
+  if (!response.data.success) throw new Error('The server did not activate the free trial.');
+  return response.data;
 };

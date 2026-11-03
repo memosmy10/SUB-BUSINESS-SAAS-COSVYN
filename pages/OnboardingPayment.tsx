@@ -50,69 +50,70 @@ const OnboardingPayment = () => {
 
       try {
         const [docSnap, userClaimSnap] = await Promise.all([
-          getDoc(doc(db, 'businesses', uid)).catch(() => null),
+          getDoc(doc(db, 'businesses', uid)),
           getDoc(doc(db, 'trial_claims', `user_${uid}`)).catch(() => null)
         ]);
 
-        if (docSnap && docSnap.exists()) {
-          const data = docSnap.data();
-          setBusinessData(data);
-          
-          // If already active, route straight to dashboard
-          if (data.planStatus === 'Active') {
-            navigate('/app/dashboard');
-            return;
-          }
-
-          // Historical footprint analysis
-          const today = new Date().toISOString().split('T')[0];
-          const historicalDates: string[] = [];
-          if (data.createdAt) historicalDates.push(data.createdAt.split('T')[0]);
-          if (data.trialStartDate) historicalDates.push(data.trialStartDate.split('T')[0]);
-          if (data.trialOriginalStartDate) historicalDates.push(data.trialOriginalStartDate.split('T')[0]);
-          if (Array.isArray(data.recentLoginDates)) {
-            data.recentLoginDates.forEach((d: string) => {
-              if (typeof d === 'string' && d.match(/^\d{4}-\d{2}-\d{2}$/)) historicalDates.push(d);
-            });
-          }
-          historicalDates.sort();
-
-          const earliestFootprint = historicalDates.length > 0 ? historicalDates[0] : null;
-
-          // SECURITY CHECK: Has this account ALREADY claimed or used a Free Trial?
-          const alreadyClaimed = Boolean(
-            data.trialClaimed === true || 
-            data.trialStartDate || 
-            (data.planName === 'Free Trial') ||
-            (userClaimSnap && userClaimSnap.exists()) ||
-            (earliestFootprint && earliestFootprint < today)
-          );
-
-          if (alreadyClaimed) {
-            // Business has already used their one-time Free Trial
-            setIsNewUser(false);
-            setIsTrialEligible(false);
-            const startLabel = earliestFootprint || (data.trialStartDate ? data.trialStartDate.split('T')[0] : '');
-            setTrialIneligibleReason(`Your 30-day Free Trial was already activated${startLabel ? ` on ${startLabel}` : ''}. Free trial is strictly 1 time per business.`);
-            // Automatically select paid plan
-            setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0]?.id || 'monthly');
-          } else {
-            // Truly new business account
-            const isNew = !data.planName || data.planName === 'None' || data.planStatus === 'Pending' || data.planStatus === 'Inactive';
-            setIsNewUser(isNew);
-            setIsTrialEligible(isNew);
-          }
+        let data: Record<string, any>;
+        if (docSnap.exists()) {
+          data = docSnap.data();
         } else {
-          // Check if trial_claims has this user
-          if (userClaimSnap && userClaimSnap.exists()) {
-            setIsNewUser(false);
-            setIsTrialEligible(false);
-            setTrialIneligibleReason("A Free Trial was already activated on this account. Free trial is strictly 1 time per business.");
-            setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0]?.id || 'monthly');
-          } else {
-            setIsNewUser(true);
-            setIsTrialEligible(true);
-          }
+          const now = new Date().toISOString();
+          data = {
+            ownerName: currentUser?.displayName || '',
+            email: currentUser?.email || '',
+            mobile: '',
+            businessName: '',
+            country: 'India',
+            category: 'Tiffin Service',
+            isProfileComplete: false,
+            createdAt: now,
+            updatedAt: now
+          };
+          await setDoc(doc(db, 'businesses', uid), data);
+        }
+        setBusinessData(data);
+
+        // If already active, route straight to dashboard
+        if (data.planStatus === 'Active') {
+          navigate('/app/dashboard');
+          return;
+        }
+
+        // Historical footprint analysis
+        const today = new Date().toISOString().split('T')[0];
+        const historicalDates: string[] = [];
+        if (data.createdAt) historicalDates.push(data.createdAt.split('T')[0]);
+        if (data.trialStartDate) historicalDates.push(data.trialStartDate.split('T')[0]);
+        if (data.trialOriginalStartDate) historicalDates.push(data.trialOriginalStartDate.split('T')[0]);
+        if (Array.isArray(data.recentLoginDates)) {
+          data.recentLoginDates.forEach((d: string) => {
+            if (typeof d === 'string' && d.match(/^\d{4}-\d{2}-\d{2}$/)) historicalDates.push(d);
+          });
+        }
+        historicalDates.sort();
+
+        const earliestFootprint = historicalDates.length > 0 ? historicalDates[0] : null;
+
+        // SECURITY CHECK: Has this account ALREADY claimed or used a Free Trial?
+        const alreadyClaimed = Boolean(
+          data.trialClaimed === true ||
+          data.trialStartDate ||
+          (data.planName === 'Free Trial') ||
+          (userClaimSnap && userClaimSnap.exists()) ||
+          (earliestFootprint && earliestFootprint < today)
+        );
+
+        if (alreadyClaimed) {
+          setIsNewUser(false);
+          setIsTrialEligible(false);
+          const startLabel = earliestFootprint || (data.trialStartDate ? data.trialStartDate.split('T')[0] : '');
+          setTrialIneligibleReason(`Your 30-day Free Trial was already activated${startLabel ? ` on ${startLabel}` : ''}. Free trial is strictly 1 time per business.`);
+          setSelectedPlanId(plans.find(p => p.isBestValue)?.id || plans[0]?.id || 'monthly');
+        } else {
+          const isNew = !data.planName || data.planName === 'None' || data.planStatus === 'Pending' || data.planStatus === 'Inactive';
+          setIsNewUser(isNew);
+          setIsTrialEligible(isNew);
         }
       } catch (e) {
         console.error("Error checking user status:", e);
@@ -202,13 +203,8 @@ const OnboardingPayment = () => {
       }
 
       // 2. First-time brand new trial claim via server callable (Cloud Functions Admin SDK)
-      const email = currentData.email || businessData?.email || currentUser?.email || auth.currentUser?.email || '';
-      const mobile = currentData.mobile || businessData?.mobile || '';
-
       const res = await claimFreeTrialCallable({
-        bizId: uid,
-        mobile,
-        email
+        bizId: uid
       });
 
       if (!res.data?.success) {
@@ -275,16 +271,11 @@ const OnboardingPayment = () => {
 
     const email = currentUser.email || "";
     const mobile = businessData?.mobile || ""; 
-    const effectivePrice = calculateEffectivePrice(selectedPlan.price, offer);
 
     setLoading(true);
 
     handleRazorpayPayment({
       planId: selectedPlan.id,
-      planName: selectedPlan.label,
-      amount: effectivePrice,
-      durationMonths: selectedPlan.durationMonths,
-      userId: getActiveUid(),
       userEmail: email,
       userContact: mobile,
       businessName: currentUser.displayName || "Business Owner",

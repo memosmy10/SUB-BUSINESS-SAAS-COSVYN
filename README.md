@@ -40,7 +40,7 @@ View your app in AI Studio: https://ai.studio/apps/9d08b35e-dbb2-4138-8d71-868d4
 5. **Multi-Tenant & Role Isolation (Firestore Rules)**:
    - Rider CANNOT read other kitchens or data belonging to another `bizId`.
    - Rider CANNOT list the `staff` collection.
-   - Rider CANNOT read `staff_credentials` (plaintext PIN storage).
+   - Driver PIN hashes are stored only in the server-only `driver_auth_lookup` collection; plaintext PINs are not retained.
    - Rider CANNOT read financial collections (`expenses`, `invoices`, `payments`, `notes`, `inventory`).
    - Rider CANNOT read or write `driver_auth_lookup` or `global_features/driver_*`.
 6. **Network & Server Diagnostics**:

@@ -14,15 +14,6 @@ import {
 import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
-import bcrypt from 'bcryptjs';
-
-/**
- * TEMPORARY MIGRATION FLAG:
- * Kept strictly for backward compatibility during Phase 1 deployment transition.
- * REMOVAL CRITERIA: Once Cloud Functions (firebase deploy --only functions) are deployed
- * and migratePlaintextCredentials has run, set this to false and remove the fallback branch.
- */
-const ENABLE_LEGACY_CLIENT_AUTH_FALLBACK = true;
 
 // --- Types ---
 interface Branch { 
@@ -249,7 +240,32 @@ const Settings = () => {
   const handleSaveStaff = async (data: Omit<DeliveryBoy, 'id'>) => {
     if(!currentUser) return;
     const cleanPhone = (data.mobile || '').replace(/\D/g, '').slice(-10);
-    const cleanPin = (data.pin || '').trim() || '1234';
+    const cleanPin = (data.pin || '').trim();
+    const oldPhone = String(editingItem?.mobile || '').replace(/\D/g, '').slice(-10);
+    const oldDriverActive = Boolean(
+      editingItem &&
+      (editingItem as any).active !== false &&
+      (editingItem as any).status !== 'Inactive'
+    );
+    const nextDriverActive = (data as any).status !== 'Inactive';
+    const needsPinUpdate = Boolean(
+      editingItem && (
+        oldPhone !== cleanPhone ||
+        (!oldDriverActive && nextDriverActive)
+      )
+    );
+    if (cleanPhone.length !== 10) {
+      alert('Enter a valid 10-digit mobile number.');
+      return;
+    }
+    if (needsPinUpdate && !cleanPin) {
+      alert('Set a new 4-digit PIN when changing a driver phone number or reactivating the account.');
+      return;
+    }
+    if ((!editingItem && !cleanPin) || (cleanPin && !/^\d{4}$/.test(cleanPin))) {
+      alert('Enter a new 4-digit access PIN.');
+      return;
+    }
     
     // IMPORTANT: Do NOT hash or store pin on the client
     // Do NOT add pinVersion here (Cloud Function handles it)
@@ -263,34 +279,27 @@ const Settings = () => {
     delete (staffData as any).pinHash;
     delete (staffData as any).pinVersion;
     
-    let staffId = editingItem?.id;
-    if (editingItem) {
-      await updateItem(currentUser.uid, 'staff', editingItem.id, staffData);
-    } else {
-      const addedDoc = await addItem(currentUser.uid, 'staff', staffData);
-      staffId = (addedDoc as any)?.id || '';
-    }
-
-    // REMOVED: No browser writes to driver_auth_lookup or global_features
-    // Cloud Function handles all auth directory updates securely
-
-    // Cloud Function: Securely hash PIN and register in all lookup locations
     try {
-      const response = await setDriverPinCallable({
-        bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
-        phone: cleanPhone,
-        pin: cleanPin,
-        name: data.name,
-        branchId: data.branchId || '',
-        additionalData: staffData
-      });
-
-      if (response?.data?.success) {
-        console.log(`Delivery partner ${data.name} registered successfully.`);
+      if (cleanPin) {
+        const response = await setDriverPinCallable({
+          bizId: currentUser.uid,
+          staffId: editingItem?.id,
+          phone: cleanPhone,
+          pin: cleanPin,
+          name: data.name,
+          branchId: data.branchId || '',
+          additionalData: staffData
+        });
+        if (!response.data.success) {
+          throw new Error('The server did not save the driver PIN.');
+        }
+      } else if (editingItem) {
+        await updateItem(currentUser.uid, 'staff', editingItem.id, staffData);
       }
-    } catch (callableErr: any) {
-      console.warn("setDriverPin error:", callableErr?.message);
+    } catch (error) {
+      console.error('Could not save delivery staff:', error);
+      alert('Could not save delivery staff. Please check the connection and try again.');
+      return;
     }
 
     setActiveModal(null);
@@ -300,46 +309,28 @@ const Settings = () => {
   const handleSaveManager = async (data: Omit<BranchManager, 'id'>) => {
     if (!currentUser) return;
     const rawPassword = (data as any).password;
-    // SECURITY (Phase 1): Remove plaintext password from client doc write
     const { password: _omitPassword, ...managerFieldsWithoutPassword } = data as any;
-    let managerId = editingItem?.id;
-
-    if (editingItem) {
-      await updateItem(currentUser.uid, 'managers', editingItem.id, {
-        ...managerFieldsWithoutPassword,
-        updatedAt: new Date().toISOString()
-      });
-    } else {
-      const addedDoc = await addItem(currentUser.uid, 'managers', {
-        ...managerFieldsWithoutPassword,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-      managerId = (addedDoc as any)?.id;
-    }
-
-    // Call server-side callable to hash password securely and update passwordHash
-    let callableSucceeded = false;
-    if (rawPassword) {
-      try {
+    try {
+      if (rawPassword) {
         await setManagerPasswordCallable({
           bizId: currentUser.uid,
-          managerId: managerId || editingItem?.id || '',
+          managerId: editingItem?.id,
           password: rawPassword,
           managerData: managerFieldsWithoutPassword
         });
-        callableSucceeded = true;
-      } catch (callableErr) {
-        console.warn("setManagerPassword callable warning:", callableErr);
+      } else if (editingItem) {
+        await updateItem(currentUser.uid, 'managers', editingItem.id, {
+          ...managerFieldsWithoutPassword,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        alert('Set a manager password before creating the account.');
+        return;
       }
-    }
-
-    // TEMPORARY MIGRATION FALLBACK: Only used before Cloud Functions deployment
-    if (!callableSucceeded && ENABLE_LEGACY_CLIENT_AUTH_FALLBACK && rawPassword && editingItem) {
-      console.warn("[Migration Fallback] Writing temporary manager password until Cloud Functions are deployed.");
-      await updateItem(currentUser.uid, 'managers', editingItem.id, {
-        password: rawPassword
-      }).catch(() => {});
+    } catch (error) {
+      console.error('Could not save manager:', error);
+      alert('Could not save manager. Please check the connection and try again.');
+      return;
     }
 
     setActiveModal(null);
@@ -621,7 +612,6 @@ const Settings = () => {
       salary: 15000,
       aadharNumber: '',
       homeLocation: '',
-      pin: initialData?.pin || '1234',
       ...initialData
     });
     
@@ -632,7 +622,7 @@ const Settings = () => {
         salary: Number(formData.salary) || 0,
         aadharNumber: formData.aadharNumber?.trim() || '',
         homeLocation: formData.homeLocation?.trim() || '',
-        pin: (formData.pin || '').trim() || '1234'
+        pin: (formData.pin || '').trim()
       } as any);
     };
     
@@ -704,18 +694,20 @@ const Settings = () => {
               </div>
             </div>
 
-            {/* 4-Digit Access PIN for Delivery Boy Portal */}
+            {/* PINs are write-only: existing values are never displayed or prefilled. */}
             <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                   <Key size={13} className="text-amber-600" />
-                  4-Digit App Access PIN <span className="text-rose-600">*</span>
+                  {initialData ? 'Set a New 4-Digit App PIN (Optional)' : '4-Digit App Access PIN'}
+                  {!initialData && <span className="text-rose-600">*</span>}
                 </label>
                 <button
                   type="button"
                   onClick={() => {
-                    const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
-                    setFormData({ ...formData, pin: randomPin });
+                    const value = new Uint32Array(1);
+                    window.crypto.getRandomValues(value);
+                    setFormData({ ...formData, pin: String(1000 + (value[0] % 9000)) });
                   }}
                   className="text-[11px] text-amber-700 hover:text-amber-900 font-semibold hover:underline flex items-center gap-1"
                 >
@@ -724,11 +716,11 @@ const Settings = () => {
               </div>
               <div className="relative">
                 <input
-                  required
+                  required={!initialData}
                   type={showPin ? "text" : "password"}
                   maxLength={4}
                   pattern="[0-9]{4}"
-                  placeholder="e.g. 1234"
+                  placeholder={initialData ? 'Leave blank to keep current PIN' : 'Set a new 4-digit PIN'}
                   value={formData.pin || ''}
                   onChange={e => {
                     const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
@@ -746,7 +738,7 @@ const Settings = () => {
                 </button>
               </div>
               <p className="text-[10px] text-amber-800/90 leading-relaxed">
-                Riders must enter their registered mobile number + this 4-digit PIN to open their app. Whenever you update this PIN, the rider must use the updated one immediately.
+                PINs cannot be viewed after saving. Enter a new PIN to reset it; leave blank when editing other profile details.
               </p>
             </div>
 
@@ -1818,13 +1810,7 @@ const Settings = () => {
                   <td className="px-6 py-3.5 font-medium">{branches.find(b => b.id === d.branchId)?.name || 'General'}</td>
                   <td className="px-6 py-3.5 font-mono text-slate-600">{d.mobile}</td>
                   <td className="px-6 py-3.5">
-                    <span 
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-300 font-mono text-xs font-bold shadow-2xs"
-                      title="4-Digit PIN for rider app login"
-                    >
-                      <Key size={12} className="text-amber-600" />
-                      {d.pin || '1234'}
-                    </span>
+                    <span className="text-slate-400 italic">Set/reset in Edit</span>
                   </td>
                   <td className="px-6 py-3.5 font-mono text-slate-600">
                     {d.aadharNumber || <span className="text-slate-300 font-sans italic">—</span>}

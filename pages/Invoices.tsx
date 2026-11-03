@@ -5,7 +5,7 @@ import {
 import { useStreamCollection, updateItem, addItem } from '../services/dbService';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { consumeInvoiceCreditCallable, db } from '../services/firebase';
 import { handleRazorpayPayment } from '../services/razorpayService';
 import { formatDateDDMMYYYY } from '../services/store';
 import { getInvoiceShareMessage, buildWhatsAppUrl } from '../services/messageTemplates';
@@ -43,6 +43,12 @@ const RECHARGE_PLANS = [
   { id: 'pro', name: 'Pro Saver', price: 60, count: 20, label: '' },
   { id: 'ultimate', name: 'Ultimate', price: 100, count: 50, label: 'Best Value', isGreen: true },
 ];
+
+const getCurrentInvoiceMonth = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: '2-digit'
+}).format(new Date());
 
 const Confetti = () => {
   return (
@@ -157,17 +163,6 @@ const Invoices = () => {
     const unsub = onSnapshot(docRef, async (s) => {
       if (s.exists()) {
         const d = s.data();
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        
-        if (d.lastInvoiceResetMonth !== currentMonth) {
-          await updateDoc(docRef, {
-            monthlyFreeUsed: 0,
-            lastInvoiceResetMonth: currentMonth
-          });
-          d.monthlyFreeUsed = 0;
-          d.lastInvoiceResetMonth = currentMonth;
-        }
-
         setBusinessData(d);
         if (d.logoUrl) {
           setLogoUrl(d.logoUrl);
@@ -247,32 +242,28 @@ const Invoices = () => {
     return customers.find((c: any) => c.id === selectedCustomerId);
   }, [customers, selectedCustomerId]);
 
-  const checkCredits = (): boolean => {
-    if (!businessData) return false;
-    const freeLeft = 3 - (businessData.monthlyFreeUsed || 0);
-    const purchasedLeft = businessData.purchasedInvoiceCredits || 0;
-    
-    if (freeLeft <= 0 && purchasedLeft <= 0) {
-      setIsLimitReached(true);
+  const deductCredit = async (): Promise<boolean> => {
+    if (!currentUser) return false;
+    try {
+      const response = await consumeInvoiceCreditCallable({ bizId: currentUser.uid });
+      setBusinessData((previous: any) => ({
+        ...previous,
+        monthlyFreeUsed: response.data.monthlyFreeUsed,
+        purchasedInvoiceCredits: response.data.purchasedInvoiceCredits,
+        lastInvoiceResetMonth: getCurrentInvoiceMonth()
+      }));
+      return true;
+    } catch (error) {
+      console.error('Invoice credit consumption failed:', error);
+      const errorCode = error && typeof error === 'object' && 'code' in error
+        ? String(error.code)
+        : '';
+      if (errorCode.includes('resource-exhausted')) {
+        setIsLimitReached(true);
+      } else {
+        alert(error instanceof Error ? error.message : 'Could not verify available invoice credits.');
+      }
       return false;
-    }
-    return true;
-  };
-
-  const deductCredit = async () => {
-    if (!currentUser || !businessData) return;
-    const docRef = doc(db, 'businesses', currentUser.uid);
-    const freeUsed = businessData.monthlyFreeUsed || 0;
-    const purchasedLeft = businessData.purchasedInvoiceCredits || 0;
-
-    if (freeUsed < 3) {
-      const nextVal = freeUsed + 1;
-      await updateDoc(docRef, { monthlyFreeUsed: nextVal });
-      setBusinessData({ ...businessData, monthlyFreeUsed: nextVal });
-    } else if (purchasedLeft > 0) {
-      const nextVal = purchasedLeft - 1;
-      await updateDoc(docRef, { purchasedInvoiceCredits: nextVal });
-      setBusinessData({ ...businessData, purchasedInvoiceCredits: nextVal });
     }
   };
 
@@ -296,9 +287,9 @@ const Invoices = () => {
 
   const [shareNotice, setShareNotice] = useState<string | null>(null);
 
-  const handleDownloadPDF = (skipDeduct = false) => {
-    if (!checkCredits()) return false;
+  const handleDownloadPDF = async (skipDeduct = false): Promise<boolean> => {
     if (!invoiceRef.current) return false;
+    if (!skipDeduct && !(await deductCredit())) return false;
     const element = invoiceRef.current;
     const opt = {
       margin: [10, 10, 10, 10],
@@ -309,8 +300,7 @@ const Invoices = () => {
     };
     try {
       // @ts-ignore
-      window.html2pdf().from(element).set(opt).save();
-      if (!skipDeduct) deductCredit();
+      await window.html2pdf().from(element).set(opt).save();
       return true;
     } catch (e) {
       console.warn("PDF export err:", e);
@@ -318,12 +308,12 @@ const Invoices = () => {
     }
   };
 
-  const handleWhatsAppShare = () => {
-    if (!checkCredits()) return;
+  const handleWhatsAppShare = async () => {
+    if (!invoiceRef.current) return;
+    if (!(await deductCredit())) return;
 
     // 1. Download PDF invoice directly to device so user can easily attach it
-    handleDownloadPDF(true);
-    deductCredit();
+    if (!(await handleDownloadPDF(true))) return;
 
     // 2. Format WhatsApp message informing client of invoice & attached PDF
     const msg = getInvoiceShareMessage(
@@ -339,7 +329,8 @@ const Invoices = () => {
     window.open(url, '_blank');
   };
 
-  const handleEmailShare = () => {
+  const handleEmailShare = async (): Promise<boolean> => {
+    if (!(await deductCredit())) return false;
     const subject = encodeURIComponent(`Invoice ${invoiceData.invoiceNo} from ${invoiceData.from.company}`);
     const body = encodeURIComponent(
       `Hello ${invoiceData.billTo.company},\n\n` +
@@ -351,12 +342,12 @@ const Invoices = () => {
       `Thank you!`
     );
     window.location.href = `mailto:${shareEmail}?subject=${subject}&body=${body}`;
+    return true;
   };
 
-  const handlePrint = () => {
-    if (!checkCredits()) return;
+  const handlePrint = async () => {
+    if (!(await deductCredit())) return;
     window.print();
-    deductCredit();
   };
 
   const handleRecharge = async (plan: any) => {
@@ -370,22 +361,14 @@ const Invoices = () => {
     try {
       await handleRazorpayPayment({
         planId: plan.id,
-        planName: plan.name,
-        amount: plan.price,
-        creditsToAdd: plan.count,
-        userId: currentUser.uid,
         userEmail: currentUser.email || '',
         userContact: businessData?.mobile || '',
         businessName: businessData?.businessName || 'Business Owner',
         onSuccess: async (result: any) => {
           setRechargingPlanId(null);
-          const currentCredits = businessData?.purchasedInvoiceCredits || 0;
-          const newCredits = currentCredits + plan.count;
-          
           setBusinessData((prev: any) => ({
             ...prev,
-            purchasedInvoiceCredits: newCredits,
-            lastRechargePlan: plan.name
+            purchasedInvoiceCredits: result.purchasedInvoiceCredits ?? prev?.purchasedInvoiceCredits
           }));
           setIsRechargeModalOpen(false);
           setIsLimitReached(false);
@@ -447,7 +430,10 @@ const Invoices = () => {
   if (l1 || l2 || !businessData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-primary-600" size={40} /></div>;
 
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
-  const freeLeft = Math.max(0, 3 - (businessData.monthlyFreeUsed || 0));
+  const monthlyFreeUsed = businessData.lastInvoiceResetMonth === getCurrentInvoiceMonth()
+    ? Number(businessData.monthlyFreeUsed || 0)
+    : 0;
+  const freeLeft = Math.max(0, 3 - monthlyFreeUsed);
   const purchasedLeft = businessData.purchasedInvoiceCredits || 0;
 
   return (
@@ -809,7 +795,7 @@ const Invoices = () => {
                
                <div className="grid grid-cols-2 gap-2.5">
                  <button 
-                  onClick={handleDownloadPDF} 
+                  onClick={() => handleDownloadPDF()}
                   className="glass-card border border-slate-200/80 hover:bg-slate-50/80 text-slate-800 font-semibold py-2.5 rounded-xl transition-all active:scale-95 text-xs flex items-center justify-center gap-1.5 shadow-xs"
                  >
                    <Download size={14} /> PDF
@@ -1011,7 +997,7 @@ const Invoices = () => {
                           <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
                           <input type="email" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20" placeholder="client@example.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
                        </div>
-                       <button onClick={() => { if(checkCredits()) { handleEmailShare(); deductCredit(); setIsShareModalOpen(false); } }} className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-xl shadow-lg transition-all active:scale-90"><SendIcon /></button>
+                       <button onClick={async () => { if (await handleEmailShare()) setIsShareModalOpen(false); }} className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-xl shadow-lg transition-all active:scale-90"><SendIcon /></button>
                     </div>
                  </div>
               </div>

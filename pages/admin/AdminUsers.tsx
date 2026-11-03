@@ -100,12 +100,12 @@ const AdminUsers = () => {
 
   const handleMigrateCredentials = async () => {
     if (isMigrating) return;
-    if (!window.confirm("Migrate all plaintext delivery staff PINs and manager passwords to hashed credentials and staff_credentials subcollections?")) return;
+    if (!window.confirm("Migrate legacy delivery PINs to private hashed records, remove plaintext PIN records, and hash manager passwords? This processes your business account, or all businesses when run by an administrator. Records with invalid PINs or ownership conflicts will be skipped.")) return;
     setIsMigrating(true);
-    setSyncStatusText("Migrating credentials to bcrypt hashes and staff_credentials...");
+    setSyncStatusText("Migrating credentials and removing plaintext PIN records...");
     try {
       const res = await migrateCredentialsCallable();
-      setSyncStatusText(`Migration complete! Migrated: ${res.data.migratedStaffCount} staff PINs, ${res.data.migratedManagersCount} managers, ${res.data.migratedGlobalDriversCount} auth lookups.`);
+      setSyncStatusText(`Migration complete: ${res.data.migratedStaffCount} staff credentials migrated, ${res.data.migratedManagersCount} manager passwords migrated, ${res.data.skippedStaffCount} staff records require manual review.`);
       setTimeout(() => setSyncStatusText(''), 6000);
     } catch (err: any) {
       console.error("Migration failed:", err);
@@ -289,7 +289,7 @@ const AdminUsers = () => {
             onClick={handleMigrateCredentials}
             disabled={isMigrating}
             className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shadow-sm active:scale-95 disabled:opacity-50"
-            title="Migrate plaintext rider PINs and manager passwords into staff_credentials subcollection and bcrypt hashes"
+            title="Migrate legacy rider PINs and manager passwords to hashed credentials and remove plaintext PIN records"
           >
             <Key size={14} className={isMigrating ? "animate-spin" : ""} />
             {isMigrating ? "Migrating..." : "Migrate Credentials"}

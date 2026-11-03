@@ -141,7 +141,7 @@ exports.scheduledFirestoreExport = onSchedule(
 /**
  * driverLogin
  * Verifies driver phone + PIN, enforces lockout (5 failures -> 15 min lock),
- * and issues a Firebase Custom Token with claims: { role: 'driver', bizId, staffId, branchId }
+ * and issues a Firebase Custom Token with tenant, staff, branch, and route-scope claims.
  */
 exports.driverLogin = onCall({ cors: true }, async (request) => {
   const { phone, pin } = request.data || {};
@@ -261,10 +261,26 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
   if (!bizSnap.exists) {
     throw new HttpsError('not-found', 'Associated kitchen was not found.');
   }
+  const staffId = driverDoc.staffId || driverDoc.id;
+  if (!staffId) {
+    throw new HttpsError('not-found', 'Delivery partner profile was not found.');
+  }
+  const staffSnap = await db.collection('businesses').doc(bizId).collection('staff').doc(staffId).get();
+  if (!staffSnap.exists) {
+    throw new HttpsError('not-found', 'Delivery partner profile was not found.');
+  }
+  const staffData = staffSnap.data();
+  if (staffData.active === false || staffData.status === 'Inactive') {
+    throw new HttpsError('permission-denied', 'This delivery partner account has been deactivated. Please contact your kitchen owner.');
+  }
+
   const bizData = bizSnap.data();
   if (bizData.planStatus === 'Expired') {
     throw new HttpsError('permission-denied', 'Kitchen subscription has expired. Please contact the kitchen owner.');
   }
+
+  const tenantStaffSnapshot = await db.collection('businesses').doc(bizId).collection('staff').get();
+  const isSingleDriverBusiness = tenantStaffSnapshot.size <= 1;
 
   // Successful login -> clear lockout records
   await rateLimitRef.set({
@@ -273,9 +289,8 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     lastSuccessAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
-  const staffId = driverDoc.staffId || driverDoc.id || 'driver-1';
-  const branchId = driverDoc.branchId || '';
-  const name = driverDoc.name || 'Delivery Partner';
+  const branchId = staffData.branchId || driverDoc.branchId || '';
+  const name = staffData.name || driverDoc.name || 'Delivery Partner';
 
   // 5. Issue custom token with claims { role:'driver', bizId, staffId, branchId } and uid driver_${bizId}_${staffId}
   const uid = `driver_${bizId}_${staffId}`;
@@ -283,7 +298,8 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     role: 'driver',
     bizId,
     staffId,
-    branchId
+    branchId,
+    isSingleDriverBusiness
   };
 
   let customToken;
@@ -301,7 +317,8 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
       bizId,
       staffId,
       branchId,
-      mobile: cleanPhone
+      mobile: cleanPhone,
+      isSingleDriverBusiness
     }
   };
 });
@@ -461,9 +478,9 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
 /**
  * setDriverPin
  * Callable function used by business owner when creating or updating a driver PIN.
- * Writes pinHash, pinVersion, active, status to staff doc and driver_auth_lookup/{phone}.
- * Writes plaintext PIN ONLY to businesses/{bizId}/staff_credentials/{staffId}.
- * Deletes any plaintext `pin` from the staff doc.
+ * Writes authentication hashes only to driver_auth_lookup/{phone}.
+ * Staff documents contain profile/status data but no PIN credential material.
+ * Removes any legacy plaintext PIN record.
  * Rejects phone if already registered with another business.
  */
 exports.setDriverPin = onCall({ cors: true }, async (request) => {
@@ -493,75 +510,68 @@ exports.setDriverPin = onCall({ cors: true }, async (request) => {
 
   const db = admin.firestore();
   
-  // Reject a phone that already belongs to a rider of ANOTHER business
-  const existingLookup = await db.collection('driver_auth_lookup').doc(cleanPhone).get();
-  if (existingLookup.exists) {
-    const existingData = existingLookup.data();
-    if (existingData.bizId && existingData.bizId !== bizId) {
-      throw new HttpsError('already-exists', 'This mobile number is already registered with another kitchen.');
-    }
-  }
-
   const pinHash = bcrypt.hashSync(cleanPin, 10);
   const targetStaffId = staffId || db.collection('businesses').doc(bizId).collection('staff').doc().id;
   const nowIso = new Date().toISOString();
-
-  // Check if staff doc exists and had an older phone number
   const staffRef = db.collection('businesses').doc(bizId).collection('staff').doc(targetStaffId);
-  const oldStaffSnap = await staffRef.get();
-  if (oldStaffSnap.exists) {
-    const oldMobile = oldStaffSnap.data().mobile;
-    const cleanOldMobile = String(oldMobile || '').replace(/\D/g, '').slice(-10);
-    if (cleanOldMobile && cleanOldMobile !== cleanPhone) {
-      await db.collection('driver_auth_lookup').doc(cleanOldMobile).delete().catch(() => {});
-    }
-  }
-
-  const batch = db.batch();
-
   const isStaffActive = additionalData?.status !== 'Inactive' && additionalData?.active !== false;
   const staffStatus = additionalData?.status || (isStaffActive ? 'Offline' : 'Inactive');
-
-  // 1. Staff subcollection: write pinHash, pinVersion, active, status, and remove plaintext pin
   const staffPayload = {
     ...(additionalData || {}),
     name: name || '',
     mobile: cleanPhone,
-    pinHash,
-    pinVersion: nowIso,
     branchId: branchId || '',
     active: isStaffActive,
     status: staffStatus,
     updatedAt: nowIso,
+    pinHash: admin.firestore.FieldValue.delete(),
+    pinVersion: admin.firestore.FieldValue.delete(),
     pin: admin.firestore.FieldValue.delete()
   };
-  batch.set(staffRef, staffPayload, { merge: true });
-
-  // 2. driver_auth_lookup/{phone}
   const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
-  batch.set(lookupRef, {
-    bizId,
-    staffId: targetStaffId,
-    name: name || '',
-    mobile: cleanPhone,
-    pinHash,
-    pinVersion: nowIso,
-    branchId: branchId || '',
-    active: isStaffActive,
-    status: staffStatus,
-    updatedAt: nowIso
-  }, { merge: true });
-
-  // 3. Plaintext PIN ONLY in businesses/{bizId}/staff_credentials/{staffId} (owner/admin read-only)
   const credsRef = db.collection('businesses').doc(bizId).collection('staff_credentials').doc(targetStaffId);
-  batch.set(credsRef, {
-    staffId: targetStaffId,
-    mobile: cleanPhone,
-    pin: cleanPin,
-    updatedAt: nowIso
-  });
+  await db.runTransaction(async (transaction) => {
+    const [existingLookup, staffSnap] = await Promise.all([
+      transaction.get(lookupRef),
+      transaction.get(staffRef)
+    ]);
+    const existingData = existingLookup.exists ? existingLookup.data() : {};
+    if (existingLookup.exists && (
+      existingData.bizId !== bizId ||
+      existingData.staffId !== targetStaffId
+    )) {
+      throw new HttpsError('already-exists', 'This mobile number is already registered with another kitchen.');
+    }
 
-  await batch.commit();
+    const oldMobile = staffSnap.exists
+      ? String(staffSnap.data().mobile || '').replace(/\D/g, '').slice(-10)
+      : '';
+    const oldLookupRef = oldMobile && oldMobile !== cleanPhone
+      ? db.collection('driver_auth_lookup').doc(oldMobile)
+      : null;
+    const oldLookup = oldLookupRef ? await transaction.get(oldLookupRef) : null;
+
+    transaction.set(staffRef, staffPayload, { merge: true });
+    transaction.set(lookupRef, {
+      bizId,
+      staffId: targetStaffId,
+      name: name || '',
+      mobile: cleanPhone,
+      pinHash,
+      pinVersion: nowIso,
+      branchId: branchId || '',
+      active: isStaffActive,
+      status: staffStatus,
+      updatedAt: nowIso
+    }, { merge: true });
+    transaction.delete(credsRef);
+    if (oldLookupRef && oldLookup?.exists) {
+      const oldLookupData = oldLookup.data();
+      if (oldLookupData.bizId === bizId && oldLookupData.staffId === targetStaffId) {
+        transaction.delete(oldLookupRef);
+      }
+    }
+  });
 
   return { success: true, staffId: targetStaffId };
 });
@@ -613,24 +623,25 @@ exports.setManagerPassword = onCall({ cors: true }, async (request) => {
 
 /**
  * migratePlaintextCredentials
- * Admin or Owner callable that for every staff doc having a plaintext `pin`:
- * - writes businesses/{bizId}/staff_credentials/{staffId}
- * - sets pinHash and pinVersion
+ * Admin or Owner callable that migrates legacy staff PINs:
  * - upserts driver_auth_lookup/{phone}
- * - deletes the plaintext `pin` field from the staff doc
- * Also migrates manager passwords to passwordHash and removes plaintext password.
+ * - removes legacy plaintext PIN records and staff PIN fields
+ * Also migrates manager passwords unless called with { driversOnly: true }.
  */
 exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
 
+  const driversOnly = request.data?.driversOnly === true;
   const callerUid = request.auth.uid;
-  const callerEmail = (request.auth.token && request.auth.token.email) || '';
-  const isAdmin = callerEmail === 'memosmy10@gmail.com' || (request.auth.token && request.auth.token.admin === true);
+  const callerToken = request.auth.token || {};
+  const isAdmin = callerToken.admin === true ||
+    (callerToken.email === 'memosmy10@gmail.com' && callerToken.email_verified === true);
 
   const db = admin.firestore();
   let migratedStaffCount = 0;
+  let skippedStaffCount = 0;
   let migratedManagersCount = 0;
 
   // If not admin, only allow migrating caller's own business
@@ -646,39 +657,41 @@ exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => 
     // 1. Staff
     const staffSnap = await db.collection('businesses').doc(bizId).collection('staff').get();
     for (const sDoc of staffSnap.docs) {
-      const data = sDoc.data();
-      const rawPin = data.pin ? String(data.pin).trim() : '';
-      const cleanPhone = String(data.mobile || '').replace(/\D/g, '').slice(-10);
       const nowIso = new Date().toISOString();
+      const credentialRef = db.collection('businesses').doc(bizId).collection('staff_credentials').doc(sDoc.id);
+      const result = await db.runTransaction(async (transaction) => {
+        const currentStaff = await transaction.get(sDoc.ref);
+        if (!currentStaff.exists) {
+          transaction.delete(credentialRef);
+          return { migrated: false, skipped: false };
+        }
 
-      if (rawPin) {
-        const pinHash = bcrypt.hashSync(rawPin, 10);
+        const data = currentStaff.data();
+        const rawPin = data.pin ? String(data.pin).trim() : '';
+        const cleanPhone = String(data.mobile || '').replace(/\D/g, '').slice(-10);
+        const lookupRef = cleanPhone.length === 10
+          ? db.collection('driver_auth_lookup').doc(cleanPhone)
+          : null;
+        const lookupSnap = lookupRef ? await transaction.get(lookupRef) : null;
+        const lookupData = lookupSnap?.exists ? lookupSnap.data() : {};
+        const validRawPin = /^\d{4,6}$/.test(rawPin);
+        const pinHash = validRawPin
+          ? bcrypt.hashSync(rawPin, 10)
+          : (lookupData.pinHash || data.pinHash || '');
+        const lookupBelongsToOtherAccount = Boolean(
+          lookupSnap?.exists &&
+          (lookupData.bizId !== bizId || lookupData.staffId !== sDoc.id)
+        );
+        const canMoveHashToLookup = Boolean(lookupRef && pinHash && !lookupBelongsToOtherAccount);
 
-        // A. Write to staff_credentials
-        await db.collection('businesses').doc(bizId).collection('staff_credentials').doc(sDoc.id).set({
-          staffId: sDoc.id,
-          mobile: cleanPhone,
-          pin: rawPin,
-          updatedAt: nowIso
-        });
-
-        // B. Update staff doc: set pinHash and delete pin
-        await sDoc.ref.update({
-          pinHash,
-          pinVersion: nowIso,
-          pin: admin.firestore.FieldValue.delete(),
-          updatedAt: nowIso
-        });
-
-        // C. Upsert driver_auth_lookup if cleanPhone exists
-        if (cleanPhone && cleanPhone.length === 10) {
-          await db.collection('driver_auth_lookup').doc(cleanPhone).set({
+        if (canMoveHashToLookup) {
+          transaction.set(lookupRef, {
             bizId,
             staffId: sDoc.id,
             name: data.name || '',
             mobile: cleanPhone,
             pinHash,
-            pinVersion: nowIso,
+            pinVersion: lookupData.pinVersion || data.pinVersion || nowIso,
             branchId: data.branchId || '',
             active: data.status !== 'Inactive' && data.active !== false,
             status: data.status || 'Offline',
@@ -686,19 +699,39 @@ exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => 
           }, { merge: true });
         }
 
-        migratedStaffCount++;
-      } else if (!data.pinHash && cleanPhone && cleanPhone.length === 10) {
-        // If lookup exists, ensure active/status is synced
-        const lSnap = await db.collection('driver_auth_lookup').doc(cleanPhone).get();
-        if (lSnap.exists && lSnap.data().pinHash) {
-          await sDoc.ref.update({
-            pinHash: lSnap.data().pinHash,
-            pinVersion: lSnap.data().pinVersion || nowIso,
+        if (data.pin || data.pinHash || data.pinVersion) {
+          transaction.update(sDoc.ref, {
+            pin: admin.firestore.FieldValue.delete(),
+            pinHash: admin.firestore.FieldValue.delete(),
+            pinVersion: admin.firestore.FieldValue.delete(),
             updatedAt: nowIso
           });
         }
-      }
+        transaction.delete(credentialRef);
+
+        return {
+          migrated: canMoveHashToLookup && (validRawPin || data.pinHash || data.pinVersion),
+          skipped: !canMoveHashToLookup && Boolean(data.pin || data.pinHash || data.pinVersion)
+        };
+      });
+      if (result.migrated) migratedStaffCount++;
+      if (result.skipped) skippedStaffCount++;
     }
+
+    const remainingCredentialDocs = await db
+      .collection('businesses')
+      .doc(bizId)
+      .collection('staff_credentials')
+      .get();
+    for (let offset = 0; offset < remainingCredentialDocs.docs.length; offset += 400) {
+      const batch = db.batch();
+      remainingCredentialDocs.docs.slice(offset, offset + 400).forEach((credentialDoc) => {
+        batch.delete(credentialDoc.ref);
+      });
+      await batch.commit();
+    }
+
+    if (driversOnly) continue;
 
     // 2. Managers
     const managersSnap = await db.collection('businesses').doc(bizId).collection('managers').get();
@@ -719,6 +752,7 @@ exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => 
   return {
     success: true,
     migratedStaffCount,
+    skippedStaffCount,
     migratedManagersCount
   };
 });
@@ -875,7 +909,7 @@ exports.migrateDriverManifests = onCall({ cors: true }, async (request) => {
 
 /**
  * claimFreeTrial (Phase 2)
- * Server-authoritative activation of the 14-day free trial.
+ * Server-authoritative activation of the 30-day free trial.
  * Prevents client-side manipulation of plan fields or trial_claims documents.
  */
 exports.claimFreeTrial = onCall({ cors: true }, async (request) => {
@@ -884,7 +918,7 @@ exports.claimFreeTrial = onCall({ cors: true }, async (request) => {
     throw new HttpsError('unauthenticated', 'User must be signed in to claim free trial.');
   }
 
-  const { bizId, mobile, email } = request.data || {};
+  const { bizId } = request.data || {};
   const targetBizId = bizId || callerUid;
 
   if (targetBizId !== callerUid && !request.auth?.token?.admin) {
@@ -893,75 +927,59 @@ exports.claimFreeTrial = onCall({ cors: true }, async (request) => {
 
   const db = admin.firestore();
   const bizRef = db.collection('businesses').doc(targetBizId);
-  const bizSnap = await bizRef.get();
+  const now = new Date();
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + 30);
+  const expiryIso = expiryDate.toISOString().split('T')[0];
 
-  if (!bizSnap.exists) {
-    throw new HttpsError('not-found', 'Business profile not found.');
-  }
+  await db.runTransaction(async (transaction) => {
+    const currentBiz = await transaction.get(bizRef);
+    if (!currentBiz.exists) {
+      throw new HttpsError('not-found', 'Business profile not found.');
+    }
+    const currentData = currentBiz.data();
+    if (currentData.trialClaimed === true || currentData.planStatus === 'Active') {
+      throw new HttpsError('already-exists', 'Free trial has already been claimed for this business account.');
+    }
 
-  const bizData = bizSnap.data();
-  if (bizData.trialClaimed === true || bizData.planStatus === 'Active') {
-    throw new HttpsError('already-exists', 'Free trial has already been claimed for this business account.');
-  }
-
-  const normPhone = String(mobile || bizData.mobile || '').replace(/\D/g, '').slice(-10);
-  const normEmail = String(email || bizData.email || request.auth?.token?.email || '').trim().toLowerCase();
-
-  // Check trial_claims documents
-  const checks = [
-    db.collection('trial_claims').doc(`user_${targetBizId}`).get()
-  ];
-  if (normPhone && normPhone.length === 10) {
-    checks.push(db.collection('trial_claims').doc(`phone_${normPhone}`).get());
-  }
-  if (normEmail && normEmail.includes('@')) {
-    checks.push(db.collection('trial_claims').doc(`email_${normEmail}`).get());
-  }
-
-  const results = await Promise.all(checks);
-  for (const snap of results) {
-    if (snap.exists) {
+    const normPhone = String(currentData.mobile || '').replace(/\D/g, '').slice(-10);
+    const normEmail = String(request.auth.token.email || '').trim().toLowerCase();
+    const claimRefs = [
+      db.collection('trial_claims').doc(`user_${targetBizId}`)
+    ];
+    if (normPhone.length === 10) {
+      claimRefs.push(db.collection('trial_claims').doc(`phone_${normPhone}`));
+    }
+    if (normEmail.includes('@')) {
+      claimRefs.push(db.collection('trial_claims').doc(`email_${normEmail}`));
+    }
+    const claimSnaps = await Promise.all(claimRefs.map((claimRef) => transaction.get(claimRef)));
+    if (claimSnaps.some((claimSnap) => claimSnap.exists)) {
       throw new HttpsError(
         'already-exists',
         'Free trial has already been claimed using this account, phone number, or email address.'
       );
     }
-  }
 
-  const now = new Date();
-  const expiryDate = new Date();
-  expiryDate.setDate(expiryDate.getDate() + 14);
-  const expiryIso = expiryDate.toISOString().split('T')[0];
-
-  const claimRecord = {
-    userId: targetBizId,
-    email: normEmail,
-    mobile: normPhone,
-    claimedAt: now.toISOString(),
-    expiryDate: expiryIso,
-    durationDays: 14
-  };
-
-  const batch = db.batch();
-  batch.set(db.collection('trial_claims').doc(`user_${targetBizId}`), claimRecord);
-  if (normPhone && normPhone.length === 10) {
-    batch.set(db.collection('trial_claims').doc(`phone_${normPhone}`), claimRecord);
-  }
-  if (normEmail && normEmail.includes('@')) {
-    batch.set(db.collection('trial_claims').doc(`email_${normEmail}`), claimRecord);
-  }
-
-  batch.update(bizRef, {
-    planName: 'Free Trial',
-    planStatus: 'Active',
-    planExpiryDate: expiryIso,
-    trialClaimed: true,
-    trialStartDate: now.toISOString(),
-    trialDurationDays: 14,
-    updatedAt: now.toISOString()
+    const claimRecord = {
+      userId: targetBizId,
+      email: normEmail,
+      mobile: normPhone,
+      claimedAt: now.toISOString(),
+      expiryDate: expiryIso,
+      durationDays: 30
+    };
+    claimRefs.forEach((claimRef) => transaction.set(claimRef, claimRecord));
+    transaction.update(bizRef, {
+      planName: 'Free Trial',
+      planStatus: 'Active',
+      planExpiryDate: expiryIso,
+      trialClaimed: true,
+      trialStartDate: now.toISOString(),
+      trialDurationDays: 30,
+      updatedAt: now.toISOString()
+    });
   });
-
-  await batch.commit();
 
   return {
     success: true,
@@ -971,42 +989,107 @@ exports.claimFreeTrial = onCall({ cors: true }, async (request) => {
   };
 });
 
+exports.consumeInvoiceCredit = onCall({ cors: true }, async (request) => {
+  const callerUid = request.auth?.uid;
+  const bizId = request.data?.bizId;
+  if (!callerUid || callerUid !== bizId) {
+    throw new HttpsError('permission-denied', 'Only the business owner can consume invoice credits.');
+  }
+
+  const db = admin.firestore();
+  const bizRef = db.collection('businesses').doc(callerUid);
+  const now = new Date();
+  const monthKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit'
+  }).format(now);
+
+  return db.runTransaction(async (transaction) => {
+    const bizSnap = await transaction.get(bizRef);
+    if (!bizSnap.exists) {
+      throw new HttpsError('not-found', 'Business profile was not found.');
+    }
+    const data = bizSnap.data();
+    const monthlyFreeUsed = data.lastInvoiceResetMonth === monthKey
+      ? Number(data.monthlyFreeUsed || 0)
+      : 0;
+    const purchasedCredits = Number(data.purchasedInvoiceCredits || 0);
+    if (
+      !Number.isSafeInteger(monthlyFreeUsed) || monthlyFreeUsed < 0 ||
+      !Number.isSafeInteger(purchasedCredits) || purchasedCredits < 0
+    ) {
+      throw new HttpsError('failed-precondition', 'Invoice credit balance is invalid.');
+    }
+
+    let nextMonthlyFreeUsed = monthlyFreeUsed;
+    let nextPurchasedCredits = purchasedCredits;
+    let source;
+    if (monthlyFreeUsed < 3) {
+      nextMonthlyFreeUsed += 1;
+      source = 'monthly_free';
+    } else if (purchasedCredits > 0) {
+      nextPurchasedCredits -= 1;
+      source = 'purchased';
+    } else {
+      throw new HttpsError('resource-exhausted', 'No invoice credits remain.');
+    }
+
+    transaction.update(bizRef, {
+      monthlyFreeUsed: nextMonthlyFreeUsed,
+      purchasedInvoiceCredits: nextPurchasedCredits,
+      lastInvoiceResetMonth: monthKey,
+      updatedAt: now.toISOString()
+    });
+    return {
+      success: true,
+      source,
+      monthlyFreeUsed: nextMonthlyFreeUsed,
+      purchasedInvoiceCredits: nextPurchasedCredits
+    };
+  });
+});
+
 /**
  * deleteDriver (Phase 2 & 3)
  * Server-authoritative driver deletion that removes credentials, lookup, and status records.
  */
 exports.deleteDriver = onCall({ cors: true }, async (request) => {
   const callerUid = request.auth?.uid;
-  const { bizId, staffId, phone } = request.data || {};
+  const { bizId, staffId } = request.data || {};
 
+  if (!bizId || !staffId) {
+    throw new HttpsError('invalid-argument', 'Business and driver IDs are required.');
+  }
   if (!callerUid || (callerUid !== bizId && !request.auth?.token?.admin)) {
     throw new HttpsError('permission-denied', 'Only the business owner or admin can delete drivers.');
   }
 
   const db = admin.firestore();
-  let cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
-
-  // If phone wasn't passed, find it from staff doc before deletion
-  if (!cleanPhone && bizId && staffId) {
-    try {
-      const sSnap = await db.collection('businesses').doc(bizId).collection('staff').doc(staffId).get();
-      if (sSnap.exists) {
-        cleanPhone = String(sSnap.data().mobile || '').replace(/\D/g, '').slice(-10);
-      }
-    } catch (e) {}
+  const staffRef = db.collection('businesses').doc(bizId).collection('staff').doc(staffId);
+  const staffSnap = await staffRef.get();
+  const cleanPhone = staffSnap.exists
+    ? String(staffSnap.data().mobile || '').replace(/\D/g, '').slice(-10)
+    : '';
+  const batch = db.batch();
+  if (cleanPhone.length === 10) {
+    const lookupRef = db.collection('driver_auth_lookup').doc(cleanPhone);
+    const legacyRef = db.collection('global_features').doc(`driver_auth_${cleanPhone}`);
+    const [lookupSnap, legacySnap] = await Promise.all([lookupRef.get(), legacyRef.get()]);
+    if (lookupSnap.exists) {
+      const lookup = lookupSnap.data();
+      if (lookup.bizId === bizId && lookup.staffId === staffId) batch.delete(lookupRef);
+    }
+    if (legacySnap.exists) {
+      const legacy = legacySnap.data();
+      if (legacy.tenantId === bizId && legacy.staffId === staffId) batch.delete(legacyRef);
+    }
   }
-
-  if (cleanPhone) {
-    await db.collection('driver_auth_lookup').doc(cleanPhone).delete().catch(() => {});
-    await db.collection('global_features').doc(`driver_auth_${cleanPhone}`).delete().catch(() => {});
-  }
-
-  if (bizId && staffId) {
-    await db.collection('businesses').doc(bizId).collection('staff').doc(staffId).delete().catch(() => {});
-    await db.collection('businesses').doc(bizId).collection('staff_credentials').doc(staffId).delete().catch(() => {});
-    await db.collection('businesses').doc(bizId).collection('driver_manifest').doc(staffId).delete().catch(() => {});
-    await db.collection('businesses').doc(bizId).collection('driver_status').doc(staffId).delete().catch(() => {});
-  }
+  batch.delete(staffRef);
+  batch.delete(db.collection('businesses').doc(bizId).collection('staff_credentials').doc(staffId));
+  batch.delete(db.collection('businesses').doc(bizId).collection('driver_manifest').doc(staffId));
+  batch.delete(db.collection('businesses').doc(bizId).collection('driver_status').doc(staffId));
+  await batch.commit();
 
   return { success: true };
 });
@@ -1032,6 +1115,15 @@ const SERVER_SAAS_PLANS = {
   'ultimate': { id: 'ultimate', label: 'Ultimate Invoice Pack', pricePaise: 10000, count: 50, type: 'invoice_recharge' }
 };
 
+function addUtcMonthsClamped(date, months) {
+  const result = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+  const originalDay = date.getUTCDate();
+  result.setUTCMonth(result.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
+  result.setUTCDate(Math.min(originalDay, lastDay));
+  return result;
+}
+
 /**
  * Computes authoritative plan details and discounts on the server.
  * NEVER trusts client-submitted prices.
@@ -1056,7 +1148,7 @@ async function getServerPlanDetails(planId) {
 
       const matched = dbPlans.find(p => 
         String(p.id).toLowerCase() === normalized ||
-        (p.label && p.label.toLowerCase() === normalized) ||
+        (typeof p.label === 'string' && p.label.toLowerCase() === normalized) ||
         (p.durationMonths && `${p.durationMonths} months` === normalized)
       );
 
@@ -1065,13 +1157,14 @@ async function getServerPlanDetails(planId) {
           id: matched.id,
           label: matched.label,
           pricePaise: Math.round(Number(matched.price) * 100),
-          durationMonths: Number(matched.durationMonths) || 1,
+          durationMonths: Number(matched.durationMonths),
           type: 'subscription'
         };
       }
     }
   } catch (e) {
-    console.warn('[Razorpay] saas_config fetch notice:', e.message);
+    console.error('[Razorpay] Could not load server pricing configuration.');
+    throw new HttpsError('unavailable', 'Pricing is temporarily unavailable.');
   }
 
   // 2. Fallback to static server list if not in dynamic config
@@ -1083,17 +1176,39 @@ async function getServerPlanDetails(planId) {
     throw new HttpsError('not-found', `Unknown plan: '${planId}'.`);
   }
 
+  const durationMonths = Number(basePlan.durationMonths || 0);
+  if (
+    typeof basePlan.id !== 'string' || !basePlan.id.trim() ||
+    typeof basePlan.label !== 'string' || !basePlan.label.trim() ||
+    !Number.isSafeInteger(basePlan.pricePaise) || basePlan.pricePaise <= 0 ||
+    (basePlan.type === 'subscription' && (!Number.isSafeInteger(durationMonths) || durationMonths < 1 || durationMonths > 24)) ||
+    (basePlan.type === 'invoice_recharge' && (!Number.isSafeInteger(basePlan.count) || basePlan.count < 1))
+  ) {
+    throw new HttpsError('failed-precondition', 'The selected plan is not configured correctly.');
+  }
+
   let pricePaise = basePlan.pricePaise;
   let appliedDiscountPercent = 0;
 
   // Apply offer discount if active
-  if (offer && offer.isActive && offer.discountPercent > 0 && basePlan.type === 'subscription') {
+  if (offer?.isActive && basePlan.type === 'subscription') {
+    const discountPercent = Number(offer.discountPercent);
     const endsAt = offer.endsAt ? new Date(offer.endsAt) : null;
-    if (!endsAt || new Date() < endsAt) {
-      appliedDiscountPercent = Math.min(100, Math.max(0, Number(offer.discountPercent)));
+    if (
+      !Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100 ||
+      (endsAt && !Number.isFinite(endsAt.getTime()))
+    ) {
+      throw new HttpsError('failed-precondition', 'The active pricing offer is not configured correctly.');
+    }
+    if (discountPercent > 0 && (!endsAt || new Date() < endsAt)) {
+      appliedDiscountPercent = discountPercent;
       const discountAmountPaise = Math.round((pricePaise * appliedDiscountPercent) / 100);
       pricePaise = Math.max(100, pricePaise - discountAmountPaise);
     }
+  }
+
+  if (!Number.isSafeInteger(pricePaise) || pricePaise <= 0) {
+    throw new HttpsError('failed-precondition', 'The selected plan price is invalid.');
   }
 
   return {
@@ -1104,142 +1219,166 @@ async function getServerPlanDetails(planId) {
 }
 
 /**
- * Server-authoritative payment fulfillment logic.
- * Enforces strict idempotency via unique paymentId documents in `processed_payments`.
- * Only this function writes planName, planStatus, planExpiryDate, lastPaymentId and billing_history.
+ * Server-authoritative payment fulfillment logic. Payment and order idempotency,
+ * business entitlements, and billing history are committed atomically.
  */
-async function fulfillPayment(paymentId, orderId, bizIdHint, paymentAmountPaiseHint) {
+async function fulfillPayment(paymentId, orderId, paymentAmountPaise, currency = 'INR') {
+  if (
+    typeof paymentId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(paymentId) ||
+    typeof orderId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(orderId) ||
+    !Number.isSafeInteger(paymentAmountPaise) || paymentAmountPaise <= 0
+  ) {
+    throw new HttpsError('invalid-argument', 'A valid payment, order, and amount are required.');
+  }
+
   const db = admin.firestore();
   const processedRef = db.collection('processed_payments').doc(paymentId);
-
-  // 1. Idempotency Check: prevent replay attacks from extending plans twice
-  const processedSnap = await processedRef.get();
-  if (processedSnap.exists && processedSnap.data().status === 'fulfilled') {
-    console.log(`[Fulfillment] Payment ${paymentId} already fulfilled. Skipping.`);
-    return {
-      success: true,
-      alreadyProcessed: true,
-      planExpiryDate: processedSnap.data().planExpiryDate || null
-    };
-  }
-
-  // 2. Fetch order document
-  let order = null;
-  if (orderId) {
-    const orderSnap = await db.collection('orders').doc(orderId).get();
-    if (orderSnap.exists) {
-      order = orderSnap.data();
+  const orderRef = db.collection('orders').doc(orderId);
+  return db.runTransaction(async (transaction) => {
+    const processedSnap = await transaction.get(processedRef);
+    const orderSnap = await transaction.get(orderRef);
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Payment order was not found.');
     }
-  }
 
-  const targetBizId = order?.bizId || bizIdHint;
-  if (!targetBizId) {
-    throw new HttpsError('not-found', 'Could not identify target business account for this payment.');
-  }
-
-  const planType = order?.type || 'subscription';
-  const durationMonths = order?.durationMonths || 1;
-  const planLabel = order?.planLabel || order?.planId || 'Monthly';
-  const amountPaise = order?.amountPaise || paymentAmountPaiseHint || 0;
-  const amountRupees = amountPaise > 0 ? (amountPaise / 100) : 0;
-
-  // 3. Fetch current business data
-  const bizRef = db.collection('businesses').doc(targetBizId);
-  const bizSnap = await bizRef.get();
-  if (!bizSnap.exists) {
-    throw new HttpsError('not-found', `Business profile '${targetBizId}' not found.`);
-  }
-  const bizData = bizSnap.data();
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  let newExpiryDate = null;
-  const batch = db.batch();
-
-  if (planType === 'subscription') {
-    // Server computes expiry: extend from current expiry if valid and future, else from today
-    let baseDate = new Date();
-    if (bizData.planExpiryDate && bizData.planExpiryDate >= todayStr) {
-      baseDate = new Date(bizData.planExpiryDate);
+    const order = orderSnap.data();
+    if (processedSnap.exists) {
+      const processed = processedSnap.data();
+      if (processed.status === 'fulfilled' && processed.orderId === orderId) {
+        return {
+          success: true,
+          alreadyProcessed: true,
+          planExpiryDate: processed.planExpiryDate || null
+        };
+      }
+      throw new HttpsError('already-exists', 'Payment was already applied to another order.');
     }
-    baseDate.setMonth(baseDate.getMonth() + durationMonths);
-    newExpiryDate = baseDate.toISOString().split('T')[0];
+    if (order.status !== 'created') {
+      throw new HttpsError('failed-precondition', 'Payment order is not awaiting payment.');
+    }
+    if (
+      !order.bizId ||
+      !Number.isSafeInteger(order.amountPaise) ||
+      order.amountPaise !== paymentAmountPaise ||
+      order.currency !== 'INR' ||
+      currency !== order.currency
+    ) {
+      throw new HttpsError('failed-precondition', 'Payment details do not match the order.');
+    }
+    if (!['subscription', 'invoice_recharge'].includes(order.type)) {
+      throw new HttpsError('failed-precondition', 'Payment order type is invalid.');
+    }
 
-    // Strictly server-written fields
-    batch.update(bizRef, {
-      planName: `COSVYN ONE (${planLabel})`,
-      planStatus: 'Active',
+    const bizRef = db.collection('businesses').doc(order.bizId);
+    const bizSnap = await transaction.get(bizRef);
+    if (!bizSnap.exists) {
+      throw new HttpsError('not-found', 'Business profile was not found.');
+    }
+
+    const bizData = bizSnap.data();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const amountRupees = paymentAmountPaise / 100;
+    let newExpiryDate = null;
+    const historyRef = bizRef.collection('billing_history').doc(paymentId);
+
+    if (order.type === 'subscription') {
+      const durationMonths = Number(order.durationMonths);
+      if (!Number.isSafeInteger(durationMonths) || durationMonths < 1 || durationMonths > 24) {
+        throw new HttpsError('failed-precondition', 'Subscription duration is invalid.');
+      }
+      const todayStr = nowIso.split('T')[0];
+      let baseDate = new Date(`${todayStr}T00:00:00.000Z`);
+      const currentExpiry = typeof bizData.planExpiryDate === 'string' &&
+        /^\d{4}-\d{2}-\d{2}$/.test(bizData.planExpiryDate)
+        ? new Date(`${bizData.planExpiryDate}T00:00:00.000Z`)
+        : null;
+      if (
+        currentExpiry &&
+        Number.isFinite(currentExpiry.getTime()) &&
+        currentExpiry.toISOString().slice(0, 10) === bizData.planExpiryDate &&
+        bizData.planExpiryDate >= todayStr
+      ) {
+        baseDate = currentExpiry;
+      }
+      newExpiryDate = addUtcMonthsClamped(baseDate, durationMonths).toISOString().split('T')[0];
+
+      transaction.update(bizRef, {
+        planName: `COSVYN ONE (${order.planLabel})`,
+        planStatus: 'Active',
+        planExpiryDate: newExpiryDate,
+        lastPaymentId: paymentId,
+        updatedAt: nowIso
+      });
+      transaction.set(historyRef, {
+        amount: amountRupees,
+        amountPaise: paymentAmountPaise,
+        currency: 'INR',
+        date: nowIso,
+        planName: `COSVYN ONE (${order.planLabel})`,
+        paymentId,
+        orderId,
+        expiryDate: newExpiryDate,
+        type: 'Subscription',
+        status: 'Paid'
+      });
+    } else {
+      const creditsToAdd = Number(order.invoiceCredits);
+      if (!Number.isSafeInteger(creditsToAdd) || creditsToAdd < 1) {
+        throw new HttpsError('failed-precondition', 'Invoice credit quantity is invalid.');
+      }
+      const currentCredits = Number.isSafeInteger(bizData.purchasedInvoiceCredits)
+        ? bizData.purchasedInvoiceCredits
+        : 0;
+      if (!Number.isSafeInteger(currentCredits + creditsToAdd)) {
+        throw new HttpsError('resource-exhausted', 'Invoice credit balance is at its supported limit.');
+      }
+      transaction.update(bizRef, {
+        purchasedInvoiceCredits: currentCredits + creditsToAdd,
+        lastPaymentId: paymentId,
+        lastRechargePlan: order.planLabel,
+        updatedAt: nowIso
+      });
+      transaction.set(historyRef, {
+        amount: amountRupees,
+        amountPaise: paymentAmountPaise,
+        currency: 'INR',
+        date: nowIso,
+        planName: `Invoice Recharge (${order.planLabel})`,
+        paymentId,
+        orderId,
+        type: 'Invoice Recharge',
+        status: 'Paid',
+        creditsAdded: creditsToAdd
+      });
+    }
+
+    transaction.set(processedRef, {
+      paymentId,
+      orderId,
+      bizId: order.bizId,
+      amountPaise: paymentAmountPaise,
+      status: 'fulfilled',
       planExpiryDate: newExpiryDate,
-      lastPaymentId: paymentId,
-      updatedAt: new Date().toISOString()
+      fulfilledAt: admin.firestore.FieldValue.serverTimestamp()
     });
-
-    // Record to billing_history subcollection with integer paise
-    const historyRef = bizRef.collection('billing_history').doc(paymentId);
-    batch.set(historyRef, {
-      amount: amountRupees,    // Legacy Rupee amount for backward compatibility
-      amountPaise: amountPaise, // NEW integer paise
-      currency: 'INR',
-      date: new Date().toISOString(),
-      planName: `COSVYN ONE (${planLabel})`,
-      paymentId: paymentId,
-      orderId: orderId || null,
-      expiryDate: newExpiryDate,
-      type: 'Subscription',
-      status: 'Paid'
-    });
-  } else if (planType === 'invoice_recharge') {
-    const creditsToAdd = order?.invoiceCredits || 1;
-    const currentCredits = Number(bizData.purchasedInvoiceCredits) || 0;
-    const newCredits = currentCredits + creditsToAdd;
-
-    batch.update(bizRef, {
-      purchasedInvoiceCredits: newCredits,
-      lastPaymentId: paymentId,
-      updatedAt: new Date().toISOString()
-    });
-
-    const historyRef = bizRef.collection('billing_history').doc(paymentId);
-    batch.set(historyRef, {
-      amount: amountRupees,
-      amountPaise: amountPaise,
-      currency: 'INR',
-      date: new Date().toISOString(),
-      planName: `Invoice Recharge (${planLabel})`,
-      paymentId: paymentId,
-      orderId: orderId || null,
-      type: 'Invoice Recharge',
-      status: 'Paid'
-    });
-  }
-
-  // Mark payment as fulfilled to guarantee idempotency
-  batch.set(processedRef, {
-    paymentId,
-    orderId: orderId || null,
-    bizId: targetBizId,
-    amountPaise: amountPaise,
-    status: 'fulfilled',
-    planExpiryDate: newExpiryDate,
-    fulfilledAt: admin.firestore.FieldValue.serverTimestamp()
-  });
-
-  if (orderId) {
-    batch.update(db.collection('orders').doc(orderId), {
+    transaction.update(orderRef, {
       status: 'paid',
-      paymentId: paymentId,
+      paymentId,
       paidAt: admin.firestore.FieldValue.serverTimestamp()
     });
-  }
 
-  await batch.commit();
-
-  console.log(`[Fulfillment] Payment ${paymentId} successfully fulfilled for ${targetBizId}. New Expiry: ${newExpiryDate}`);
-
-  return {
-    success: true,
-    planExpiryDate: newExpiryDate,
-    planStatus: 'Active'
-  };
+    const result = { success: true };
+    if (order.type === 'subscription') {
+      result.planExpiryDate = newExpiryDate;
+      result.planStatus = 'Active';
+    } else {
+      result.purchasedInvoiceCredits =
+        (Number.isSafeInteger(bizData.purchasedInvoiceCredits) ? bizData.purchasedInvoiceCredits : 0) +
+        Number(order.invoiceCredits);
+    }
+    return result;
+  });
 }
 
 /**
@@ -1258,7 +1397,7 @@ exports.createRazorpayOrder = onCall({
   }
 
   const { planId } = request.data || {};
-  if (!planId) {
+  if (typeof planId !== 'string' || !planId.trim()) {
     throw new HttpsError('invalid-argument', 'planId is required.');
   }
 
@@ -1266,55 +1405,53 @@ exports.createRazorpayOrder = onCall({
   const plan = await getServerPlanDetails(planId);
   const pricePaise = plan.finalPricePaise;
 
-  // Retrieve secrets from Secret Manager or environment
-  let keySecret = '';
-  try { keySecret = razorpayKeySecret.value(); } catch (e) { keySecret = process.env.RAZORPAY_KEY_SECRET || ''; }
-  let keyId = '';
-  try { keyId = razorpayKeyId.value(); } catch (e) { keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_SXPy6QPmqMyjkM'; }
-
-  if (!keySecret) keySecret = process.env.RAZORPAY_KEY_SECRET || '';
-  if (!keyId) keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_SXPy6QPmqMyjkM';
-
-  const receipt = `rcpt_${callerUid.slice(0, 8)}_${Date.now()}`;
-  let orderId = '';
-
-  if (keySecret && keyId && !keyId.includes('placeholder')) {
-    const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
-    const resp = await fetch('https://api.razorpay.com/v1/orders', {
-      method: 'POST',
-      headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        amount: pricePaise,
-        currency: 'INR',
-        receipt: receipt,
-        notes: {
-          bizId: callerUid,
-          planId: plan.id,
-          planLabel: plan.label,
-          durationMonths: String(plan.durationMonths || 0),
-          type: plan.type
-        }
-      })
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error('[Razorpay Order Error]:', resp.status, errText);
-      throw new HttpsError('internal', `Failed to create Razorpay order: ${resp.statusText}`);
-    }
-
-    const orderData = await resp.json();
-    orderId = orderData.id;
-  } else {
-    console.warn('[Razorpay] Using test simulated order (set RAZORPAY_KEY_SECRET in Secret Manager for live/test API)');
-    orderId = `order_test_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  let keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+  let keyId = process.env.RAZORPAY_KEY_ID || '';
+  try { keySecret = razorpayKeySecret.value() || keySecret; } catch (e) {}
+  try { keyId = razorpayKeyId.value() || keyId; } catch (e) {}
+  if (!keySecret || !keyId) {
+    throw new HttpsError('failed-precondition', 'Razorpay is not configured.');
   }
 
-  // Persist unfulfilled order in Firestore
+  const receipt = `rcpt_${callerUid.slice(0, 8)}_${Date.now()}`;
   const db = admin.firestore();
+  const businessSnap = await db.collection('businesses').doc(callerUid).get();
+  if (!businessSnap.exists) {
+    throw new HttpsError('failed-precondition', 'Create the business profile before purchasing a plan.');
+  }
+
+  const authHeader = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+  const resp = await fetch('https://api.razorpay.com/v1/orders', {
+    method: 'POST',
+    headers: {
+      'Authorization': authHeader,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      amount: pricePaise,
+      currency: 'INR',
+      receipt,
+      notes: {
+        bizId: callerUid,
+        planId: plan.id,
+        planLabel: plan.label,
+        durationMonths: String(plan.durationMonths || 0),
+        type: plan.type
+      }
+    })
+  });
+
+  if (!resp.ok) {
+    console.error('[Razorpay Order Error]:', resp.status);
+    throw new HttpsError('internal', 'Failed to create Razorpay order.');
+  }
+  const orderData = await resp.json();
+  if (!orderData.id || orderData.amount !== pricePaise || orderData.currency !== 'INR') {
+    throw new HttpsError('internal', 'Razorpay returned an invalid order.');
+  }
+  const orderId = orderData.id;
+
+  // Persist unfulfilled order in Firestore
   await db.collection('orders').doc(orderId).set({
     orderId: orderId,
     bizId: callerUid,
@@ -1335,7 +1472,7 @@ exports.createRazorpayOrder = onCall({
     orderId,
     amount: pricePaise,
     currency: 'INR',
-    keyId: keyId || 'rzp_test_SXPy6QPmqMyjkM',
+    keyId,
     planName: plan.label
   };
 });
@@ -1347,7 +1484,7 @@ exports.createRazorpayOrder = onCall({
  */
 exports.verifyRazorpayPayment = onCall({
   cors: true,
-  secrets: [razorpayKeySecret]
+  secrets: [razorpayKeySecret, razorpayKeyId]
 }, async (request) => {
   const callerUid = request.auth?.uid;
   if (!callerUid) {
@@ -1355,27 +1492,55 @@ exports.verifyRazorpayPayment = onCall({
   }
 
   const { orderId, paymentId, signature } = request.data || {};
-  if (!paymentId) {
-    throw new HttpsError('invalid-argument', 'paymentId is required.');
+  if (
+    typeof orderId !== 'string' || !orderId ||
+    typeof paymentId !== 'string' || !paymentId ||
+    typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature)
+  ) {
+    throw new HttpsError('invalid-argument', 'Payment, order, and signature are required.');
   }
 
-  let keySecret = '';
-  try { keySecret = razorpayKeySecret.value(); } catch (e) { keySecret = process.env.RAZORPAY_KEY_SECRET || ''; }
-  if (!keySecret) keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+  let keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+  let keyId = process.env.RAZORPAY_KEY_ID || '';
+  try { keySecret = razorpayKeySecret.value() || keySecret; } catch (e) {}
+  try { keyId = razorpayKeyId.value() || keyId; } catch (e) {}
+  if (!keySecret || !keyId) {
+    throw new HttpsError('failed-precondition', 'Razorpay is not configured.');
+  }
 
-  // Verify HMAC SHA256 signature if orderId & signature are provided
-  if (signature && orderId && keySecret) {
-    const expected = crypto.createHmac('sha256', keySecret).update(`${orderId}|${paymentId}`).digest('hex');
-    if (expected !== signature) {
-      throw new HttpsError('invalid-argument', 'Invalid Razorpay payment signature.');
+  const expected = crypto.createHmac('sha256', keySecret).update(`${orderId}|${paymentId}`).digest();
+  const received = Buffer.from(signature, 'hex');
+  if (received.length !== expected.length || !crypto.timingSafeEqual(expected, received)) {
+    throw new HttpsError('invalid-argument', 'Invalid Razorpay payment signature.');
+  }
+
+  const db = admin.firestore();
+  const orderSnap = await db.collection('orders').doc(orderId).get();
+  if (!orderSnap.exists || orderSnap.data().bizId !== callerUid) {
+    throw new HttpsError('permission-denied', 'Payment order does not belong to this account.');
+  }
+
+  const apiResponse = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64')
     }
-  } else if (!keySecret && signature) {
-    console.warn('[Razorpay] No secret configured, skipping signature verification in test fallback.');
+  });
+  if (!apiResponse.ok) {
+    console.error('[Razorpay Payment Verification Error]:', apiResponse.status);
+    throw new HttpsError('failed-precondition', 'Razorpay could not confirm this payment.');
+  }
+  const payment = await apiResponse.json();
+  if (
+    payment.order_id !== orderId ||
+    payment.status !== 'captured' ||
+    payment.captured !== true ||
+    payment.currency !== 'INR' ||
+    payment.amount !== orderSnap.data().amountPaise
+  ) {
+    throw new HttpsError('failed-precondition', 'Payment details do not match a captured order.');
   }
 
-  // Fulfill idempotently on the server
-  const result = await fulfillPayment(paymentId, orderId, callerUid, null);
-  return result;
+  return fulfillPayment(paymentId, orderId, payment.amount, payment.currency);
 });
 
 /**
@@ -1386,21 +1551,20 @@ exports.verifyRazorpayPayment = onCall({
 exports.razorpayWebhook = onRequest({
   secrets: [razorpayWebhookSecret, razorpayKeySecret]
 }, async (req, res) => {
-  let webhookSecret = '';
-  try { webhookSecret = razorpayWebhookSecret.value(); } catch (e) { webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || ''; }
-  if (!webhookSecret) webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+  let webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+  try { webhookSecret = razorpayWebhookSecret.value() || webhookSecret; } catch (e) {}
 
   const signature = req.headers['x-razorpay-signature'];
   const rawBody = req.rawBody ? req.rawBody.toString() : JSON.stringify(req.body);
 
-  if (webhookSecret && signature) {
-    const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
-    if (signature !== expected) {
-      console.error('[Razorpay Webhook] Invalid X-Razorpay-Signature.');
-      return res.status(400).send('Invalid signature');
-    }
-  } else if (webhookSecret && !signature) {
-    return res.status(400).send('Missing X-Razorpay-Signature header');
+  if (!webhookSecret || typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature)) {
+    return res.status(400).send('Webhook authentication is not configured.');
+  }
+  const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest();
+  const received = Buffer.from(signature, 'hex');
+  if (received.length !== expected.length || !crypto.timingSafeEqual(expected, received)) {
+    console.error('[Razorpay Webhook] Invalid X-Razorpay-Signature.');
+    return res.status(400).send('Invalid signature');
   }
 
   const eventData = req.body || {};
@@ -1408,18 +1572,16 @@ exports.razorpayWebhook = onRequest({
 
   if (event === 'payment.captured') {
     const payment = eventData.payload?.payment?.entity;
-    if (payment) {
+    if (payment?.status === 'captured' && payment.captured === true && payment.currency === 'INR') {
       const paymentId = payment.id;
       const orderId = payment.order_id;
       const amountPaise = payment.amount;
-      const bizId = payment.notes?.bizId;
-
       try {
-        await fulfillPayment(paymentId, orderId, bizId, amountPaise);
+        await fulfillPayment(paymentId, orderId, amountPaise, payment.currency);
         return res.status(200).json({ status: 'ok', paymentId });
       } catch (err) {
-        console.error('[Razorpay Webhook] Fulfillment error:', err);
-        return res.status(500).json({ error: err.message });
+        console.error('[Razorpay Webhook] Fulfillment failed:', err.code || err.name);
+        return res.status(500).json({ error: 'Payment fulfillment failed.' });
       }
     }
   }
@@ -1506,5 +1668,3 @@ exports.geminiGenerate = onCall({
   const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
   return { text };
 });
-
-

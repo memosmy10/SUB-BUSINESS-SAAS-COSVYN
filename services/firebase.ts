@@ -68,7 +68,7 @@ export const setManagerPasswordCallable = httpsCallable<
 
 export const migrateCredentialsCallable = httpsCallable<
   Record<string, never>,
-  { success: boolean; migratedStaffCount: number; migratedManagersCount: number; migratedGlobalDriversCount: number }
+  { success: boolean; migratedStaffCount: number; skippedStaffCount: number; migratedManagersCount: number }
 >(functions, 'migratePlaintextCredentials');
 
 export const migrateDriverManifestsCallable = httpsCallable<
@@ -77,7 +77,7 @@ export const migrateDriverManifestsCallable = httpsCallable<
 >(functions, 'migrateDriverManifests');
 
 export const claimFreeTrialCallable = httpsCallable<
-  { bizId?: string; mobile?: string; email?: string },
+  { bizId?: string },
   { success: boolean; planName: string; planStatus: string; planExpiryDate: string }
 >(functions, 'claimFreeTrial');
 
@@ -98,9 +98,25 @@ export const createRazorpayOrderCallable = httpsCallable<
 >(functions, 'createRazorpayOrder');
 
 export const verifyRazorpayPaymentCallable = httpsCallable<
-  { orderId?: string; paymentId: string; signature?: string },
-  { success: boolean; planExpiryDate?: string; planStatus?: string; alreadyProcessed?: boolean }
+  { orderId: string; paymentId: string; signature: string },
+  {
+    success: boolean;
+    planExpiryDate?: string;
+    planStatus?: string;
+    purchasedInvoiceCredits?: number;
+    alreadyProcessed?: boolean;
+  }
 >(functions, 'verifyRazorpayPayment');
+
+export const consumeInvoiceCreditCallable = httpsCallable<
+  { bizId: string },
+  {
+    success: boolean;
+    source: 'monthly_free' | 'purchased';
+    monthlyFreeUsed: number;
+    purchasedInvoiceCredits: number;
+  }
+>(functions, 'consumeInvoiceCredit');
 
 // Phase 3: Server-side Gemini AI Callable
 export const geminiGenerateCallable = httpsCallable<

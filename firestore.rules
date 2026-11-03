@@ -46,7 +46,17 @@ service cloud.firestore {
              'role' in request.auth.token && 
              request.auth.token.role == 'driver' &&
              'bizId' in request.auth.token && 
-             request.auth.token.bizId == bizId;
+             request.auth.token.bizId == bizId &&
+             isActiveDriver(bizId);
+    }
+
+    function isActiveDriver(bizId) {
+      return request.auth != null &&
+             request.auth.token != null &&
+             'staffId' in request.auth.token &&
+             exists(/databases/$(database)/documents/businesses/$(bizId)/staff/$(request.auth.token.staffId)) &&
+             get(/databases/$(database)/documents/businesses/$(bizId)/staff/$(request.auth.token.staffId)).data.active != false &&
+             get(/databases/$(database)/documents/businesses/$(bizId)/staff/$(request.auth.token.staffId)).data.status != 'Inactive';
     }
 
     // 4. Branch Manager check: custom token claim validates role + bizId
@@ -58,6 +68,37 @@ service cloud.firestore {
              request.auth.token.role == 'manager' &&
              'bizId' in request.auth.token && 
              request.auth.token.bizId == bizId;
+    }
+
+    function isOwnManager(managerId) {
+      return request.auth != null &&
+             request.auth.token != null &&
+             'managerId' in request.auth.token &&
+             request.auth.token.managerId == managerId;
+    }
+
+    function isOwnDriver(staffId) {
+      return request.auth != null &&
+             request.auth.token != null &&
+             'staffId' in request.auth.token &&
+             request.auth.token.staffId == staffId;
+    }
+
+    function isEmployeeToken() {
+      return request.auth != null &&
+             request.auth.token != null &&
+             'role' in request.auth.token &&
+             request.auth.token.role in ['driver', 'manager'];
+    }
+
+    function hasNoServerManagedBusinessFields() {
+      return !request.resource.data.keys().hasAny([
+        'planName', 'planStatus', 'planExpiryDate', 'lastPaymentId',
+        'trialClaimed', 'trialStartDate', 'trialDurationDays',
+        'trialOriginalStartDate', 'trialExpiryDate',
+        'trialOriginalExpiryDate', 'purchasedInvoiceCredits',
+        'lastRechargePlan', 'monthlyFreeUsed', 'lastInvoiceResetMonth'
+      ]);
     }
 
     // =========================================================================
@@ -91,18 +132,23 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Pending Subscriber Activations (server-side only)
+    // Pending activation data is visible only to the authenticated account it belongs to.
     match /pending_activations/{email} {
-      allow read, write: if false;
+      allow get, delete: if request.auth != null &&
+                            'email' in request.auth.token &&
+                            request.auth.token.email is string &&
+                            request.auth.token.email.lower() == email.lower();
+      allow list, create, update: if false;
     }
 
     // Global Feature Requests (logged-in users only, no driver prefix)
     match /global_features/{docId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && 
+      allow read: if isAdmin() ||
+                     (request.auth != null && !isEmployeeToken());
+      allow create: if request.auth != null && !isEmployeeToken() &&
                        request.resource.data.tenantId == request.auth.uid;
       allow update, delete: if isAdmin() || 
-                            (request.auth != null && 
+                            (request.auth != null && !isEmployeeToken() &&
                              resource.data.tenantId == request.auth.uid);
     }
 
@@ -153,44 +199,39 @@ service cloud.firestore {
       allow list: if isAdmin();
       
       // Owner can create their own business
-      allow create: if isOwner(userId) || isAdmin();
+      allow create: if isAdmin() || (isOwner(userId) && hasNoServerManagedBusinessFields());
       
       // Owner delete
       allow delete: if isOwner(userId) || isAdmin();
 
-      // Owner update with strict anti-tampering rules
+      // Owners may edit profile fields, but subscription and payment state is server-managed.
       allow update: if isAdmin() || (
         isOwner(userId) && (
-          // A. Free Trial: one-time claim only
+          // Auto-expiry may only change status and the update timestamp.
           (
-            request.resource.data.planName == 'Free Trial' &&
-            (!('trialClaimed' in resource.data) || resource.data.trialClaimed != true) &&
-            (!('trialStartDate' in resource.data) || resource.data.trialStartDate == null) &&
-            request.resource.data.trialClaimed == true
-          ) ||
-          // B. Mark as Expired (server scheduler does this, but owner can too)
-          (
+            resource.data.planStatus == 'Active' &&
             request.resource.data.planStatus == 'Expired' &&
-            request.resource.data.planStatus != resource.data.planStatus
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'planStatus', 'updatedAt'
+            ])
           ) ||
-          // C. Safe profile updates (no plan or payment fields can be modified)
           (
-            !('planExpiryDate' in request.resource.data.keys()) &&
-            !('planStatus' in request.resource.data.keys()) &&
-            !('planName' in request.resource.data.keys()) &&
-            !('lastPaymentId' in request.resource.data.keys()) &&
-            !('trialClaimed' in request.resource.data.keys()) &&
-            !('purchasedInvoiceCredits' in request.resource.data.keys())
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'planExpiryDate', 'planStatus', 'planName', 'lastPaymentId',
+              'trialClaimed', 'trialStartDate', 'trialDurationDays',
+              'trialOriginalStartDate', 'trialExpiryDate',
+              'trialOriginalExpiryDate', 'purchasedInvoiceCredits',
+              'lastRechargePlan', 'monthlyFreeUsed', 'lastInvoiceResetMonth'
+            ])
           )
         )
       );
 
       // --- Staff Subcollection (Delivery Partners) ---
       match /staff/{staffId} {
-        // Owner and managers can read; drivers can read for route display
+        // Driver clients must not read staff documents because legacy records may contain PIN hashes.
         allow read: if isOwner(userId) || 
                        isTenantManager(userId) || 
-                       isTenantDriver(userId) || 
                        isAdmin();
         
         // Owner and managers can create/update; drivers can only update their own location/status
@@ -198,14 +239,16 @@ service cloud.firestore {
         
         allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
           (
-            isTenantDriver(userId) && 
-            'staffId' in request.auth.token && 
-            request.auth.token.staffId == staffId &&
+            isTenantDriver(userId) &&
+            isOwnDriver(staffId) &&
             // Drivers can ONLY update location, status, and attendance (never PIN or name)
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'status', 'currentLat', 'currentLng', 'lastLocationUpdate',
-              'lastAttendanceDate', 'attendanceMarkedAt', 'batteryLevel', 'updatedAt'
-            ])
+              'lastAttendanceDate', 'attendanceMarkedAt', 'punchInTime',
+              'isShiftActive', 'batteryLevel', 'updatedAt'
+            ]) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+              request.resource.data.status in ['Online', 'Offline'])
           );
       }
 
@@ -223,9 +266,20 @@ service cloud.firestore {
             isTenantDriver(userId) &&
             // Drivers can only update box collection tracking, NOT customer details
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'boxCollections', 'uncollectedBoxesCount', 'updatedAt', 'routeOrder',
-              'lastDeliveryDate', 'nextDeliveryDate'
-            ])
+              'boxCollections', 'uncollectedBoxesCount', 'updatedAt'
+            ]) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['boxCollections']) ||
+              request.resource.data.boxCollections is map) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['uncollectedBoxesCount']) ||
+              (
+                request.resource.data.uncollectedBoxesCount is int &&
+                request.resource.data.uncollectedBoxesCount >= 0 &&
+                (
+                  resource.data.uncollectedBoxesCount is int
+                    ? request.resource.data.uncollectedBoxesCount <= resource.data.uncollectedBoxesCount
+                    : request.resource.data.uncollectedBoxesCount <= 1
+                )
+              ))
           );
       }
 
@@ -236,11 +290,41 @@ service cloud.firestore {
                        isTenantDriver(userId) || 
                        isAdmin();
         
-        // Everyone in the business can write delivery updates
-        allow create, update: if isOwner(userId) || 
-                                 isTenantManager(userId) || 
-                                 isTenantDriver(userId) || 
-                                 isAdmin();
+        allow create: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            'staffId' in request.auth.token &&
+            request.resource.data.deliveryBoyId == request.auth.token.staffId &&
+            request.resource.data.keys().hasOnly([
+              'date', 'customerId', 'customerName', 'branchId',
+              'deliveryBoyId', 'deliveryBoyName', 'mealTime', 'status',
+              'deliveredAt', 'reusableBoxEnabled', 'boxType', 'isDay2Plus',
+              'boxStatus', 'boxNotes', 'boxCollectedAt', 'currentLat',
+              'currentLng', 'updatedAt'
+            ]) &&
+            request.resource.data.date is string &&
+            request.resource.data.customerId is string &&
+            request.resource.data.mealTime is string &&
+            (!('status' in request.resource.data) ||
+              request.resource.data.status is string)
+          );
+
+        allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            'staffId' in request.auth.token &&
+            resource.data.deliveryBoyId == request.auth.token.staffId &&
+            request.resource.data.deliveryBoyId == request.auth.token.staffId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'date', 'customerId', 'customerName', 'branchId',
+              'deliveryBoyId', 'deliveryBoyName', 'mealTime', 'status',
+              'deliveredAt', 'reusableBoxEnabled', 'boxType', 'isDay2Plus',
+              'boxStatus', 'boxNotes', 'boxCollectedAt', 'currentLat',
+              'currentLng', 'updatedAt'
+            ]) &&
+            (!('status' in request.resource.data) ||
+              request.resource.data.status is string)
+          );
         
         allow delete: if isOwner(userId) || isAdmin();
       }
@@ -249,14 +333,13 @@ service cloud.firestore {
       match /driver_manifest/{staffId} {
         allow read: if isOwner(userId) || 
                        isTenantManager(userId) || 
-                       isTenantDriver(userId) || 
+                       (isTenantDriver(userId) && isOwnDriver(staffId)) ||
                        isAdmin();
         
         allow create: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
           (
             isTenantDriver(userId) &&
-            'staffId' in request.auth.token &&
-            request.auth.token.staffId == staffId &&
+            isOwnDriver(staffId) &&
             request.resource.data.keys().hasOnly([
               'status', 'lastAttendanceDate', 'attendanceMarkedAt',
               'punchInTime', 'isShiftActive', 'updatedAt'
@@ -277,8 +360,7 @@ service cloud.firestore {
         allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
           (
             isTenantDriver(userId) &&
-            'staffId' in request.auth.token &&
-            request.auth.token.staffId == staffId &&
+            isOwnDriver(staffId) &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'status', 'lastAttendanceDate', 'attendanceMarkedAt',
               'punchInTime', 'isShiftActive', 'updatedAt'
@@ -313,15 +395,41 @@ service cloud.firestore {
       match /driver_status/{staffId} {
         allow read: if isOwner(userId) || 
                        isTenantManager(userId) || 
-                       isTenantDriver(userId) || 
+                       (isTenantDriver(userId) && isOwnDriver(staffId)) ||
                        isAdmin();
         
-        // Driver updates their own status; owner/manager can reset
-        allow write: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+        allow create: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
           (
-            isTenantDriver(userId) && 
-            'staffId' in request.auth.token && 
-            request.auth.token.staffId == staffId
+            isTenantDriver(userId) &&
+            isOwnDriver(staffId) &&
+            request.resource.data.keys().hasOnly([
+              'staffId', 'riderName', 'mobile', 'status', 'lastAttendanceDate',
+              'attendanceMarkedAt', 'punchInTime', 'isShiftActive',
+              'currentLat', 'currentLng', 'accuracy', 'lastLocationUpdate',
+              'initialLat', 'initialLng', 'endTime', 'punchOutTime',
+              'durationMinutes', 'finalLat', 'finalLng', 'updatedAt'
+            ]) &&
+            (!('staffId' in request.resource.data) || request.resource.data.staffId == staffId) &&
+            (!('status' in request.resource.data) || request.resource.data.status in ['Online', 'Offline']) &&
+            (!('isShiftActive' in request.resource.data) || request.resource.data.isShiftActive is bool)
+          );
+
+        allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            isOwnDriver(staffId) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'staffId', 'riderName', 'mobile', 'status', 'lastAttendanceDate',
+              'attendanceMarkedAt', 'punchInTime', 'isShiftActive',
+              'currentLat', 'currentLng', 'accuracy', 'lastLocationUpdate',
+              'initialLat', 'initialLng', 'endTime', 'punchOutTime',
+              'durationMinutes', 'finalLat', 'finalLng', 'updatedAt'
+            ]) &&
+            (!('staffId' in request.resource.data) || request.resource.data.staffId == staffId) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+              request.resource.data.status in ['Online', 'Offline']) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isShiftActive']) ||
+              request.resource.data.isShiftActive is bool)
           );
       }
 
@@ -329,25 +437,69 @@ service cloud.firestore {
       match /driver_sessions/{sessionId} {
         allow read: if isOwner(userId) || 
                        isTenantManager(userId) || 
-                       isTenantDriver(userId) || 
+                       (isTenantDriver(userId) && isOwnDriver(resource.data.staffId)) ||
                        isAdmin();
         
-        allow write: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+        allow create: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
           (
-            isTenantDriver(userId)
+            isTenantDriver(userId) &&
+            isOwnDriver(request.resource.data.staffId) &&
+            request.resource.data.sessionId == sessionId &&
+            request.resource.data.status == 'Active' &&
+            request.resource.data.keys().hasOnly([
+              'sessionId', 'staffId', 'driverName', 'mobile', 'branchId',
+              'date', 'startTime', 'punchInTime', 'endTime', 'punchOutTime',
+              'durationMinutes', 'status', 'initialLat', 'initialLng',
+              'lastLocationUpdate', 'finalLat', 'finalLng', 'createdAt',
+              'updatedAt'
+            ])
+          );
+
+        allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            isOwnDriver(resource.data.staffId) &&
+            request.resource.data.staffId == request.auth.token.staffId &&
+            request.resource.data.sessionId == sessionId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'endTime', 'punchOutTime', 'durationMinutes', 'status',
+              'initialLat', 'initialLng', 'lastLocationUpdate', 'finalLat',
+              'finalLng', 'updatedAt'
+            ]) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+              request.resource.data.status == 'Completed')
           );
       }
 
       // --- Branch Managers ---
       match /managers/{managerId} {
-        allow read: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
         allow write: if isOwner(userId) || isAdmin();
       }
 
       // --- Manager Audit Logs ---
       match /manager_logs/{logId} {
         allow read: if isOwner(userId) || isAdmin();
-        allow write: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) || isAdmin() ||
+          (
+            isTenantManager(userId) &&
+            isOwnManager(request.resource.data.managerId) &&
+            request.resource.data.keys().hasOnly([
+              'id', 'managerId', 'managerName', 'managerEmail',
+              'branchId', 'branchName', 'date', 'loginTime',
+              'logoutTime', 'status', 'createdAt', 'updatedAt'
+            ])
+          );
+        allow update: if isOwner(userId) || isAdmin() ||
+          (
+            isTenantManager(userId) &&
+            isOwnManager(resource.data.managerId) &&
+            request.resource.data.managerId == request.auth.token.managerId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'logoutTime', 'status', 'updatedAt'
+            ])
+          );
+        allow delete: if isOwner(userId) || isAdmin();
       }
 
       // --- Meal Plans ---
@@ -395,6 +547,16 @@ service cloud.firestore {
       }
       match /single_orders/{orderId} {
         allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // Owner login receipts and manager read receipts are app-owned operational data.
+      match /login_logs/{logId} {
+        allow read, write: if isOwner(userId);
+        allow read: if isAdmin();
+      }
+
+      match /read_messages/{messageId} {
+        allow read, write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
 
       // Catch-all for other subcollections (deny by default)

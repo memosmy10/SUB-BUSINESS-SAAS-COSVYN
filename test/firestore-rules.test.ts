@@ -67,7 +67,8 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await setDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
         name: 'Customer A1',
         mobile: '9111111111',
-        branchId: 'branch_1'
+        branchId: 'branch_1',
+        uncollectedBoxesCount: 3
       });
 
       await setDoc(doc(db, 'businesses/biz_a/plans/plan_1'), {
@@ -116,7 +117,16 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
 
       await setDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_1'), {
         staffId: 'driver_1',
-        activeStops: ['cust_1']
+        activeStops: ['cust_1'],
+        status: 'Offline',
+        isShiftActive: false,
+        updatedAt: '2026-10-17T09:00:00Z'
+      });
+
+      await setDoc(doc(db, 'pending_activations/owner@example.com'), {
+        email: 'owner@example.com',
+        planId: 'yearly',
+        paymentId: 'pay_pending_123'
       });
 
       await setDoc(doc(db, 'global_settings/pricing'), {
@@ -221,6 +231,19 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/expenses/exp_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/inventory/item_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/notes/note_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/plans/plan_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/branches/branch_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/single_orders/order_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/manager_logs/nonexistent')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/read_messages/nonexistent')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/login_logs/nonexistent')));
+    });
+
+    it('Owner A CAN update staff records through normal staff management', async () => {
+      const db = testEnv.authenticatedContext('biz_a').firestore();
+      await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a/staff/driver_1'), {
+        name: 'Updated Rider'
+      }));
     });
 
     it('Owner A CAN update general profile fields (businessName, logoUrl, etc.)', async () => {
@@ -229,6 +252,33 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
         businessName: 'Updated Alpha Name',
         description: 'New Description'
       }));
+    });
+
+    it('Owner A CAN update profile fields while protected subscription fields already exist', async () => {
+      const db = testEnv.authenticatedContext('biz_a').firestore();
+      await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a'), {
+        businessName: 'Updated without replacing subscription',
+        logoUrl: 'https://example.test/logo.png'
+      }));
+      const snapshot = await getDoc(doc(db, 'businesses/biz_a'));
+      expect(snapshot.data()?.planName).toBe('Free Trial');
+      expect(snapshot.data()?.planStatus).toBe('Active');
+      expect(snapshot.data()?.planExpiryDate).toBe('2026-12-31');
+    });
+
+    it('Owner A CAN read/delete only their own pending activation document', async () => {
+      const ownerDb = testEnv.authenticatedContext('biz_a', {
+        email: 'owner@example.com',
+        email_verified: true
+      }).firestore();
+      const otherDb = testEnv.authenticatedContext('biz_a', {
+        email: 'other@example.com',
+        email_verified: true
+      }).firestore();
+      await assertSucceeds(getDoc(doc(ownerDb, 'pending_activations/owner@example.com')));
+      await assertFails(getDoc(doc(otherDb, 'pending_activations/owner@example.com')));
+      await assertFails(getDocs(collection(ownerDb, 'pending_activations')));
+      await assertSucceeds(deleteDoc(doc(ownerDb, 'pending_activations/owner@example.com')));
     });
 
     it('Owner A CANNOT tamper with planName, planStatus, planExpiryDate, or lastPaymentId', async () => {
@@ -259,6 +309,55 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
         trialClaimed: false
       }));
     });
+
+    it('Owner A CAN mark an active subscription expired without changing other protected fields', async () => {
+      const db = testEnv.authenticatedContext('biz_a').firestore();
+      await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a'), {
+        planStatus: 'Expired',
+        updatedAt: '2026-10-17T10:00:00Z'
+      }));
+    });
+
+    it('Owner A CANNOT combine auto-expiry with a plan or payment change', async () => {
+      const db = testEnv.authenticatedContext('biz_a').firestore();
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a'), {
+        planStatus: 'Expired',
+        planExpiryDate: '2099-12-31'
+      }));
+    });
+
+    it('Owner A cannot create a business with server-managed plan or payment state', async () => {
+      const db = testEnv.authenticatedContext('new_owner').firestore();
+      await assertFails(setDoc(doc(db, 'businesses/new_owner'), {
+        businessName: 'Forged Premium Kitchen',
+        planName: 'COSVYN ONE (Yearly)',
+        planStatus: 'Active',
+        planExpiryDate: '2099-12-31',
+        purchasedInvoiceCredits: 50
+      }));
+      await assertSucceeds(setDoc(doc(db, 'businesses/new_owner'), {
+        businessName: 'New Kitchen'
+      }));
+    });
+
+    it('Owner A cannot directly change purchased or monthly invoice credit state', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), 'businesses/biz_a'), {
+          purchasedInvoiceCredits: 3
+        });
+      });
+      const db = testEnv.authenticatedContext('biz_a').firestore();
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a'), {
+        purchasedInvoiceCredits: 2
+      }));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a'), {
+        purchasedInvoiceCredits: 5
+      }));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a'), {
+        monthlyFreeUsed: 0,
+        lastInvoiceResetMonth: '2099-01'
+      }));
+    });
   });
 
   // =========================================================================
@@ -287,19 +386,30 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/branches/branch_1')));
     });
 
-    it('Driver A CAN read their OWN staff doc', async () => {
+    it('Driver A CANNOT read their own staff document containing a PIN hash', async () => {
       const db = driverContext().firestore();
-      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/staff/driver_1')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/staff/driver_1')));
     });
 
-    it('Driver A CANNOT read another driver staff doc', async () => {
+    it('Driver A loses tenant access when their staff account is deactivated', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), 'businesses/biz_a/staff/driver_1'), {
+          active: false,
+          status: 'Inactive'
+        });
+      });
+
       const db = driverContext().firestore();
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/staff/driver_2')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/customers/cust_1')));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/staff/driver_1'), {
+        status: 'Offline'
+      }));
     });
 
-    it('Driver A CANNOT list the staff collection', async () => {
+    it('Driver A CANNOT list staff or read another tenant staff document', async () => {
       const db = driverContext().firestore();
       await assertFails(getDocs(collection(db, 'businesses/biz_a/staff')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_b/staff/driver_2')));
     });
 
     it('Driver A CANNOT read or write staff_credentials', async () => {
@@ -335,12 +445,23 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertFails(getDoc(doc(db, 'businesses/biz_a/notes/note_1')));
     });
 
-    it('Driver A CAN update customer ONLY with boxCollections, uncollectedBoxesCount, routeOrder, updatedAt', async () => {
+    it('Driver A CAN update box collection history and decrease the outstanding box count', async () => {
       const db = driverContext().firestore();
       await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
         uncollectedBoxesCount: 2,
-        routeOrder: 5,
+        boxCollections: {
+          '2026-10-17_Lunch': {
+            status: 'Collected Clean',
+            boxType: 'Steel Tiffin',
+            issueNote: '',
+            collectedAt: '2026-10-17T10:00:00Z',
+            updatedBy: 'Raju Rider'
+          }
+        },
         updatedAt: '2026-10-17T10:00:00Z'
+      }));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
+        uncollectedBoxesCount: 4
       }));
     });
 
@@ -376,16 +497,42 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertFails(updateDoc(doc(db, 'businesses/biz_a/staff/driver_1'), {
         pin: '9999'
       }));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/staff/driver_1'), {
+        pinHash: 'forged-hash'
+      }));
     });
 
-    it('Driver A CAN create and update delivery_logs for their business', async () => {
+    it('Driver A CANNOT update another staff member record', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'businesses/biz_a/staff/driver_2'), {
+          name: 'Other Rider',
+          status: 'Offline',
+          pinHash: '$2a$10$anotherhashedpin'
+        });
+      });
+
       const db = driverContext().firestore();
-      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/delivery_logs/log_101'), {
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/staff/driver_2'), {
+        status: 'Online'
+      }));
+    });
+
+    it('Driver A CAN create a box-only log then update its delivery status', async () => {
+      const db = driverContext().firestore();
+      const logRef = doc(db, 'businesses/biz_a/delivery_logs/log_101');
+      await assertSucceeds(setDoc(logRef, {
         date: '2026-10-17',
         customerId: 'cust_1',
+        customerName: 'Customer A1',
+        deliveryBoyId: 'driver_1',
+        deliveryBoyName: 'Raju Rider',
         mealTime: 'Lunch',
+        reusableBoxEnabled: true,
+        boxStatus: 'Collected Clean'
+      }));
+      await assertSucceeds(updateDoc(logRef, {
         status: 'Delivered',
-        deliveryBoyId: 'driver_1'
+        deliveredAt: '2026-10-17T10:00:00Z'
       }));
     });
 
@@ -397,27 +544,114 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       }));
     });
 
-    it('Driver A CAN read and write their own driver_manifest, driver_status, and driver_sessions', async () => {
+    it('Driver A CAN start/end a shift using their own manifest, status, and session', async () => {
       const db = driverContext().firestore();
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_1')));
-      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/driver_status/driver_1'), {
+      const manifestRef = doc(db, 'businesses/biz_a/driver_manifest/driver_1');
+      const statusRef = doc(db, 'businesses/biz_a/driver_status/driver_1');
+      const sessionRef = doc(db, 'businesses/biz_a/driver_sessions/2026-10-17_driver_1');
+      await assertSucceeds(setDoc(statusRef, {
+        staffId: 'driver_1',
         status: 'Online',
-        lastUpdate: '2026-10-17'
+        isShiftActive: true,
+        updatedAt: '2026-10-17T10:00:00Z'
       }));
-      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/driver_sessions/2026-10-17_driver_1'), {
+      await assertSucceeds(updateDoc(manifestRef, {
+        status: 'Online',
+        isShiftActive: true,
+        lastAttendanceDate: '2026-10-17',
+        attendanceMarkedAt: '10:00 AM',
+        updatedAt: '2026-10-17T10:00:00Z'
+      }));
+      await assertSucceeds(setDoc(sessionRef, {
+        sessionId: '2026-10-17_driver_1',
+        staffId: 'driver_1',
         status: 'Active',
-        date: '2026-10-17'
+        date: '2026-10-17',
+        startTime: '2026-10-17T10:00:00Z'
+      }));
+      await assertSucceeds(updateDoc(sessionRef, {
+        status: 'Completed',
+        endTime: '2026-10-17T18:00:00Z',
+        punchOutTime: '06:00 PM',
+        durationMinutes: 480,
+        updatedAt: '2026-10-17T18:00:00Z'
+      }));
+      await assertSucceeds(updateDoc(statusRef, {
+        status: 'Offline',
+        isShiftActive: false,
+        updatedAt: '2026-10-17T18:00:00Z'
+      }));
+      await assertSucceeds(updateDoc(manifestRef, {
+        status: 'Offline',
+        isShiftActive: false,
+        updatedAt: '2026-10-17T18:00:00Z'
+      }));
+    });
+
+    it('Driver A CAN create their own manifest when starting a shift without an existing document', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await deleteDoc(doc(context.firestore(), 'businesses/biz_a/driver_manifest/driver_1'));
+      });
+
+      const db = driverContext().firestore();
+      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_1'), {
+        status: 'Online',
+        lastAttendanceDate: '2026-10-17',
+        attendanceMarkedAt: '10:00 AM',
+        punchInTime: '10:00 AM',
+        isShiftActive: true,
+        updatedAt: '2026-10-17T10:00:00Z'
       }));
     });
 
     it('Driver A CANNOT access another driver manifest, status, or session', async () => {
       const db = driverContext().firestore();
       await assertFails(getDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_other')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/driver_status/driver_other')));
       await assertFails(setDoc(doc(db, 'businesses/biz_a/driver_status/driver_other'), {
         status: 'Hacked'
       }));
       await assertFails(setDoc(doc(db, 'businesses/biz_a/driver_sessions/2026-10-17_driver_other'), {
+        sessionId: '2026-10-17_driver_other',
+        staffId: 'driver_other',
         status: 'Hacked'
+      }));
+    });
+
+    it('Driver A CANNOT update manifest fields outside shift state', async () => {
+      const db = driverContext().firestore();
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/driver_manifest/driver_1'), {
+        activeStops: ['cust_1', 'forged'],
+        status: 'Online',
+        isShiftActive: true
+      }));
+    });
+
+    it('Driver A CANNOT create a delivery log under another driver identity', async () => {
+      const db = driverContext().firestore();
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/delivery_logs/forged'), {
+        date: '2026-10-17',
+        customerId: 'cust_1',
+        mealTime: 'Lunch',
+        status: 'Delivered',
+        deliveryBoyId: 'driver_2'
+      }));
+    });
+
+    it('Driver A CANNOT change another driver delivery log', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'businesses/biz_a/delivery_logs/other_log'), {
+          date: '2026-10-17',
+          customerId: 'cust_1',
+          mealTime: 'Lunch',
+          status: 'Pending',
+          deliveryBoyId: 'driver_2'
+        });
+      });
+      const db = driverContext().firestore();
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/delivery_logs/other_log'), {
+        status: 'Delivered'
       }));
     });
   });
@@ -439,6 +673,19 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/plans/plan_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/branches/branch_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/staff/driver_1')));
+    });
+
+    it('Manager A CAN update staff records through delegated staff management', async () => {
+      const db = managerContext().firestore();
+      await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a/staff/driver_1'), {
+        status: 'Online'
+      }));
+    });
+
+    it('Manager A CANNOT read manager credential documents; login uses the callable', async () => {
+      const db = managerContext().firestore();
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/managers/mgr_1')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/managers/mgr_2')));
     });
 
     it('Manager A CANNOT access other managers in managers collection', async () => {
@@ -465,10 +712,24 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
 
     it('Manager A CAN record their own login/logout logs in manager_logs', async () => {
       const db = managerContext().firestore();
-      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/manager_logs/mlog_1'), {
+      const logRef = doc(db, 'businesses/biz_a/manager_logs/mlog_1');
+      await assertSucceeds(setDoc(logRef, {
+        id: 'mlog_1',
         managerId: 'mgr_1',
-        action: 'Login',
-        date: '2026-10-17'
+        managerName: 'Manager Mike',
+        managerEmail: 'mike@kitchenalpha.com',
+        branchId: 'branch_1',
+        branchName: 'Central Hub',
+        date: '2026-10-17',
+        loginTime: '09:00:00',
+        logoutTime: null,
+        status: 'Active',
+        createdAt: '2026-10-17T09:00:00Z'
+      }));
+      await assertSucceeds(updateDoc(logRef, {
+        logoutTime: '05:00:00',
+        status: 'Logged Out',
+        updatedAt: '2026-10-17T17:00:00Z'
       }));
     });
 
@@ -491,7 +752,7 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_b')));
       await assertSucceeds(getDoc(doc(db, 'global_settings/pricing')));
       await assertSucceeds(setDoc(doc(db, 'global_settings/pricing'), { tier: 'Updated Pricing' }));
-      await assertSucceeds(getDoc(doc(db, 'trial_claims/user_fake')));
+      await assertFails(getDoc(doc(db, 'trial_claims/user_fake')));
     });
 
     it('Admin with verified email has full administrative access', async () => {
@@ -588,7 +849,7 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       }));
     });
 
-    it('Client CAN read their own order document', async () => {
+    it('Clients CANNOT read server-only order documents', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await setDoc(doc(context.firestore(), 'orders/order_biz_a_123'), {
           bizId: 'biz_a',
@@ -596,11 +857,9 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
           status: 'created'
         });
       });
-
       const ownerDb = testEnv.authenticatedContext('biz_a').firestore();
-      await assertSucceeds(getDoc(doc(ownerDb, 'orders/order_biz_a_123')));
+      await assertFails(getDoc(doc(ownerDb, 'orders/order_biz_a_123')));
 
-      // Other owner cannot read biz_a order
       const otherDb = testEnv.authenticatedContext('biz_b').firestore();
       await assertFails(getDoc(doc(otherDb, 'orders/order_biz_a_123')));
     });

@@ -75,9 +75,6 @@ const Signup = () => {
         description: '',
         category: 'Tiffin Service',
         isProfileComplete: Boolean(formData.ownerName.trim() && formData.businessName.trim() && formData.mobile.trim()),
-        planName: 'None',
-        planExpiryDate: new Date().toISOString().split('T')[0],
-        planStatus: 'Inactive',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };

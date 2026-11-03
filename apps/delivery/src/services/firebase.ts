@@ -83,6 +83,7 @@ export interface DriverLoginResponse {
     staffId: string;
     branchId: string;
     mobile: string;
+    isSingleDriverBusiness?: boolean;
   };
 }
 
@@ -97,6 +98,7 @@ export interface DriverClaims {
   bizId?: string;
   staffId?: string;
   branchId?: string;
+  isSingleDriverBusiness?: boolean;
 }
 
 export const getDriverClaims = async (user: User): Promise<DriverClaims | null> => {
@@ -107,6 +109,7 @@ export const getDriverClaims = async (user: User): Promise<DriverClaims | null> 
       bizId: idTokenResult.claims.bizId as string | undefined,
       staffId: idTokenResult.claims.staffId as string | undefined,
       branchId: idTokenResult.claims.branchId as string | undefined,
+      isSingleDriverBusiness: idTokenResult.claims.isSingleDriverBusiness as boolean | undefined,
     };
   } catch (err) {
     console.warn("Could not retrieve driver claims:", err);

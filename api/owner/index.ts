@@ -3,7 +3,6 @@ import { dbService } from '../../services/db-service/src/firestore';
 import { hashPin } from '../../services/auth-service/src/password';
 import { authenticateToken, requireRoles } from '../middleware/auth';
 import { logAuditEvent } from '../../services/audit-service/src/logger';
-import { createRazorpayOrder } from '../../services/payment-service/src/razorpay';
 import { StaffData, CustomerData } from '../../packages/types/src';
 
 export const ownerRouter = Router();
@@ -251,19 +250,11 @@ ownerRouter.get('/billing', async (req: Request, res: Response): Promise<void> =
 });
 
 // POST /api/owner/billing/upgrade
-ownerRouter.post('/billing/upgrade', async (req: Request, res: Response): Promise<void> => {
-  const businessId = req.user?.businessId || 'biz_spicedelight';
-  const { planId, durationMonths } = req.body;
-
-  const order = await createRazorpayOrder({
-    planId: planId || 'pro',
-    durationMonths: durationMonths || 1,
-    businessId,
-  });
-
-  res.status(200).json({
-    success: true,
-    order,
+ownerRouter.post('/billing/upgrade', async (_req: Request, res: Response): Promise<void> => {
+  res.status(503).json({
+    success: false,
+    error: 'PAYMENT_FLOW_UNAVAILABLE',
+    message: 'Use the authenticated Firebase payment checkout.',
   });
 });
 

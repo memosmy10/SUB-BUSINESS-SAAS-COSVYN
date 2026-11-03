@@ -163,8 +163,9 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
   const rateLimitData = rateLimitSnap.exists ? rateLimitSnap.data() : { attempts: 0, lockedUntil: null };
 
   // Check if locked out
-  if (rateLimitData.lockedUntil && Number(rateLimitData.lockedUntil) > now) {
-    const remainingMinutes = Math.max(1, Math.ceil((Number(rateLimitData.lockedUntil) - now) / 60000));
+  const lockedUntil = Number(rateLimitData.lockedUntil);
+  if (Number.isFinite(lockedUntil) && lockedUntil > now) {
+    const remainingMinutes = Math.max(1, Math.ceil((lockedUntil - now) / 60000));
     throw new HttpsError(
       'resource-exhausted',
       `Account temporarily locked due to 5 consecutive failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`
@@ -172,24 +173,48 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
   }
 
   const recordFailedAttempt = async () => {
-    const attempts = (rateLimitData.attempts || 0) + 1;
-    const isLocked = attempts >= 5;
-    const lockedUntil = isLocked ? now + (15 * 60 * 1000) : null;
+    const failure = await db.runTransaction(async (transaction) => {
+      const currentSnap = await transaction.get(rateLimitRef);
+      const currentData = currentSnap.exists ? currentSnap.data() : {};
+      const currentTime = Date.now();
+      const currentLockedUntil = Number(currentData.lockedUntil);
 
-    await rateLimitRef.set({
-      attempts: isLocked ? 0 : attempts,
-      lockedUntil,
-      lastFailedAt: admin.firestore.FieldValue.serverTimestamp(),
-      phone: cleanPhone
-    }, { merge: true });
+      if (Number.isFinite(currentLockedUntil) && currentLockedUntil > currentTime) {
+        return { alreadyLocked: true, lockedUntil: currentLockedUntil };
+      }
 
-    if (isLocked) {
+      const currentAttempts = Number.isSafeInteger(currentData.attempts) && currentData.attempts >= 0
+        ? currentData.attempts
+        : 0;
+      const attempts = currentAttempts + 1;
+      const isLocked = attempts >= 5;
+      const nextLockedUntil = isLocked ? currentTime + (15 * 60 * 1000) : null;
+
+      transaction.set(rateLimitRef, {
+        attempts: isLocked ? 0 : attempts,
+        lockedUntil: nextLockedUntil,
+        lastFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+        phone: cleanPhone
+      }, { merge: true });
+
+      return { attempts, isLocked, lockedUntil: nextLockedUntil };
+    });
+
+    if (failure.alreadyLocked) {
+      const remainingMinutes = Math.max(1, Math.ceil((failure.lockedUntil - Date.now()) / 60000));
+      throw new HttpsError(
+        'resource-exhausted',
+        `Account temporarily locked due to 5 consecutive failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`
+      );
+    }
+
+    if (failure.isLocked) {
       throw new HttpsError(
         'resource-exhausted',
         'Account locked for 15 minutes due to 5 consecutive failed login attempts.'
       );
     }
-    const remaining = 5 - attempts;
+    const remaining = 5 - failure.attempts;
     throw new HttpsError(
       'unauthenticated',
       `Invalid mobile number or PIN. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout)`
@@ -1481,6 +1506,5 @@ exports.geminiGenerate = onCall({
   const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
   return { text };
 });
-
 
 

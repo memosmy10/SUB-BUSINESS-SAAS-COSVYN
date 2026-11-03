@@ -81,14 +81,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Driver Auth Lookup: riders can GET their own record, but NO listing
-    // Allows independent device login without needing the owner's Firebase session
-    // Owner + functions can write; everyone can anonymously read a single record by phone
+    // Driver authentication lookup is server-only because it contains PIN hashes.
     match /driver_auth_lookup/{mobileDigits} {
-      allow get: if true;  // Anonymous get for independent device login
-      allow list: if false; // Block enumeration attacks
-      allow create, update: if isAdmin();  // Only server writes via Cloud Functions
-      allow delete: if isAdmin();
+      allow read, write: if false;
     }
 
     // Free Trial Claim Registry (server-side only)
@@ -257,7 +252,61 @@ service cloud.firestore {
                        isTenantDriver(userId) || 
                        isAdmin();
         
-        allow write: if isOwner(userId) || isTenantManager(userId) || isAdmin();
+        allow create: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            'staffId' in request.auth.token &&
+            request.auth.token.staffId == staffId &&
+            request.resource.data.keys().hasOnly([
+              'status', 'lastAttendanceDate', 'attendanceMarkedAt',
+              'punchInTime', 'isShiftActive', 'updatedAt'
+            ]) &&
+            request.resource.data.keys().hasAll(['status', 'isShiftActive', 'updatedAt']) &&
+            request.resource.data.status in ['Online', 'Offline'] &&
+            request.resource.data.isShiftActive is bool &&
+            (
+              (request.resource.data.status == 'Online' && request.resource.data.isShiftActive == true) ||
+              (request.resource.data.status == 'Offline' && request.resource.data.isShiftActive == false)
+            ) &&
+            request.resource.data.updatedAt is string &&
+            (!('lastAttendanceDate' in request.resource.data) || request.resource.data.lastAttendanceDate is string) &&
+            (!('attendanceMarkedAt' in request.resource.data) || request.resource.data.attendanceMarkedAt is string) &&
+            (!('punchInTime' in request.resource.data) || request.resource.data.punchInTime is string)
+          );
+
+        allow update: if isOwner(userId) || isTenantManager(userId) || isAdmin() ||
+          (
+            isTenantDriver(userId) &&
+            'staffId' in request.auth.token &&
+            request.auth.token.staffId == staffId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'lastAttendanceDate', 'attendanceMarkedAt',
+              'punchInTime', 'isShiftActive', 'updatedAt'
+            ]) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+              request.resource.data.status in ['Online', 'Offline']) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastAttendanceDate']) ||
+              request.resource.data.lastAttendanceDate is string) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['attendanceMarkedAt']) ||
+              request.resource.data.attendanceMarkedAt is string) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['punchInTime']) ||
+              request.resource.data.punchInTime is string) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isShiftActive']) ||
+              request.resource.data.isShiftActive is bool) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['updatedAt']) ||
+              request.resource.data.updatedAt is string) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'isShiftActive']) ||
+              (
+                'status' in request.resource.data &&
+                'isShiftActive' in request.resource.data &&
+                (
+                  (request.resource.data.status == 'Online' && request.resource.data.isShiftActive == true) ||
+                  (request.resource.data.status == 'Offline' && request.resource.data.isShiftActive == false)
+                )
+              ))
+          );
+
+        allow delete: if isOwner(userId) || isTenantManager(userId) || isAdmin();
       }
 
       // --- Driver Status (real-time: online/offline, GPS, battery) ---

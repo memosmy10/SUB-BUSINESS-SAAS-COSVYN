@@ -154,8 +154,9 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
       await assertFails(getDoc(doc(db, 'businesses/biz_a/invoices/inv_1')));
     });
 
-    it('CANNOT create or write to driver_auth_lookup', async () => {
+    it('CANNOT read or write driver_auth_lookup', async () => {
       const db = testEnv.unauthenticatedContext().firestore();
+      await assertFails(getDoc(doc(db, 'driver_auth_lookup/9876543210')));
       await assertFails(setDoc(doc(db, 'driver_auth_lookup/9876543210'), { pin: '1234' }));
     });
 

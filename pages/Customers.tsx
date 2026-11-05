@@ -19,8 +19,9 @@ import {
   calculateEndDate, calculateRemainingDeliveries, shiftDateStr, isPlanActiveOnDate,
   GlobalCustomer, PauseEvent, SubscribedPlan, getTodayStr,
   REUSABLE_BOX_TYPES, getCustomerBoxHealth, getPlanDeliveryDayNumber, formatDateDDMMYYYY,
-  getCustomerActiveDaysLeft
+  getCustomerActiveDaysLeft, getPlanDietOnDate, getPlanDietSummaryLabel
 } from '../services/store';
+import { VegNonVegIcon, VegNonVegBadge } from '../components/VegNonVegIndicator';
 import { doc, collection, query, where, getDocs, writeBatch, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { 
@@ -1737,6 +1738,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
         ...newPlanForm, 
         planName: selectedPlan.name, 
         price: selectedPlan.price, 
+        dietPreference: selectedPlan.dietPreference || 'Veg',
+        dayDietSchedule: selectedPlan.dayDietSchedule,
         endDate, 
         pauses: [],
         reusableBoxType: newPlanForm.reusableBoxType || 'None',
@@ -1982,7 +1985,10 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                               onClick={() => setIsPlanDropdownOpen(!isPlanDropdownOpen)}
                               className="w-full p-2 border border-slate-200 hover:border-primary-400 bg-white rounded-xl font-bold text-xs flex items-center justify-between text-left transition-all shadow-2xs group focus:ring-2 focus:ring-primary-500 focus:outline-none"
                            >
-                              <div className="flex items-center gap-1.5 truncate">
+                              <div className="flex items-center gap-2 truncate">
+                                 {selectedPlanObject && (
+                                    <VegNonVegIcon diet={selectedPlanObject.dietPreference === 'Non-Veg' ? 'Non-Veg' : selectedPlanObject.dietPreference === 'Mixed' ? 'Mixed' : 'Veg'} size={12} />
+                                 )}
                                  <span className="truncate text-slate-800">
                                     {selectedPlanObject?.name || 'Select Plan...'}
                                  </span>
@@ -2034,6 +2040,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                                     {filteredBranchPlans.length > 0 ? (
                                        filteredBranchPlans.map((p: any) => {
                                           const isSelected = p.id === newPlanForm.planId;
+                                          const dietType = p.dietPreference === 'Non-Veg' ? 'Non-Veg' : p.dietPreference === 'Mixed' ? 'Mixed' : 'Veg';
+                                          const dietLabel = getPlanDietSummaryLabel(p.dayDietSchedule, p.weekdays || [1,2,3,4,5,6]);
                                           return (
                                              <button
                                                 key={p.id}
@@ -2050,14 +2058,15 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                                              >
                                                 <div className="truncate flex-1 pr-2">
                                                    <div className="flex items-center gap-1.5">
+                                                      <VegNonVegIcon diet={dietType} size={12} />
                                                       <span className="truncate">{p.name}</span>
                                                       {isSelected && <Check size={12} className="text-primary-600 shrink-0" />}
                                                    </div>
-                                                   {p.numberOfDeliveryDays && (
-                                                      <span className="text-[10px] text-slate-400 block font-normal">
-                                                         {p.numberOfDeliveryDays} deliveries • {p.mealTime || 'Daily'}
-                                                      </span>
-                                                   )}
+                                                   <div className="flex items-center gap-1.5 text-[10px] text-slate-400 block font-normal">
+                                                      <span>{p.numberOfDeliveryDays || 26} deliveries • {p.mealTime || 'Daily'}</span>
+                                                      <span>•</span>
+                                                      <span className="font-medium text-slate-600">{dietLabel}</span>
+                                                   </div>
                                                 </div>
                                                 <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 shrink-0">
                                                    ₹{p.price}
@@ -2328,7 +2337,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                               <div className="flex items-center gap-2">
                                 <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.mealTime === 'Breakfast' ? 'bg-orange-100 text-orange-600' : p.mealTime === 'Lunch' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>{p.mealTime}</span>
                                 <div className="font-bold flex items-center gap-1.5 text-slate-900">
-                                  {p.planName} (₹{p.price})
+                                  <VegNonVegIcon diet={getPlanDietOnDate(p, p.startDate || getTodayStr(), p)} size={11} />
+                                  <span>{p.planName} (₹{p.price})</span>
                                   {p.isStarred && <Star size={13} fill="#f59e0b" className="text-amber-500" />}
                                 </div>
                               </div>
@@ -2658,7 +2668,12 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                                         {p.mealTime}
                                       </span>
                                     </td>
-                                    <td className="p-3 truncate max-w-[140px] text-slate-900">{p.planName}</td>
+                                    <td className="p-3 truncate max-w-[160px] text-slate-900">
+                                      <div className="flex items-center gap-1.5">
+                                        <VegNonVegIcon diet={getPlanDietOnDate(planConfig || p, getTodayStr(), p)} size={11} />
+                                        <span className="truncate font-semibold">{p.planName}</span>
+                                      </div>
+                                    </td>
                                     <td className="p-3">₹{p.price}</td>
                                     <td className="p-3 font-mono text-[10px]">{formatDateDDMMYYYY(p.endDate)}</td>
                                     <td className="p-3 text-green-600">{delCount}/{planConfig?.numberOfDeliveryDays || p.totalDeliveries || 26}</td>

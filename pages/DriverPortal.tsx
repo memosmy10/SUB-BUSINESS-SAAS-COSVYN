@@ -25,7 +25,7 @@ import {
   BoxRecollectionStatus, DeliveryBoyStaff, GlobalCustomer, SubscribedPlan,
   getCustomerScheduledPlansForSession, isPlanActiveOnDate, formatDateDDMMYYYY,
   decodeDriverToken, normalizePhone, isReusableBoxType,
-  getDefaultMealSessionForTime, MealSession
+  getDefaultMealSessionForTime, MealSession, getPlanDietOnDate, DietType
 } from '../services/store';
 import { buildWhatsAppUrl, getDeliveryArrivalMessage } from '../services/messageTemplates';
 
@@ -758,16 +758,21 @@ export const DriverPortal: React.FC = () => {
           // Check if Customer is on Day 2+ for reusable box
           const isDay2Plus = isCustomerDeliveryDay2Plus(c, todayStr);
 
-          // Box variants breakdown (Module 5)
-          const boxVariantMap: Record<string, { count: number; boxType: string; isStarred: boolean }> = {};
+          // Box variants breakdown with Veg/Non-Veg awareness
+          const boxVariantMap: Record<string, { count: number; boxType: string; isStarred: boolean; diet: DietType; planName: string }> = {};
           scheduledPlans.forEach(p => {
-            const variantKey = p.planName || 'Standard Meal';
+            const pConfig = plans.find((pc: any) => pc.id === p.planId);
+            const diet = getPlanDietOnDate(pConfig, todayStr, p);
             const rawBox = p.reusableBoxType || c.reusableBoxType;
             const effectiveBox = isReusableBoxType(rawBox) ? rawBox : 'Disposable';
+            const planTitle = p.planName || 'Standard Meal';
+            const variantKey = `${planTitle}_${diet}_${effectiveBox}`;
             if (!boxVariantMap[variantKey]) {
               boxVariantMap[variantKey] = {
                 count: 0,
                 boxType: effectiveBox,
+                diet,
+                planName: planTitle,
                 isStarred: Boolean(p.isStarred)
               };
             }
@@ -793,10 +798,7 @@ export const DriverPortal: React.FC = () => {
             customer: c,
             scheduledPlans,
             totalBoxes: stopTotalBoxes,
-            boxVariants: Object.entries(boxVariantMap).map(([name, data]) => ({
-              planName: name,
-              ...data
-            })),
+            boxVariants: Object.values(boxVariantMap),
             isStarred,
             starredQuery,
             isReusableApplicable,
@@ -822,6 +824,18 @@ export const DriverPortal: React.FC = () => {
     const totalBoxesToDeliver = stops.reduce((sum, s) => sum + (s.totalBoxes || 1), 0);
     const deliveredBoxes = stops.filter(s => s.isDelivered).reduce((sum, s) => sum + (s.totalBoxes || 1), 0);
 
+    let totalVegBoxes = 0;
+    let totalNonVegBoxes = 0;
+    stops.forEach(s => {
+      s.boxVariants?.forEach((v: any) => {
+        if (v.diet === 'Non-Veg') {
+          totalNonVegBoxes += (v.count || 1);
+        } else {
+          totalVegBoxes += (v.count || 1);
+        }
+      });
+    });
+
     // Reusable boxes metrics
     const reusableStops = stops.filter(s => s.isReusableApplicable);
     const boxesToRecollect = reusableStops.length;
@@ -840,6 +854,8 @@ export const DriverPortal: React.FC = () => {
       pending: pendingStops, 
       totalBoxesToDeliver,
       deliveredBoxes,
+      totalVegBoxes,
+      totalNonVegBoxes,
       boxesToRecollect, 
       boxesCollected, 
       boxesIssues 
@@ -1946,25 +1962,41 @@ export const DriverPortal: React.FC = () => {
 
                   {/* Variant pills with counts, box types, and starred mark */}
                   <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {boxVariants.map((v: any, vIdx: number) => (
-                      <span 
-                        key={vIdx}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 text-slate-200 text-[11px] font-semibold border border-white/10"
-                      >
-                        <span className="w-4 h-4 rounded bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center justify-center">
-                          {v.count}x
-                        </span>
-                        <span>{v.planName}</span>
-                        <span className="text-[10px] text-amber-300/80 font-mono font-normal">
-                          [{v.boxType}]
-                        </span>
-                        {v.isStarred && (
-                          <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-400 font-bold ml-0.5">
-                            <Star size={11} fill="#f59e0b" /> Special
+                    {boxVariants.map((v: any, vIdx: number) => {
+                      const isVeg = v.diet === 'Veg';
+                      return (
+                        <span 
+                          key={vIdx}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 text-slate-200 text-[11px] font-semibold border border-white/10"
+                        >
+                          <span className="w-4 h-4 rounded bg-amber-400 text-slate-950 font-bold text-[10px] flex items-center justify-center">
+                            {v.count}x
                           </span>
-                        )}
-                      </span>
-                    ))}
+                          <span 
+                            className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 ${
+                              isVeg ? 'border-emerald-400 bg-white' : 'border-rose-400 bg-white'
+                            }`}
+                            title={isVeg ? 'Vegetarian' : 'Non-Vegetarian'}
+                          >
+                            <span className={`w-2 h-2 rounded-full ${isVeg ? 'bg-emerald-600' : 'bg-rose-600'}`} />
+                          </span>
+                          <span>{v.planName}</span>
+                          <span className={`text-[10px] font-black px-1 rounded ${
+                            isVeg ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                          }`}>
+                            {v.diet || 'Veg'}
+                          </span>
+                          <span className="text-[10px] text-amber-300/80 font-mono font-normal">
+                            [{v.boxType}]
+                          </span>
+                          {v.isStarred && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-400 font-bold ml-0.5">
+                              <Star size={11} fill="#f59e0b" /> Special
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
 

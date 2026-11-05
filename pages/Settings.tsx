@@ -14,6 +14,8 @@ import {
 import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
+import { VegNonVegBadge, VegNonVegIcon, DayDietScheduleSelector } from '../components/VegNonVegIndicator';
+import { getPlanDietSummaryLabel, DietType, PlanDietPreference } from '../services/store';
 import bcrypt from 'bcryptjs';
 
 /**
@@ -44,6 +46,8 @@ interface Plan {
   numberOfDeliveryDays: number; 
   weekdays: number[]; 
   deliveryTypeLabel: string; 
+  dietPreference?: PlanDietPreference;
+  dayDietSchedule?: Record<number, DietType>;
 }
 
 interface DeliveryBoy { 
@@ -529,19 +533,49 @@ const Settings = () => {
       ...initialData
     });
 
+    // Default day diet schedule: if initialData has it, use it; else if name suggests non-veg, set to Non-Veg; else Veg
+    const initialSchedule: Record<number, DietType> = useMemo(() => {
+      if (initialData?.dayDietSchedule && Object.keys(initialData.dayDietSchedule).length > 0) {
+        return initialData.dayDietSchedule;
+      }
+      const isDefaultNonVeg = Boolean(
+        initialData?.name && (
+          initialData.name.toLowerCase().includes('non-veg') ||
+          initialData.name.toLowerCase().includes('chicken') ||
+          initialData.name.toLowerCase().includes('meat')
+        )
+      );
+      const sched: Record<number, DietType> = {};
+      [0, 1, 2, 3, 4, 5, 6].forEach(d => {
+        sched[d] = isDefaultNonVeg ? 'Non-Veg' : 'Veg';
+      });
+      return sched;
+    }, [initialData]);
+
+    const [dayDietSchedule, setDayDietSchedule] = useState<Record<number, DietType>>(initialSchedule);
+
     const toggleDay = (d: number) => {
       const days = formData.weekdays || [];
-      setFormData({...formData, weekdays: days.includes(d) ? days.filter(x => x !== d) : [...days, d]});
+      const updatedDays = days.includes(d) ? days.filter(x => x !== d) : [...days, d];
+      setFormData({...formData, weekdays: updatedDays});
     };
 
     const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       if(!formData.name || !formData.price || !formData.branchId) return;
+
+      const activeDays = formData.weekdays || [];
+      const hasVeg = activeDays.some(d => (dayDietSchedule[d] || 'Veg') === 'Veg');
+      const hasNonVeg = activeDays.some(d => dayDietSchedule[d] === 'Non-Veg');
+      const dietPreference: PlanDietPreference = (!hasNonVeg) ? 'Veg' : (!hasVeg) ? 'Non-Veg' : 'Mixed';
+
       handleSavePlan({
         ...formData,
         price: Number(formData.price),
         numberOfDeliveryDays: Number(formData.numberOfDeliveryDays),
-        deliveryTypeLabel: generateDeliveryLabel(formData.weekdays || [])
+        deliveryTypeLabel: generateDeliveryLabel(formData.weekdays || []),
+        dayDietSchedule,
+        dietPreference
       } as any);
     };
 
@@ -551,7 +585,7 @@ const Settings = () => {
           <div className="flex justify-between mb-5 items-center">
             <div>
               <h3 className="font-bold font-display text-lg text-slate-900">{initialData ? 'Edit Subscription Plan' : 'Create Subscription Plan'}</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Meal subscription offering and billing frequency</p>
+              <p className="text-xs text-slate-400 mt-0.5">Meal subscription offering, billing frequency and Veg/Non-Veg schedule</p>
             </div>
             <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors"><X size={18} /></button>
           </div>
@@ -593,6 +627,8 @@ const Settings = () => {
                  <input type="number" placeholder="e.g. 26" value={formData.numberOfDeliveryDays} className="w-full p-2.5 border border-slate-200/90 rounded-xl bg-slate-50/80 text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 outline-none text-xs font-medium" onChange={e => setFormData({...formData, numberOfDeliveryDays: Number(e.target.value)})} />
                </div>
             </div>
+
+            {/* Delivery Weekdays Selection */}
             <div>
               <label className="text-xs font-semibold block mb-2 text-slate-700">Delivery Weekdays</label>
               <div className="flex gap-1.5 flex-wrap">
@@ -601,6 +637,14 @@ const Settings = () => {
                 ))}
               </div>
             </div>
+
+            {/* Veg / Non-Veg Day-by-Day Configuration - Matching Screenshot 1 Wireframe */}
+            <DayDietScheduleSelector
+              weekdays={formData.weekdays || []}
+              dayDietSchedule={dayDietSchedule}
+              onChange={setDayDietSchedule}
+            />
+
             <div className="pt-2">
               <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95">
                 {initialData ? 'Update Plan' : 'Save Plan'}
@@ -1757,8 +1801,29 @@ const Settings = () => {
               {plans.map(p => (
                 <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
                   <td className="px-6 py-3.5">
-                    <div className="font-semibold text-slate-900">{p.name}</div>
-                    <div className="text-[11px] text-slate-400 font-medium">{p.deliveryTypeLabel} • {p.category}</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-slate-900">{p.name}</span>
+                      {p.dietPreference === 'Mixed' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                          <VegNonVegIcon diet="Veg" size={10} />
+                          <VegNonVegIcon diet="Non-Veg" size={10} />
+                          <span>Mixed (Veg & Non-Veg)</span>
+                        </span>
+                      ) : (
+                        <VegNonVegBadge 
+                          diet={p.dietPreference || (p.name.toLowerCase().includes('non-veg') ? 'Non-Veg' : 'Veg')} 
+                          size="xs" 
+                        />
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-medium mt-0.5">
+                      {p.deliveryTypeLabel} • {p.category}
+                      {p.dayDietSchedule && (
+                        <span className="text-slate-500 ml-1.5 font-normal">
+                          • {getPlanDietSummaryLabel(p.dayDietSchedule, p.weekdays).label}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-3.5 font-medium">{branches.find(b => b.id === p.branchId)?.name || 'General'}</td>
                   <td className="px-6 py-3.5 font-bold text-slate-900">₹{p.price.toLocaleString()}</td>

@@ -12,8 +12,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   calculateRemainingDeliveries, getTodayStr, getPlanDeliveryDayNumber, 
   getCustomerUncollectedBoxesCount, getCustomerScheduledPlansForSession, isPlanActiveOnDate,
-  formatDateDDMMYYYY, getDefaultMealSessionForTime, MealSession
+  formatDateDDMMYYYY, getDefaultMealSessionForTime, MealSession, getPlanDietOnDate, DietType
 } from '../services/store';
+import { VegNonVegBadge, VegNonVegIcon } from '../components/VegNonVegIndicator';
 import { writeBatch, doc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { RouteOptimizerModal } from '../components/RouteOptimizerModal';
@@ -149,7 +150,7 @@ const Deliveries = () => {
 
   // --- GLOBAL KITCHEN LOAD (FOR SELECTED DATE) ---
   const globalDailySummary = useMemo(() => {
-    const stats = { Breakfast: 0, Lunch: 0, Dinner: 0, GrandTotal: 0 };
+    const stats = { Breakfast: 0, Lunch: 0, Dinner: 0, GrandTotal: 0, vegTotal: 0, nonVegTotal: 0 };
     
     customers.filter(c => {
       if (selectedBranch !== 'All' && c.branchId !== selectedBranch) return false;
@@ -159,10 +160,19 @@ const Deliveries = () => {
         const scheduled = getCustomerScheduledPlansForSession(c, session, selectedDate, plans);
         scheduled.forEach((ap: any) => {
           const qty = Number(ap.quantity) || 1;
+          const planConfig = plans.find((p: any) => p.id === ap.planId);
+          const diet = getPlanDietOnDate(planConfig, selectedDate, ap);
+
           if (session === 'Breakfast') stats.Breakfast += qty;
           if (session === 'Lunch') stats.Lunch += qty;
           if (session === 'Dinner') stats.Dinner += qty;
           stats.GrandTotal += qty;
+
+          if (diet === 'Non-Veg') {
+            stats.nonVegTotal += qty;
+          } else {
+            stats.vegTotal += qty;
+          }
         });
       });
     });
@@ -182,10 +192,12 @@ const Deliveries = () => {
         Lunch: 0, 
         Dinner: 0, 
         Total: 0,
+        vegTotal: 0,
+        nonVegTotal: 0,
         breakdown: {
-          Breakfast: {} as Record<string, { count: number, isStarred: boolean, name: string }>,
-          Lunch: {} as Record<string, { count: number, isStarred: boolean, name: string }>,
-          Dinner: {} as Record<string, { count: number, isStarred: boolean, name: string }>
+          Breakfast: {} as Record<string, { count: number, isStarred: boolean, name: string, diet: DietType }>,
+          Lunch: {} as Record<string, { count: number, isStarred: boolean, name: string, diet: DietType }>,
+          Dinner: {} as Record<string, { count: number, isStarred: boolean, name: string, diet: DietType }>
         }
       };
       
@@ -194,13 +206,21 @@ const Deliveries = () => {
           const scheduled = getCustomerScheduledPlansForSession(c, session, selectedDate, plans);
           scheduled.forEach((ap: any) => {
             const qty = Number(ap.quantity) || 1;
+            const planConfig = plans.find((p: any) => p.id === ap.planId);
+            const diet = getPlanDietOnDate(planConfig, selectedDate, ap);
+
             boyWork[session] += qty;
             boyWork.Total += qty;
+            if (diet === 'Non-Veg') {
+              boyWork.nonVegTotal += qty;
+            } else {
+              boyWork.vegTotal += qty;
+            }
 
             const isStarred = Boolean(ap.isStarred || (c.highlightMark && c.highlightMark !== 'None'));
-            const planKey = `${ap.planName}-${isStarred}`;
+            const planKey = `${ap.planName}-${diet}-${isStarred}`;
             if (!boyWork.breakdown[session][planKey]) {
-              boyWork.breakdown[session][planKey] = { count: 0, isStarred, name: ap.planName };
+              boyWork.breakdown[session][planKey] = { count: 0, isStarred, name: ap.planName, diet };
             }
             boyWork.breakdown[session][planKey].count += qty;
           });
@@ -224,17 +244,35 @@ const Deliveries = () => {
   const sessionMetrics = useMemo(() => {
     let totalBoxes = 0;
     let totalStarBoxes = 0;
+    let vegBoxes = 0;
+    let nonVegBoxes = 0;
+
     deliveriesToday.forEach(c => {
       const sessionPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
       sessionPlans.forEach((ap: any) => {
         const qty = Number(ap.quantity) || 1;
         totalBoxes += qty;
+        const planConfig = plans.find((p: any) => p.id === ap.planId);
+        const diet = getPlanDietOnDate(planConfig, selectedDate, ap);
+
+        if (diet === 'Non-Veg') {
+          nonVegBoxes += qty;
+        } else {
+          vegBoxes += qty;
+        }
+
         if (ap.isStarred || (c.highlightMark && c.highlightMark !== 'None')) {
           totalStarBoxes += qty;
         }
       });
     });
-    return { customers: deliveriesToday.length, plans: totalBoxes, starPlans: totalStarBoxes };
+    return { 
+      customers: deliveriesToday.length, 
+      plans: totalBoxes, 
+      starPlans: totalStarBoxes,
+      vegBoxes,
+      nonVegBoxes
+    };
   }, [deliveriesToday, activeMealTab, plans, selectedDate]);
 
   // Stable swap-based reordering for stops in active route
@@ -589,7 +627,13 @@ const Deliveries = () => {
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Today's Kitchen Production Load</h2>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard title="Total Meal Boxes" value={globalDailySummary.GrandTotal} icon={Package} colorClass="bg-slate-900" subtext="Combined daily total" />
+          <StatCard 
+            title="Total Meal Boxes" 
+            value={globalDailySummary.GrandTotal} 
+            icon={Package} 
+            colorClass="bg-slate-900" 
+            subtext={globalDailySummary.GrandTotal > 0 ? `Veg ${globalDailySummary.vegTotal} • N-veg ${globalDailySummary.nonVegTotal}` : 'Combined daily total'} 
+          />
           <StatCard title="Breakfast Boxes" value={globalDailySummary.Breakfast} icon={Sunrise} colorClass="bg-orange-500" subtext="Morning slot" />
           <StatCard title="Lunch Boxes" value={globalDailySummary.Lunch} icon={Sun} colorClass="bg-blue-600" subtext="Afternoon slot" />
           <StatCard title="Dinner Boxes" value={globalDailySummary.Dinner} icon={Moon} colorClass="bg-purple-600" subtext="Evening slot" />
@@ -637,9 +681,16 @@ const Deliveries = () => {
                       <td className="py-3.5 px-4 text-center font-bold text-slate-700 bg-purple-50/10">{boy.Dinner}</td>
                       <td className="py-3.5 px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <span className="inline-block bg-slate-900 text-white px-2.5 py-0.5 rounded-full text-xs font-bold min-w-[32px] text-center shadow-xs">
-                            {boy.Total}
-                          </span>
+                          <div className="text-right">
+                            <span className="inline-block bg-slate-900 text-white px-2.5 py-0.5 rounded-full text-xs font-bold min-w-[32px] text-center shadow-xs">
+                              {boy.Total}
+                            </span>
+                            <div className="text-[10px] text-slate-400 font-semibold flex items-center justify-end gap-1 mt-0.5">
+                              <span className="text-emerald-700">V:{boy.vegTotal}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-rose-700">NV:{boy.nonVegTotal}</span>
+                            </div>
+                          </div>
                           {expandedMatrixBoyId === boy.id ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                         </div>
                       </td>
@@ -656,8 +707,10 @@ const Deliveries = () => {
                               <div className="space-y-1.5">
                                 {Object.values(boy.breakdown.Breakfast).length > 0 ? Object.values(boy.breakdown.Breakfast).map((p: any, i) => (
                                   <div key={i} className="flex justify-between items-center text-xs bg-white/90 p-2 rounded-xl border border-slate-100 shadow-xs">
-                                    <span className="font-medium text-slate-700 flex items-center gap-1">
-                                      {p.name} {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
+                                    <span className="font-medium text-slate-700 flex items-center gap-1.5">
+                                      <VegNonVegIcon diet={p.diet} size={11} />
+                                      <span>{p.name}</span> 
+                                      {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
                                     </span>
                                     <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">{p.count}</span>
                                   </div>
@@ -672,8 +725,10 @@ const Deliveries = () => {
                               <div className="space-y-1.5">
                                 {Object.values(boy.breakdown.Lunch).length > 0 ? Object.values(boy.breakdown.Lunch).map((p: any, i) => (
                                   <div key={i} className="flex justify-between items-center text-xs bg-white/90 p-2 rounded-xl border border-slate-100 shadow-xs">
-                                    <span className="font-medium text-slate-700 flex items-center gap-1">
-                                      {p.name} {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
+                                    <span className="font-medium text-slate-700 flex items-center gap-1.5">
+                                      <VegNonVegIcon diet={p.diet} size={11} />
+                                      <span>{p.name}</span> 
+                                      {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
                                     </span>
                                     <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">{p.count}</span>
                                   </div>
@@ -688,8 +743,10 @@ const Deliveries = () => {
                               <div className="space-y-1.5">
                                 {Object.values(boy.breakdown.Dinner).length > 0 ? Object.values(boy.breakdown.Dinner).map((p: any, i) => (
                                   <div key={i} className="flex justify-between items-center text-xs bg-white/90 p-2 rounded-xl border border-slate-100 shadow-xs">
-                                    <span className="font-medium text-slate-700 flex items-center gap-1">
-                                      {p.name} {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
+                                    <span className="font-medium text-slate-700 flex items-center gap-1.5">
+                                      <VegNonVegIcon diet={p.diet} size={11} />
+                                      <span>{p.name}</span> 
+                                      {p.isStarred && <Star size={11} className="text-amber-500" fill="currentColor" />}
                                     </span>
                                     <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]">{p.count}</span>
                                   </div>
@@ -766,7 +823,13 @@ const Deliveries = () => {
         {/* Existing Session Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
           <StatCard title={`${activeMealTab} Customers`} value={sessionMetrics.customers} icon={Users} colorClass="bg-blue-600" subtext="Unique session stops" />
-          <StatCard title={`${activeMealTab} Tiffin Boxes`} value={sessionMetrics.plans} icon={Package} colorClass="bg-primary-600" subtext="Dispatched boxes" />
+          <StatCard 
+            title={`${activeMealTab} Tiffin Boxes`} 
+            value={sessionMetrics.plans} 
+            icon={Package} 
+            colorClass="bg-primary-600" 
+            subtext={sessionMetrics.plans > 0 ? `Veg ${sessionMetrics.vegBoxes} • N-veg ${sessionMetrics.nonVegBoxes}` : 'Dispatched boxes'} 
+          />
           <StatCard title={`${activeMealTab} Special Requirements`} value={sessionMetrics.starPlans} icon={Star} colorClass="bg-amber-600" subtext="Custom instructions" />
         </div>
 
@@ -805,11 +868,16 @@ const Deliveries = () => {
             const isExpanded = expandedBoyId === boy.id;
             let boyTotalBoxes = 0;
             let boyStarBoxes = 0;
+            let boyVegBoxes = 0;
+            let boyNonVegBoxes = 0;
             boyCustomers.forEach(c => {
               const cPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
               cPlans.forEach((p: any) => {
                 const qty = Number(p.quantity) || 1;
                 boyTotalBoxes += qty;
+                const pConfig = plans.find((pc: any) => pc.id === p.planId);
+                const diet = getPlanDietOnDate(pConfig, selectedDate, p);
+                if (diet === 'Non-Veg') boyNonVegBoxes += qty; else boyVegBoxes += qty;
                 if (p.isStarred || (c.highlightMark && c.highlightMark !== 'None')) {
                   boyStarBoxes += qty;
                 }
@@ -847,6 +915,13 @@ const Deliveries = () => {
                     <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
                       <p className="text-[10px] font-medium text-slate-400">Boxes</p>
                       <p className={`font-bold text-sm ${hasDeliveries ? 'text-primary-600' : 'text-slate-400'}`}>{boyTotalBoxes}</p>
+                      {hasDeliveries && (
+                        <p className="text-[9px] font-bold text-slate-500 mt-0.5 flex items-center justify-center gap-1">
+                          <span className="text-emerald-700">V:{boyVegBoxes}</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-rose-700">NV:{boyNonVegBoxes}</span>
+                        </p>
+                      )}
                     </div>
                     <div className="bg-white/80 border border-slate-100/90 py-1.5 px-3 rounded-xl text-center shadow-xs">
                       <p className="text-[10px] font-medium text-slate-400">Regular</p>
@@ -950,6 +1025,21 @@ const Deliveries = () => {
                               <span className="font-semibold text-slate-800">{c.area}</span>: {c.address}
                             </p>
 
+                            {/* Meal Plans with Veg/Non-Veg tags */}
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {sessionPlans.map((sp: any, spIdx: number) => {
+                                const pConfig = plans.find((pc: any) => pc.id === sp.planId);
+                                const diet = getPlanDietOnDate(pConfig, selectedDate, sp);
+                                return (
+                                  <div key={spIdx} className="inline-flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-lg border border-slate-200 shadow-2xs text-[11px] font-bold text-slate-800">
+                                    <VegNonVegIcon diet={diet} size={11} />
+                                    <span>{Number(sp.quantity) || 1}x {sp.planName}</span>
+                                    <span className={`text-[9px] font-black px-1 rounded ${diet === 'Non-Veg' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>{diet}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
                             <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-100">
                               <div className="flex items-center gap-1.5">
                                 {isDelivered ? (
@@ -1021,9 +1111,20 @@ const Deliveries = () => {
                           {boyCustomers.sort((a, b) => (a.routeOrder || 999) - (b.routeOrder || 999)).map((c, idx) => {
                               const sessionPlans = getCustomerScheduledPlansForSession(c, activeMealTab, selectedDate, plans);
                               const groupedPlans = sessionPlans.reduce((acc: any, p: any) => {
-                                 acc[p.planName] = acc[p.planName] || { name: p.planName, count: 0, isStarred: p.isStarred, pConfig: plans.find((pc: any) => pc.id === p.planId), endDate: p.endDate, pauses: p.pauses };
-                                 acc[p.planName].count += (Number(p.quantity) || 1);
-                                 if (p.isStarred) acc[p.planName].isStarred = true;
+                                 const pConfig = plans.find((pc: any) => pc.id === p.planId);
+                                 const diet = getPlanDietOnDate(pConfig, selectedDate, p);
+                                 const key = `${p.planName}-${diet}`;
+                                 acc[key] = acc[key] || { 
+                                   name: p.planName, 
+                                   diet, 
+                                   count: 0, 
+                                   isStarred: p.isStarred, 
+                                   pConfig, 
+                                   endDate: p.endDate, 
+                                   pauses: p.pauses 
+                                 };
+                                 acc[key].count += (Number(p.quantity) || 1);
+                                 if (p.isStarred) acc[key].isStarred = true;
                                  return acc;
                               }, {});
                               const overallStarred = sessionPlans.some((p: any) => p.isStarred) || (c.highlightMark && c.highlightMark !== 'None');
@@ -1053,8 +1154,10 @@ const Deliveries = () => {
                                     <div className="space-y-1">
                                       {Object.values(groupedPlans).map((gp: any, i) => (
                                         <div key={i} className="flex items-center justify-between gap-3 bg-white/90 border border-slate-100 py-1 px-2 rounded-lg shadow-xs">
-                                          <div className="flex items-center gap-1.5">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <VegNonVegIcon diet={gp.diet} size={11} />
                                             <span className="text-[11px] font-medium text-slate-700 truncate max-w-[120px]">{gp.name}</span>
+                                            <span className={`text-[9px] font-black px-1 rounded ${gp.diet === 'Non-Veg' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>{gp.diet}</span>
                                             {gp.isStarred && <Star size={10} className="text-amber-500" fill="currentColor" />}
                                           </div>
                                           <span className="bg-slate-900 text-white text-[10px] font-bold w-4 h-4 rounded flex items-center justify-center shrink-0">{gp.count}</span>

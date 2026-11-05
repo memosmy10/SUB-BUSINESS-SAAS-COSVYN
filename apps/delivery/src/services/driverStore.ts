@@ -52,6 +52,9 @@ export interface PauseEvent {
   type: 'User' | 'Branch';
 }
 
+export type DietType = 'Veg' | 'Non-Veg';
+export type PlanDietPreference = 'Veg' | 'Non-Veg' | 'Mixed';
+
 export interface SubscribedPlan {
   planId: string;
   planName: string;
@@ -68,6 +71,8 @@ export interface SubscribedPlan {
   reusableBoxType?: string;
   boxTagOrNumber?: string;
   boxDeposit?: number;
+  dietPreference?: PlanDietPreference;
+  dayDietSchedule?: Record<number, DietType>;
 }
 
 export interface GlobalCustomer {
@@ -317,6 +322,55 @@ export const getCustomerScheduledPlansForSession = (
     const pConfig = plansConfig.find((p: any) => p.id === ap.planId);
     return isPlanActiveOnDate(ap, targetDateStr, pConfig, customer);
   });
+};
+
+/**
+ * Resolves whether a plan/subscribedPlan is 'Veg' or 'Non-Veg' on a specific date.
+ */
+export const getPlanDietOnDate = (
+  plan: any,
+  targetDateStr: string,
+  customerPlan?: any
+): DietType => {
+  const parts = (targetDateStr || '').split('T')[0].split('-').map(Number);
+  const dayOfWeek = parts.length === 3 
+    ? new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0).getDay() 
+    : new Date().getDay();
+
+  // 1. Customer plan specific schedule override
+  if (customerPlan?.dayDietSchedule && customerPlan.dayDietSchedule[dayOfWeek]) {
+    return customerPlan.dayDietSchedule[dayOfWeek];
+  }
+  if (customerPlan?.dietPreference === 'Veg' || customerPlan?.dietPreference === 'Non-Veg') {
+    return customerPlan.dietPreference;
+  }
+
+  // 2. Plan configuration's dayDietSchedule
+  if (plan?.dayDietSchedule && plan.dayDietSchedule[dayOfWeek]) {
+    return plan.dayDietSchedule[dayOfWeek];
+  }
+
+  // 3. Plan dietPreference
+  if (plan?.dietPreference === 'Veg') return 'Veg';
+  if (plan?.dietPreference === 'Non-Veg') return 'Non-Veg';
+
+  // 4. Smart keyword inference for existing/legacy plans
+  const checkText = `${plan?.name || ''} ${plan?.description || ''} ${customerPlan?.planName || ''}`.toLowerCase();
+  if (
+    checkText.includes('non-veg') ||
+    checkText.includes('non veg') ||
+    checkText.includes('n-veg') ||
+    checkText.includes('chicken') ||
+    checkText.includes('mutton') ||
+    checkText.includes('fish') ||
+    checkText.includes('egg') ||
+    checkText.includes('meat') ||
+    checkText.includes('seafood')
+  ) {
+    return 'Non-Veg';
+  }
+
+  return 'Veg';
 };
 
 export const getPlanDeliveryDayNumber = (

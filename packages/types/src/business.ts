@@ -33,6 +33,8 @@ export interface CustomerPlan {
   startDate: string;
   endDate: string;
   status: 'active' | 'paused' | 'cancelled';
+  dietPreference?: 'Veg' | 'Non-Veg' | 'Mixed';
+  dayDietSchedule?: Record<number, 'Veg' | 'Non-Veg'>;
 }
 
 export interface CustomerData {
@@ -82,4 +84,9 @@ export interface PlanConfig {
   numberOfDeliveryDays: number;
   weekdays: number[];
   isActive: boolean;
+  dietPreference?: 'Veg' | 'Non-Veg' | 'Mixed';
+  dayDietSchedule?: Record<number, 'Veg' | 'Non-Veg'>;
+  dietarySchedule?: Record<number, 'Veg' | 'Non-Veg'>;
+  dietaryType?: 'Veg' | 'Non-Veg' | 'Mixed';
 }
+

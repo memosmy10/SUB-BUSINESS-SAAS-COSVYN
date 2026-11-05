@@ -3,13 +3,26 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "tsx server.ts",
     "start": "tsx server.ts",
     "build": "vite build",
+    "build:all": "vite build",
+    "build:landing": "npm run build --workspace=@scalekitchen/landing",
+    "build:delivery": "npm run build --workspace=@scalekitchen/delivery",
+    "dev:landing": "npm run dev --workspace=@scalekitchen/landing",
+    "dev:delivery": "npm run dev --workspace=@scalekitchen/delivery",
     "lint": "tsc",
+    "lint:all": "tsc --noEmit",
+    "lint:landing": "npm run lint --workspace=@scalekitchen/landing",
+    "lint:delivery": "npm run lint --workspace=@scalekitchen/delivery",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:all": "vitest run",
     "test:rules": "vitest run test/firestore-rules.test.ts",
     "postinstall": "node scripts/patch-firestore.cjs"
   },

@@ -21,6 +21,18 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@scalekitchen/types": [
+        "./packages/types/src/index.ts"
+      ],
+      "@scalekitchen/utils": [
+        "./packages/utils/src/index.ts"
+      ],
+      "@scalekitchen/ui": [
+        "./packages/ui/src/index.ts"
+      ],
+      "@scalekitchen/api-client": [
+        "./packages/api-client/src/index.ts"
       ]
     },
     "allowImportingTsExtensions": true,

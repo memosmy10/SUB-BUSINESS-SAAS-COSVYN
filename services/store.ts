@@ -457,7 +457,8 @@ export const getPlanDietSummaryLabel = (
   weekdays: number[] = [1, 2, 3, 4, 5, 6]
 ): { label: string; type: PlanDietPreference; vegDays: string[]; nonVegDays: string[] } => {
   const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const activeDays = (weekdays || []).map(normalizeWeekday);
+  const safeWeekdays = Array.isArray(weekdays) && weekdays.length > 0 ? weekdays : [1, 2, 3, 4, 5, 6];
+  const activeDays = safeWeekdays.map(normalizeWeekday);
   
   if (!dayDietSchedule || activeDays.length === 0) {
     return { label: 'Pure Veg', type: 'Veg', vegDays: [], nonVegDays: [] };

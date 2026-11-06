@@ -1658,8 +1658,12 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
      boxDeposit: 0
    });
 
-   const currentBranchPlans = plans.filter((p:any) => p.branchId === formData.branchId);
-   const currentBranchStaff = staff.filter((s:any) => s.branchId === formData.branchId);
+   const currentBranchPlans = (plans || []).filter((p: any) => 
+     !p.branchId || p.branchId === 'All' || !formData.branchId || p.branchId === formData.branchId
+   );
+   const currentBranchStaff = (staff || []).filter((s: any) => 
+     !s.branchId || s.branchId === 'All' || !formData.branchId || s.branchId === formData.branchId
+   );
 
    // Natural 0-9, A-Z Sorting for all plans
    const sortedBranchPlans = useMemo(() => {
@@ -1695,8 +1699,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    }, [sortedBranchPlans, planSearchQuery]);
 
    const selectedPlanObject = useMemo(() => {
-     return sortedBranchPlans.find((p: any) => p.id === newPlanForm.planId);
-   }, [sortedBranchPlans, newPlanForm.planId]);
+     return sortedBranchPlans.find((p: any) => p.id === newPlanForm.planId) || (plans || []).find((p: any) => p.id === newPlanForm.planId);
+   }, [sortedBranchPlans, plans, newPlanForm.planId]);
 
    // Searchable Reusable Box Dropdown State
    const [boxSearchQuery, setBoxSearchQuery] = useState('');
@@ -1751,7 +1755,11 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
    };
 
    const addCustomPlan = () => {
-      if (!customPlanForm.name || !customPlanForm.price || !customPlanForm.totalDeliveries) return alert("Fill all custom fields");
+      if (!customPlanForm.name || !customPlanForm.price || !customPlanForm.totalDeliveries) {
+        setSubmitError("Please fill all required custom plan fields (name, price, total deliveries).");
+        return;
+      }
+      setSubmitError(null);
       const endDate = calculateEndDate(customPlanForm.startDate, Number(customPlanForm.totalDeliveries), customPlanForm.weekdays, []);
       const newPlans = [];
       for(let i=0; i<customPlanForm.quantity; i++) {
@@ -1788,7 +1796,10 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
 
    const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (activePlans.length === 0) return alert("Add at least one plan.");
+      if (activePlans.length === 0) {
+        setSubmitError("Please add at least one subscribed plan for this customer.");
+        return;
+      }
       const primary = activePlans[0];
       const maxEnd = activePlans.reduce((max, p) => p.endDate > max ? p.endDate : max, activePlans[0].endDate);
       const maxDaysLeft = activePlans.reduce((max, p) => {
@@ -2041,7 +2052,8 @@ const CustomerModal = ({ plans, staff, branches, initialData, isRenewal, onClose
                                        filteredBranchPlans.map((p: any) => {
                                           const isSelected = p.id === newPlanForm.planId;
                                           const dietType = p.dietPreference === 'Non-Veg' ? 'Non-Veg' : p.dietPreference === 'Mixed' ? 'Mixed' : 'Veg';
-                                          const dietLabel = getPlanDietSummaryLabel(p.dayDietSchedule, p.weekdays || [1,2,3,4,5,6]);
+                                          const dietSummary = getPlanDietSummaryLabel(p.dayDietSchedule, p.weekdays || [1,2,3,4,5,6]);
+                                          const dietLabel = typeof dietSummary === 'object' && dietSummary !== null ? dietSummary.label : String(dietSummary || 'Pure Veg');
                                           return (
                                              <button
                                                 key={p.id}
@@ -2664,7 +2676,7 @@ const PauseCustomerModal = ({ customers, branches, plans, onClose, onSubmit }: a
                                        </div>
                                     </td>
                                     <td className="p-3">
-                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.mealTime === 'Breakfast' ? 'bg-orange-100 text-orange-600' : p.mealTime === 'Lunch' ? 'bg-blue-100 text-blue-600' : p.mealTime === 'Purple-100 text-purple-600'}`}>
+                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.mealTime === 'Breakfast' ? 'bg-orange-100 text-orange-600' : p.mealTime === 'Lunch' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>
                                         {p.mealTime}
                                       </span>
                                     </td>

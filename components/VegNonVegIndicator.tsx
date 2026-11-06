@@ -12,7 +12,42 @@ interface IconProps {
  * and Non-Vegetarian (Red/Rose square with solid red triangle/circle).
  */
 export const VegNonVegIcon: React.FC<IconProps> = ({ diet, size = 14, className = '' }) => {
-  const isVeg = String(diet).toLowerCase() === 'veg';
+  const norm = String(diet || '').toLowerCase();
+  const isVeg = norm === 'veg';
+  const isMixed = norm === 'mixed';
+
+  if (isMixed) {
+    return (
+      <span 
+        className={`inline-flex items-center justify-center shrink-0 ${className}`} 
+        title="Mixed (Veg & Non-Veg)"
+        style={{ width: size, height: size }}
+      >
+        <svg 
+          width={size} 
+          height={size} 
+          viewBox="0 0 16 16" 
+          fill="none" 
+          xmlns="http://www.w3.org/2000/svg"
+          className="shrink-0"
+        >
+          <rect 
+            x="1.2" 
+            y="1.2" 
+            width="13.6" 
+            height="13.6" 
+            rx="3" 
+            stroke="#f59e0b" 
+            strokeWidth="1.6" 
+            fill="#ffffff" 
+          />
+          <circle cx="5" cy="8" r="2.2" fill="#16a34a" />
+          <polygon points="11,5.5 13.5,10.5 8.5,10.5" fill="#e11d48" />
+        </svg>
+      </span>
+    );
+  }
+
   const strokeColor = isVeg ? '#16a34a' : '#e11d48'; // emerald-600 vs rose-600
   const fillColor = isVeg ? '#16a34a' : '#e11d48';
 

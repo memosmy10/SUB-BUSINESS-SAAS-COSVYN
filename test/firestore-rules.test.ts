@@ -424,58 +424,185 @@ describe('ScaleKitchen Firestore Security Rules Test Suite', () => {
   // =========================================================================
   // 5. MANAGER ROLE (Custom Token Claims)
   // =========================================================================
-  describe('Manager Role with Custom Claims', () => {
-    const managerContext = () => testEnv.authenticatedContext('mgr_uid_1', {
+  describe('Manager Role with Custom Claims & Branch Isolation', () => {
+    const managerBranch1Context = () => testEnv.authenticatedContext('mgr_uid_1', {
       role: 'manager',
       bizId: 'biz_a',
       managerId: 'mgr_1',
-      branchId: 'branch_1'
+      branchId: 'branch_1',
+      allBranches: false
     });
 
-    it('Manager A CAN read customers, plans, branches, and staff in their business', async () => {
-      const db = managerContext().firestore();
-      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/customers/cust_1')));
+    const managerBranch2Context = () => testEnv.authenticatedContext('mgr_uid_2', {
+      role: 'manager',
+      bizId: 'biz_a',
+      managerId: 'mgr_2',
+      branchId: 'branch_2',
+      allBranches: false
+    });
+
+    const managerAllBranchesContext = () => testEnv.authenticatedContext('mgr_uid_all', {
+      role: 'manager',
+      bizId: 'biz_a',
+      managerId: 'mgr_all',
+      branchId: 'All',
+      allBranches: true
+    });
+
+    it('Manager Branch 1 CAN read customers, plans, branches, staff, expenses, inventory, notes, and single orders for branch_1', async () => {
+      const db = managerBranch1Context().firestore();
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/customers/cust_1'))); // cust_1 has branchId: 'branch_1'
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/plans/plan_1')));
       await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/branches/branch_1')));
-      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/staff/driver_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/staff/driver_1'))); // driver_1 has branchId: 'branch_1'
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/expenses/exp_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/inventory/item_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/notes/note_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/single_orders/order_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/invoices/inv_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/payments/pay_1')));
     });
 
-    it('Manager A CANNOT access other managers in managers collection', async () => {
-      const db = managerContext().firestore();
+    it('Manager Branch 1 CANNOT read or write customers, staff, expenses, inventory, notes belonging to branch_2', async () => {
+      // Seed branch 2 document via admin
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const adminDb = context.firestore();
+        await setDoc(doc(adminDb, 'businesses/biz_a/customers/cust_branch_2'), {
+          name: 'Customer Branch 2',
+          branchId: 'branch_2'
+        });
+        await setDoc(doc(adminDb, 'businesses/biz_a/staff/driver_branch_2'), {
+          name: 'Rider Branch 2',
+          branchId: 'branch_2'
+        });
+        await setDoc(doc(adminDb, 'businesses/biz_a/expenses/exp_branch_2'), {
+          title: 'Branch 2 Groceries',
+          branchId: 'branch_2',
+          amount: 500
+        });
+        await setDoc(doc(adminDb, 'businesses/biz_a/notes/note_branch_2'), {
+          content: 'Secret branch 2 memo',
+          branchId: 'branch_2'
+        });
+        await setDoc(doc(adminDb, 'businesses/biz_a/single_orders/order_branch_2'), {
+          customerName: 'Guest 2',
+          branchId: 'branch_2',
+          amount: 250
+        });
+      });
+
+      const db = managerBranch1Context().firestore();
+      // Read access to branch 2 documents MUST FAIL
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/customers/cust_branch_2')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/staff/driver_branch_2')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/expenses/exp_branch_2')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/notes/note_branch_2')));
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/single_orders/order_branch_2')));
+
+      // Write/tamper access to branch 2 documents MUST FAIL
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/customers/cust_branch_2'), {
+        name: 'Hacked Name'
+      }));
+      await assertFails(deleteDoc(doc(db, 'businesses/biz_a/customers/cust_branch_2')));
+    });
+
+    it('Manager Branch 1 CANNOT create a customer or expense assigned to branch_2', async () => {
+      const db = managerBranch1Context().firestore();
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/customers/cust_new_b2'), {
+        name: 'Spoofed Customer',
+        branchId: 'branch_2'
+      }));
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/expenses/exp_new_b2'), {
+        title: 'Spoofed Expense',
+        branchId: 'branch_2',
+        amount: 1000
+      }));
+    });
+
+    it('Manager Branch 1 CAN create customers, expenses, notes, and single orders assigned to branch_1', async () => {
+      const db = managerBranch1Context().firestore();
+      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/customers/cust_new_b1'), {
+        name: 'Legitimate Branch 1 Customer',
+        branchId: 'branch_1'
+      }));
+      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/expenses/exp_new_b1'), {
+        title: 'Legitimate Branch 1 Expense',
+        branchId: 'branch_1',
+        amount: 300
+      }));
+      await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/notes/note_new_b1'), {
+        content: 'Legitimate Branch 1 Note',
+        branchId: 'branch_1'
+      }));
+    });
+
+    it('Manager Branch 1 CANNOT move a customer from branch_1 to branch_2', async () => {
+      const db = managerBranch1Context().firestore();
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/customers/cust_1'), {
+        branchId: 'branch_2'
+      }));
+    });
+
+    it('All-Branches Manager CAN access documents across all branches (branch_1 and branch_2)', async () => {
+      const db = managerAllBranchesContext().firestore();
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/customers/cust_1')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/customers/cust_branch_2')));
+      await assertSucceeds(getDoc(doc(db, 'businesses/biz_a/expenses/exp_branch_2')));
+    });
+
+    it('Manager CANNOT access other managers in managers collection', async () => {
+      const db = managerBranch1Context().firestore();
       await assertFails(getDoc(doc(db, 'businesses/biz_a/managers/mgr_2')));
       await assertFails(setDoc(doc(db, 'businesses/biz_a/managers/mgr_new'), { name: 'Fake' }));
     });
 
-    it('Manager A CANNOT read billing, invoices, payments, or expenses', async () => {
-      const db = managerContext().firestore();
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/invoices/inv_1')));
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/payments/pay_1')));
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/billing_history/doc_1')));
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/expenses/exp_1')));
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/inventory/item_1')));
-      await assertFails(getDoc(doc(db, 'businesses/biz_a/notes/note_1')));
+    it('Manager CANNOT write or modify invoices or payments (Read-only financial operations)', async () => {
+      const db = managerBranch1Context().firestore();
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/invoices/inv_fake'), {
+        amount: 99999,
+        branchId: 'branch_1'
+      }));
+      await assertFails(updateDoc(doc(db, 'businesses/biz_a/invoices/inv_1'), {
+        amount: 0
+      }));
+      await assertFails(setDoc(doc(db, 'businesses/biz_a/payments/pay_fake'), {
+        amount: 99999,
+        branchId: 'branch_1'
+      }));
     });
 
-    it('Manager A CANNOT access Business B data', async () => {
-      const db = managerContext().firestore();
+    it('Manager CANNOT read billing_history', async () => {
+      const db = managerBranch1Context().firestore();
+      await assertFails(getDoc(doc(db, 'businesses/biz_a/billing_history/doc_1')));
+    });
+
+    it('Manager CANNOT access Business B data under any circumstance', async () => {
+      const db = managerBranch1Context().firestore();
       await assertFails(getDoc(doc(db, 'businesses/biz_b/customers/cust_b1')));
       await assertFails(getDoc(doc(db, 'businesses/biz_b/plans/plan_b1')));
     });
 
-    it('Manager A CAN record their own login/logout logs in manager_logs', async () => {
-      const db = managerContext().firestore();
+    it('Manager CAN record their own login/logout logs in manager_logs', async () => {
+      const db = managerBranch1Context().firestore();
       await assertSucceeds(setDoc(doc(db, 'businesses/biz_a/manager_logs/mlog_1'), {
         managerId: 'mgr_1',
-        action: 'Login',
+        branchId: 'branch_1',
+        status: 'Active',
         date: '2026-10-17'
+      }));
+      await assertSucceeds(updateDoc(doc(db, 'businesses/biz_a/manager_logs/mlog_1'), {
+        status: 'Logged Out',
+        logoutTime: '06:00:00 PM',
+        updatedAt: '2026-10-17T18:00:00Z'
       }));
     });
 
-    it('Manager A CANNOT forge logs for another manager', async () => {
-      const db = managerContext().firestore();
+    it('Manager CANNOT forge logs for another manager', async () => {
+      const db = managerBranch1Context().firestore();
       await assertFails(setDoc(doc(db, 'businesses/biz_a/manager_logs/mlog_forged'), {
         managerId: 'mgr_impostor',
-        action: 'Login'
+        branchId: 'branch_1',
+        status: 'Active'
       }));
     });
   });

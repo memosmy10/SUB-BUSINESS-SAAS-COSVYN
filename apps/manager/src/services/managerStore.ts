@@ -65,6 +65,8 @@ export interface BranchManager {
   password?: string;
   branchId: string; // Specific branch id or 'All'
   allowedPages: string[]; // Page keys e.g. ['dashboard', 'customers', ...]
+  status?: string;
+  active?: boolean;
   aadharNumber?: string;
   location?: string;
   salary?: number;

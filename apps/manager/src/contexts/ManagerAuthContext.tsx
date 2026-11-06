@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import {
   auth,
   db,
@@ -23,10 +23,13 @@ interface ManagerAuthContextType {
   loggedInManager: BranchManager | null;
   bizId: string;
   branchId: string;
+  isAllBranches: boolean;
   allowedPages: string[];
   sessionLogId: string | null;
   loading: boolean;
+  authError: string;
   setBizId: (bizId: string) => void;
+  clearAuthError: () => void;
   login: (email: string, password: string, targetBizId: string) => Promise<BranchManager>;
   logout: () => Promise<void>;
 }
@@ -34,7 +37,7 @@ interface ManagerAuthContextType {
 const ManagerAuthContext = createContext<ManagerAuthContextType | undefined>(undefined);
 
 export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Read biz from URL search, hash query, or localStorage
+  // Read initial biz from URL query or hash params
   const getInitialBiz = (): string => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
@@ -56,10 +59,14 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [claims, setClaims] = useState<ManagerClaims | null>(null);
   const [loggedInManager, setLoggedInManager] = useState<BranchManager | null>(null);
-  const [branchId, setBranchId] = useState<string>('All');
+  const [branchId, setBranchId] = useState<string>('');
+  const [isAllBranches, setIsAllBranches] = useState<boolean>(false);
   const [allowedPages, setAllowedPages] = useState<string[]>(['dashboard']);
   const [sessionLogId, setSessionLogId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string>('');
+
+  const clearAuthError = () => setAuthError('');
 
   const setBizId = (newBizId: string) => {
     const trimmed = newBizId.trim();
@@ -71,60 +78,152 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  // Listen to auth changes on the dedicated ScaleKitchenManager Firebase app
+  const clearSession = () => {
+    setCurrentUser(null);
+    setClaims(null);
+    setLoggedInManager(null);
+    setBranchId('');
+    setIsAllBranches(false);
+    setAllowedPages(['dashboard']);
+    setSessionLogId(null);
+    localStorage.removeItem('manager_data');
+    localStorage.removeItem('manager_branch_id');
+    localStorage.removeItem('manager_session_log_id');
+  };
+
+  // Secure Auth listener: Authoritative verification on the dedicated ScaleKitchenManager Firebase app
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      if (user) {
-        try {
-          const fetchedClaims = await getManagerClaims(user);
-          setClaims(fetchedClaims);
-
-          // Verify manager claim role
-          if (fetchedClaims?.role === 'manager') {
-            if (fetchedClaims.bizId) {
-              setBizIdState(fetchedClaims.bizId);
-              localStorage.setItem('manager_biz_id', fetchedClaims.bizId);
-            }
-            if (fetchedClaims.branchId) {
-              setBranchId(fetchedClaims.branchId);
-              localStorage.setItem('manager_branch_id', fetchedClaims.branchId);
-            }
-          }
-
-          // Restore manager profile from localStorage if matching
-          const savedManagerRaw = localStorage.getItem('manager_data');
-          const savedLogId = localStorage.getItem('manager_session_log_id');
-          if (savedManagerRaw) {
-            try {
-              const parsed: BranchManager = JSON.parse(savedManagerRaw);
-              setLoggedInManager(parsed);
-              if (parsed.branchId) setBranchId(parsed.branchId);
-              if (parsed.allowedPages && parsed.allowedPages.length > 0) {
-                setAllowedPages(parsed.allowedPages);
-              }
-            } catch (parseErr) {
-              console.warn("Failed to parse cached manager_data:", parseErr);
-            }
-          }
-          if (savedLogId) setSessionLogId(savedLogId);
-        } catch (err) {
-          console.warn("Error processing manager auth state:", err);
-        }
-      } else {
-        setClaims(null);
-        setLoggedInManager(null);
-        setBranchId('All');
-        setAllowedPages(['dashboard']);
-        setSessionLogId(null);
+      if (!user) {
+        clearSession();
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      try {
+        // Step 1: Force refresh token and retrieve cryptographically verified claims
+        const verifiedClaims = await getManagerClaims(user);
+
+        // Step 2: Strict authorization validation
+        if (
+          !verifiedClaims ||
+          verifiedClaims.role !== 'manager' ||
+          !verifiedClaims.bizId ||
+          !verifiedClaims.managerId ||
+          !verifiedClaims.branchId
+        ) {
+          console.warn("[ScaleKitchenManager] Unauthorized token claims:", verifiedClaims);
+          setAuthError("Unauthorized session: Invalid or expired manager credentials.");
+          await signOut(auth);
+          clearSession();
+          setLoading(false);
+          return;
+        }
+
+        // Step 3: Establish authorized context exclusively from verified claims
+        const authBizId = verifiedClaims.bizId;
+        const authBranchId = verifiedClaims.branchId;
+        const allBranchesFlag = verifiedClaims.allBranches || authBranchId === 'All';
+
+        setCurrentUser(user);
+        setClaims(verifiedClaims);
+        setBizIdState(authBizId);
+        setBranchId(authBranchId);
+        setIsAllBranches(allBranchesFlag);
+
+        // Step 4: Fetch authoritative Manager Profile from Firestore
+        let managerProfile: BranchManager | null = null;
+        try {
+          const mgrDocRef = doc(db, 'businesses', authBizId, 'managers', verifiedClaims.managerId);
+          const mgrSnap = await getDoc(mgrDocRef);
+          if (mgrSnap.exists()) {
+            const data = mgrSnap.data();
+            
+            // Check deactivation status on session restore
+            const isInactive = 
+              data.status === 'Inactive' || 
+              data.status === 'deactivated' || 
+              data.status === 'disabled' || 
+              data.active === false || 
+              data.deleted === true;
+
+            if (isInactive) {
+              setAuthError("This manager account has been deactivated by the kitchen owner.");
+              await signOut(auth);
+              clearSession();
+              setLoading(false);
+              return;
+            }
+
+            managerProfile = {
+              id: mgrSnap.id,
+              name: data.name || 'Branch Manager',
+              email: data.email || user.email || '',
+              mobile: data.mobile || '',
+              branchId: authBranchId, // Enforced by verified claims
+              allowedPages: Array.isArray(data.allowedPages) && data.allowedPages.length > 0 
+                ? data.allowedPages 
+                : ['dashboard'],
+              status: data.status || 'Active',
+              active: data.active !== false
+            };
+          }
+        } catch (fetchErr) {
+          console.warn("[ScaleKitchenManager] Authoritative doc fetch warning, validating cached profile:", fetchErr);
+        }
+
+        // Fallback: If network issue on profile fetch, validate cached profile against verified claims
+        if (!managerProfile) {
+          const cachedRaw = localStorage.getItem('manager_data');
+          if (cachedRaw) {
+            try {
+              const cached = JSON.parse(cachedRaw);
+              if (cached.id === verifiedClaims.managerId) {
+                managerProfile = {
+                  ...cached,
+                  branchId: authBranchId, // Enforced by claims
+                  id: verifiedClaims.managerId
+                };
+              }
+            } catch {}
+          }
+        }
+
+        if (managerProfile) {
+          setLoggedInManager(managerProfile);
+          if (managerProfile.allowedPages && managerProfile.allowedPages.length > 0) {
+            setAllowedPages(managerProfile.allowedPages);
+          }
+        } else {
+          // Fallback minimal manager profile
+          setLoggedInManager({
+            id: verifiedClaims.managerId,
+            name: 'Branch Manager',
+            email: user.email || '',
+            mobile: '',
+            branchId: authBranchId,
+            allowedPages: ['dashboard']
+          });
+        }
+
+        const savedLogId = localStorage.getItem('manager_session_log_id');
+        if (savedLogId) setSessionLogId(savedLogId);
+
+      } catch (err: any) {
+        console.error("[ScaleKitchenManager] Error validating manager session:", err);
+        setAuthError("Failed to verify manager session.");
+        await signOut(auth);
+        clearSession();
+      } finally {
+        setLoading(false);
+      }
     });
 
     return () => unsubscribe();
   }, []);
 
   const login = async (email: string, password: string, targetBizId: string): Promise<BranchManager> => {
+    setAuthError('');
     const cleanEmail = normalizeEmail(email);
     const cleanBizId = targetBizId.trim();
 
@@ -138,7 +237,7 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error("Password is required.");
     }
 
-    // Invoke cloud function
+    // Invoke cloud function with strict business resolution and deactivation check
     const result = await managerLoginCallable({
       email: cleanEmail,
       password,
@@ -149,13 +248,20 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error("No authorization token received from server.");
     }
 
-    // Authenticate with custom token on the dedicated app instance
+    // Authenticate with custom token on the dedicated named app instance
     const cred = await signInWithCustomToken(auth, result.data.token);
-    const managerData = result.data.manager as unknown as BranchManager;
+    const verifiedClaims = await getManagerClaims(cred.user);
 
-    const resolvedBranch = managerData.branchId || 'All';
-    const pages = (managerData.allowedPages && managerData.allowedPages.length > 0)
-      ? managerData.allowedPages
+    if (!verifiedClaims || verifiedClaims.role !== 'manager' || !verifiedClaims.bizId) {
+      await signOut(auth);
+      throw new Error("Unauthorized token claims received. Access denied.");
+    }
+
+    const resolvedBranch = verifiedClaims.branchId || result.data.manager?.branchId || 'All';
+    const resolvedBiz = verifiedClaims.bizId;
+    const managerId = verifiedClaims.managerId || result.data.manager?.id;
+    const pages = (result.data.manager?.allowedPages && result.data.manager.allowedPages.length > 0)
+      ? result.data.manager.allowedPages
       : ['dashboard'];
 
     // Create session audit log in Firestore
@@ -165,8 +271,8 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const logData = {
       id: logId,
-      managerId: managerData.id,
-      managerName: managerData.name,
+      managerId,
+      managerName: result.data.manager?.name || 'Branch Manager',
       managerEmail: cleanEmail,
       branchId: resolvedBranch,
       branchName: resolvedBranch === 'All' ? 'All Branches' : 'Main Branch',
@@ -178,28 +284,34 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
 
     try {
-      await setDoc(doc(db, 'businesses', cleanBizId, 'manager_logs', logId), logData);
-    } catch (logErr) {
-      console.warn("Could not record manager session log:", logErr);
+      await setDoc(doc(db, 'businesses', resolvedBiz, 'manager_logs', logId), logData);
+      setSessionLogId(logId);
+      localStorage.setItem('manager_session_log_id', logId);
+    } catch (logErr: any) {
+      console.warn("[ScaleKitchenManager] Manager session logging warning:", logErr?.message);
     }
 
-    // Update local states & storage
-    setBizIdState(cleanBizId);
+    const managerObj: BranchManager = {
+      id: managerId,
+      name: result.data.manager?.name || 'Branch Manager',
+      email: cleanEmail,
+      branchId: resolvedBranch,
+      allowedPages: pages,
+      mobile: ''
+    };
+
+    setBizIdState(resolvedBiz);
     setBranchId(resolvedBranch);
+    setIsAllBranches(resolvedBranch === 'All');
     setAllowedPages(pages);
-    setLoggedInManager(managerData);
-    setSessionLogId(logId);
-
-    localStorage.setItem('manager_biz_id', cleanBizId);
-    localStorage.setItem('manager_data', JSON.stringify(managerData));
-    localStorage.setItem('manager_branch_id', resolvedBranch);
-    localStorage.setItem('manager_session_log_id', logId);
-
-    // Refresh claims
-    const verifiedClaims = await getManagerClaims(cred.user);
+    setLoggedInManager(managerObj);
     setClaims(verifiedClaims);
 
-    return managerData;
+    localStorage.setItem('manager_biz_id', resolvedBiz);
+    localStorage.setItem('manager_data', JSON.stringify(managerObj));
+    localStorage.setItem('manager_branch_id', resolvedBranch);
+
+    return managerObj;
   };
 
   const logout = async (): Promise<void> => {
@@ -213,22 +325,17 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
           updatedAt: now.toISOString()
         });
       } catch (err) {
-        console.warn("Could not update manager logout timestamp:", err);
+        console.warn("[ScaleKitchenManager] Could not update manager logout timestamp:", err);
       }
     }
 
     try {
       await signOut(auth);
     } catch (err) {
-      console.warn("Sign out error:", err);
+      console.warn("[ScaleKitchenManager] Sign out error:", err);
     }
 
-    localStorage.removeItem('manager_data');
-    localStorage.removeItem('manager_branch_id');
-    localStorage.removeItem('manager_session_log_id');
-    setLoggedInManager(null);
-    setClaims(null);
-    setSessionLogId(null);
+    clearSession();
   };
 
   return (
@@ -239,10 +346,13 @@ export const ManagerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         loggedInManager,
         bizId,
         branchId,
+        isAllBranches,
         allowedPages,
         sessionLogId,
         loading,
+        authError,
         setBizId,
+        clearAuthError,
         login,
         logout
       }}

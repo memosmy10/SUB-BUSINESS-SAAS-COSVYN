@@ -74,7 +74,8 @@ const ManagerAppInner: React.FC = () => {
     allowedPages,
     login,
     logout,
-    loading: authLoading
+    loading: authLoading,
+    authError: contextAuthError
   } = useManagerAuth();
 
   const [bizInput, setBizInput] = useState('');
@@ -82,7 +83,9 @@ const ManagerAppInner: React.FC = () => {
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [authError, setAuthError] = useState('');
+  const [localAuthError, setLocalAuthError] = useState('');
+
+  const displayAuthError = localAuthError || contextAuthError;
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -166,9 +169,9 @@ const ManagerAppInner: React.FC = () => {
   if (!loggedInManager) {
     const handleLogin = async (e: React.FormEvent) => {
       e.preventDefault();
-      setAuthError('');
+      setLocalAuthError('');
       if (!emailInput.trim() || !passwordInput) {
-        setAuthError('Please enter both Email and Password.');
+        setLocalAuthError('Please enter both Email and Password.');
         return;
       }
       setSubmitting(true);
@@ -176,7 +179,7 @@ const ManagerAppInner: React.FC = () => {
         await login(emailInput.trim(), passwordInput, bizId);
       } catch (err: any) {
         const msg = err?.message || 'Invalid email or password.';
-        setAuthError(msg);
+        setLocalAuthError(msg);
       } finally {
         setSubmitting(false);
       }
@@ -201,10 +204,10 @@ const ManagerAppInner: React.FC = () => {
             </div>
           </div>
 
-          {authError && (
+          {displayAuthError && (
             <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2">
               <AlertCircle size={16} className="shrink-0 text-rose-400" />
-              <span>{authError}</span>
+              <span>{displayAuthError}</span>
             </div>
           )}
 

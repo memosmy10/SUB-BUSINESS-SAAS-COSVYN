@@ -98,6 +98,7 @@ export interface ManagerClaims {
   bizId?: string;
   managerId?: string;
   branchId?: string;
+  allBranches?: boolean;
 }
 
 export const getManagerClaims = async (user: User): Promise<ManagerClaims | null> => {
@@ -108,6 +109,7 @@ export const getManagerClaims = async (user: User): Promise<ManagerClaims | null
       bizId: idTokenResult.claims.bizId as string | undefined,
       managerId: idTokenResult.claims.managerId as string | undefined,
       branchId: idTokenResult.claims.branchId as string | undefined,
+      allBranches: (idTokenResult.claims.allBranches as boolean | undefined) || (idTokenResult.claims.branchId === 'All'),
     };
   } catch (err) {
     console.warn("Could not retrieve manager claims:", err);

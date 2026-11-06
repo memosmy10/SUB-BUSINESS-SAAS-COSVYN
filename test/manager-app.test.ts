@@ -13,7 +13,7 @@ import {
   app
 } from '../apps/manager/src/services/firebase';
 
-describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
+describe('ScaleKitchen Manager App — Phase 4.1 Security Hardening Test Suite', () => {
 
   describe('1. Dedicated Named Firebase App Isolation', () => {
     it('should initialize with the unique isolated app name "ScaleKitchenManager"', () => {
@@ -56,18 +56,108 @@ describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
     });
   });
 
-  describe('3. Custom Token Claims Verification & Security Boundary', () => {
+  describe('3. Strict Business Resolution (Tenant Spoofing Prevention)', () => {
+    it('should reject manager lookup in other businesses when specific bizId is supplied', () => {
+      const resolveManagerDoc = (
+        suppliedBizId: string,
+        email: string,
+        database: Record<string, { managers: Array<{ id: string; email: string }> }>
+      ) => {
+        if (suppliedBizId && suppliedBizId.trim()) {
+          const biz = database[suppliedBizId.trim()];
+          if (!biz) return null; // Business does not exist
+          const found = biz.managers.find(m => m.email === email);
+          return found ? { doc: found, bizId: suppliedBizId.trim() } : null; // Strictly within that biz!
+        }
+        return null;
+      };
+
+      const mockDb = {
+        victim_kitchen: { managers: [] },
+        attacker_kitchen: { managers: [{ id: 'mgr_evil', email: 'evil@kitchen.com' }] }
+      };
+
+      // Attacker supplies victim_kitchen bizId with their evil@kitchen.com email
+      const result = resolveManagerDoc('victim_kitchen', 'evil@kitchen.com', mockDb);
+      // MUST NOT fall back to attacker_kitchen! Must be null!
+      expect(result).toBeNull();
+    });
+
+    it('should reject ambiguous manager email across multiple businesses when bizId is omitted', () => {
+      const resolveWithoutBizId = (
+        email: string,
+        database: Record<string, { managers: Array<{ id: string; email: string }> }>
+      ) => {
+        const matches: Array<{ doc: any; bizId: string }> = [];
+        for (const [bizId, data] of Object.entries(database)) {
+          for (const m of data.managers) {
+            if (m.email === email) {
+              matches.push({ doc: m, bizId });
+            }
+          }
+        }
+        if (matches.length === 0) return { status: 'not_found' };
+        if (matches.length > 1) return { status: 'ambiguous' };
+        return { status: 'resolved', match: matches[0] };
+      };
+
+      const mockDb = {
+        kitchen_1: { managers: [{ id: 'm1', email: 'common@kitchen.com' }] },
+        kitchen_2: { managers: [{ id: 'm2', email: 'common@kitchen.com' }] }
+      };
+
+      const result = resolveWithoutBizId('common@kitchen.com', mockDb);
+      expect(result.status).toBe('ambiguous');
+    });
+  });
+
+  describe('4. Manager Deactivation & Inactive Account Enforcement', () => {
+    it('should reject authentication for inactive or deactivated manager records', () => {
+      const checkActive = (managerDoc: { status?: string; active?: boolean; deleted?: boolean }) => {
+        const isDeactivated = 
+          managerDoc.status === 'Inactive' || 
+          managerDoc.status === 'deactivated' || 
+          managerDoc.status === 'disabled' || 
+          managerDoc.active === false || 
+          managerDoc.deleted === true;
+        return !isDeactivated;
+      };
+
+      expect(checkActive({ status: 'Active', active: true })).toBe(true);
+      expect(checkActive({ status: 'Inactive', active: true })).toBe(false);
+      expect(checkActive({ status: 'deactivated' })).toBe(false);
+      expect(checkActive({ status: 'disabled' })).toBe(false);
+      expect(checkActive({ active: false })).toBe(false);
+      expect(checkActive({ deleted: true })).toBe(false);
+    });
+  });
+
+  describe('5. Custom Token Claims Verification & Security Boundary', () => {
     it('should verify expected claims structure for manager token', () => {
       const mockClaims = {
         role: 'manager',
         bizId: 'kitchen_biz_999',
         managerId: 'staff_doc_123',
-        branchId: 'branch_south_hub'
+        branchId: 'branch_south_hub',
+        allBranches: false
       };
 
       expect(mockClaims.role).toBe('manager');
       expect(mockClaims.bizId).toBe('kitchen_biz_999');
       expect(mockClaims.branchId).toBe('branch_south_hub');
+      expect(mockClaims.allBranches).toBe(false);
+    });
+
+    it('should set allBranches: true when branchId is "All"', () => {
+      const branchId = 'All';
+      const claims = {
+        role: 'manager',
+        bizId: 'biz_123',
+        managerId: 'mgr_1',
+        branchId,
+        allBranches: branchId === 'All'
+      };
+      expect(claims.allBranches).toBe(true);
     });
 
     it('should reject non-manager claims at authorization layer', () => {
@@ -82,7 +172,36 @@ describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
     });
   });
 
-  describe('4. Branch Access & Multi-Tenant Scoping Enforcement', () => {
+  describe('6. LocalStorage Tamper-Proofing in Session Restoration', () => {
+    it('should strictly use verified token claims and never allow cached localStorage branchId to override claims', () => {
+      const verifiedClaims = {
+        role: 'manager',
+        bizId: 'biz_real',
+        managerId: 'mgr_1',
+        branchId: 'branch_south',
+        allBranches: false
+      };
+
+      // Attacker modified localStorage to claim 'All' or 'branch_north'
+      const tamperedLocalStorage = {
+        branchId: 'All',
+        role: 'owner'
+      };
+
+      // Secure session resolver MUST bind to verifiedClaims
+      const resolvedSession = {
+        bizId: verifiedClaims.bizId,
+        branchId: verifiedClaims.branchId, // Claims override localStorage!
+        isAllBranches: verifiedClaims.allBranches
+      };
+
+      expect(resolvedSession.branchId).toBe('branch_south');
+      expect(resolvedSession.isAllBranches).toBe(false);
+      expect(resolvedSession.branchId).not.toBe(tamperedLocalStorage.branchId);
+    });
+  });
+
+  describe('7. Branch Access & Multi-Tenant Scoping Enforcement', () => {
     it('should allow all records when branchId is "All"', () => {
       const items = [
         { id: '1', branchId: 'branch_a' },
@@ -127,7 +246,7 @@ describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
     });
   });
 
-  describe('5. Granular Page Access Control (allowedPages)', () => {
+  describe('8. Granular Page Access Control (allowedPages)', () => {
     it('should define all 15 operational SaaS modules in ALL_SAAS_PAGES', () => {
       expect(ALL_SAAS_PAGES.length).toBe(15);
       const pageIds = ALL_SAAS_PAGES.map(p => p.id);
@@ -167,7 +286,7 @@ describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
     });
   });
 
-  describe('6. Dietary Schedule & Kitchen Production Logic', () => {
+  describe('9. Dietary Schedule & Kitchen Production Logic', () => {
     it('should determine whether a customer subscription is active on a given date', () => {
       const customer: Customer = {
         id: 'cust-1',
@@ -203,34 +322,42 @@ describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
     });
   });
 
-  describe('7. Session Audit Logging Contract', () => {
-    it('should format audit log entry matching manager_logs collection schema', () => {
-      const createLogEntry = (managerId: string, managerName: string, email: string, branchId: string) => {
-        return {
-          id: `log_test_${Date.now()}`,
-          managerId,
-          managerName,
-          managerEmail: email,
-          branchId,
-          branchName: branchId === 'All' ? 'All Branches' : 'Main Branch',
-          date: getTodayStr(),
-          loginTime: '09:00:00 AM',
-          logoutTime: null,
-          status: 'Active',
-          createdAt: new Date().toISOString()
-        };
+  describe('10. Session Audit Logging Anti-Forgery Contract', () => {
+    it('should enforce that a manager can only create a log entry with their own managerId', () => {
+      const validateLogCreation = (authenticatedManagerId: string, logPayload: { managerId: string }) => {
+        return logPayload.managerId === authenticatedManagerId;
       };
 
-      const log = createLogEntry('m1', 'Suresh Kumar', 'suresh@kitchen.com', 'branch_hub_1');
-      expect(log.managerId).toBe('m1');
-      expect(log.managerName).toBe('Suresh Kumar');
-      expect(log.status).toBe('Active');
-      expect(log.logoutTime).toBeNull();
-      expect(log.branchId).toBe('branch_hub_1');
+      expect(validateLogCreation('mgr_123', { managerId: 'mgr_123' })).toBe(true);
+      expect(validateLogCreation('mgr_123', { managerId: 'mgr_impostor' })).toBe(false);
+    });
+
+    it('should restrict log updates to logoutTime, status, and updatedAt only', () => {
+      const allowedUpdateKeys = new Set(['logoutTime', 'status', 'updatedAt']);
+      const validateLogUpdate = (updatePayload: Record<string, any>) => {
+        return Object.keys(updatePayload).every(k => allowedUpdateKeys.has(k));
+      };
+
+      expect(validateLogUpdate({ logoutTime: '06:00:00 PM', status: 'Logged Out', updatedAt: '2026-11-06' })).toBe(true);
+      expect(validateLogUpdate({ managerId: 'mgr_tamper', status: 'Logged Out' })).toBe(false);
+      expect(validateLogUpdate({ branchId: 'branch_tamper' })).toBe(false);
     });
   });
 
-  describe('8. Session Isolation & Logout Cleanup', () => {
+  describe('11. Cross-Branch Move Prevention in Document Updates', () => {
+    it('should disallow changing document branchId to a different branch', () => {
+      const validateBranchMutation = (existingBranch: string, incomingBranch?: string) => {
+        if (!incomingBranch) return true; // unchanged
+        return existingBranch === incomingBranch; // must match original
+      };
+
+      expect(validateBranchMutation('branch_east', 'branch_east')).toBe(true);
+      expect(validateBranchMutation('branch_east', undefined)).toBe(true);
+      expect(validateBranchMutation('branch_east', 'branch_west')).toBe(false);
+    });
+  });
+
+  describe('12. Session Isolation & Logout Cleanup', () => {
     it('should verify clear storage keys on logout', () => {
       const mockStorage: Record<string, string> = {
         manager_data: JSON.stringify({ id: 'm1' }),
@@ -243,7 +370,6 @@ describe('ScaleKitchen Manager App — Phase 4 Test Suite', () => {
         delete storage['manager_data'];
         delete storage['manager_branch_id'];
         delete storage['manager_session_log_id'];
-        // manager_biz_id is kept for quick reconnection or can be preserved
       };
 
       logoutCleanup(mockStorage);

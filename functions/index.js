@@ -315,38 +315,7 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
   }
 
   let managerDoc = null;
-  let resolvedBizId = bizId ? String(bizId).trim() : '';
-
-  // 1. Check under specified bizId
-  if (resolvedBizId) {
-    const managersSnap = await db.collection('businesses')
-      .doc(resolvedBizId)
-      .collection('managers')
-      .where('email', '==', cleanEmail)
-      .limit(1)
-      .get();
-
-    if (!managersSnap.empty) {
-      const docSnap = managersSnap.docs[0];
-      managerDoc = { id: docSnap.id, ...docSnap.data() };
-    }
-  }
-
-  // 2. Fallback: Search across collectionGroup('managers')
-  if (!managerDoc) {
-    const groupSnap = await db.collectionGroup('managers')
-      .where('email', '==', cleanEmail)
-      .limit(1)
-      .get();
-
-    if (!groupSnap.empty) {
-      const docSnap = groupSnap.docs[0];
-      managerDoc = { id: docSnap.id, ...docSnap.data() };
-      if (!resolvedBizId && docSnap.ref.parent && docSnap.ref.parent.parent) {
-        resolvedBizId = docSnap.ref.parent.parent.id;
-      }
-    }
-  }
+  let resolvedBizId = '';
 
   const recordFailedAttempt = async () => {
     const attempts = (rateLimitData.attempts || 0) + 1;
@@ -373,8 +342,68 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
     );
   };
 
-  if (!managerDoc) {
+  // 1. Strict business resolution: if bizId is supplied, search strictly within that business.
+  // Never fall back to another business's collectionGroup.
+  if (bizId && String(bizId).trim()) {
+    const targetBiz = String(bizId).trim();
+    const managersSnap = await db.collection('businesses')
+      .doc(targetBiz)
+      .collection('managers')
+      .where('email', '==', cleanEmail)
+      .limit(1)
+      .get();
+
+    if (!managersSnap.empty) {
+      const docSnap = managersSnap.docs[0];
+      managerDoc = { id: docSnap.id, ...docSnap.data() };
+      resolvedBizId = targetBiz;
+    } else {
+      // Invalid business ID or manager not in that business -> record failure & reject
+      await recordFailedAttempt();
+    }
+  } else {
+    // 2. Fallback when bizId is omitted: Search across collectionGroup('managers')
+    const groupSnap = await db.collectionGroup('managers')
+      .where('email', '==', cleanEmail)
+      .limit(2) // Detect ambiguity across different businesses
+      .get();
+
+    if (groupSnap.empty) {
+      await recordFailedAttempt();
+    } else if (groupSnap.size > 1) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Multiple kitchen accounts found for this email. Please specify your Kitchen / Business ID to sign in.'
+      );
+    } else {
+      const docSnap = groupSnap.docs[0];
+      managerDoc = { id: docSnap.id, ...docSnap.data() };
+      if (docSnap.ref.parent && docSnap.ref.parent.parent) {
+        resolvedBizId = docSnap.ref.parent.parent.id;
+      } else {
+        await recordFailedAttempt();
+      }
+    }
+  }
+
+  if (!managerDoc || !resolvedBizId) {
     await recordFailedAttempt();
+  }
+
+  // Check Manager Deactivation / Inactive status
+  const isDeactivated = 
+    managerDoc.status === 'Inactive' || 
+    managerDoc.status === 'deactivated' || 
+    managerDoc.status === 'disabled' || 
+    managerDoc.active === false || 
+    managerDoc.deleted === true || 
+    managerDoc.isDeleted === true;
+
+  if (isDeactivated) {
+    throw new HttpsError(
+      'permission-denied',
+      'This manager account has been deactivated. Please contact your kitchen owner.'
+    );
   }
 
   // Verify Password with passwordHash ONLY (no plaintext fallback)
@@ -409,7 +438,8 @@ exports.managerLogin = onCall({ cors: true }, async (request) => {
     role: 'manager',
     bizId: resolvedBizId,
     managerId,
-    branchId
+    branchId,
+    allBranches: branchId === 'All'
   };
 
   let customToken;
@@ -601,8 +631,10 @@ exports.migratePlaintextCredentials = onCall({ cors: true }, async (request) => 
   }
 
   const callerUid = request.auth.uid;
-  const callerEmail = (request.auth.token && request.auth.token.email) || '';
-  const isAdmin = callerEmail === 'memosmy10@gmail.com' || (request.auth.token && request.auth.token.admin === true);
+  const callerEmail = (request.auth.token && request.auth.token.email ? request.auth.token.email.toLowerCase().trim() : '');
+  const isSuperAdminEmail = ['cosvynsolutions@gmail.com', 'admin@scalekitchen.in', 'memosmy10@gmail.com'].includes(callerEmail) && 
+                            request.auth.token && request.auth.token.email_verified === true;
+  const isAdmin = (request.auth.token && request.auth.token.admin === true) || isSuperAdminEmail;
 
   const db = admin.firestore();
   let migratedStaffCount = 0;
@@ -707,8 +739,10 @@ exports.purgeLegacyDriverDocs = onCall({ cors: true }, async (request) => {
     throw new HttpsError('unauthenticated', 'Admin authentication required.');
   }
 
-  const callerEmail = (request.auth.token && request.auth.token.email) || '';
-  const isAdmin = callerEmail === 'memosmy10@gmail.com' || (request.auth.token && request.auth.token.admin === true);
+  const callerEmail = (request.auth.token && request.auth.token.email ? request.auth.token.email.toLowerCase().trim() : '');
+  const isSuperAdminEmail = ['cosvynsolutions@gmail.com', 'admin@scalekitchen.in', 'memosmy10@gmail.com'].includes(callerEmail) && 
+                            request.auth.token && request.auth.token.email_verified === true;
+  const isAdmin = (request.auth.token && request.auth.token.admin === true) || isSuperAdminEmail;
 
   if (!isAdmin) {
     throw new HttpsError('permission-denied', 'Only designated system admins can purge legacy driver docs.');
@@ -1482,5 +1516,56 @@ exports.geminiGenerate = onCall({
   return { text };
 });
 
+/**
+ * verifyAdminAuth
+ * Server-authoritative Super Admin verification callable.
+ * Inspects user context, confirms admin custom claims or verified admin email,
+ * and mints the { admin: true } claim if missing.
+ */
+exports.verifyAdminAuth = onCall({ cors: true }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Super Admin authentication required.');
+  }
 
+  const callerUid = request.auth.uid;
+  const callerEmail = (request.auth.token && request.auth.token.email ? request.auth.token.email.toLowerCase().trim() : '');
+  const emailVerified = request.auth.token && request.auth.token.email_verified === true;
+  const hasAdminClaim = request.auth.token && request.auth.token.admin === true;
 
+  const AUTHORIZED_ADMIN_EMAILS = [
+    'cosvynsolutions@gmail.com',
+    'admin@scalekitchen.in',
+    'memosmy10@gmail.com'
+  ];
+
+  const isEmailAuthorized = emailVerified && AUTHORIZED_ADMIN_EMAILS.includes(callerEmail);
+
+  if (!hasAdminClaim && !isEmailAuthorized) {
+    throw new HttpsError('permission-denied', 'Access denied. You do not have Super Admin privileges.');
+  }
+
+  // If authorized by verified email but claim is missing, mint it using Admin SDK
+  let claimUpdated = false;
+  if (!hasAdminClaim && isEmailAuthorized) {
+    try {
+      const user = await admin.auth().getUser(callerUid);
+      const existingClaims = user.customClaims || {};
+      await admin.auth().setCustomUserClaims(callerUid, {
+        ...existingClaims,
+        admin: true
+      });
+      claimUpdated = true;
+      console.log(`[AdminAuth] Successfully granted { admin: true } claim to ${callerEmail} (UID: ${callerUid})`);
+    } catch (err) {
+      console.error("[AdminAuth] Failed to set admin custom claim:", err);
+    }
+  }
+
+  return {
+    authorized: true,
+    uid: callerUid,
+    email: callerEmail,
+    admin: true,
+    claimUpdated
+  };
+});

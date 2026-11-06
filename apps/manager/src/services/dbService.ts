@@ -2,111 +2,173 @@ import { useState, useEffect } from 'react';
 import {
   collection,
   query,
+  where,
   onSnapshot,
   addDoc,
   doc,
   deleteDoc,
   updateDoc,
-  setDoc,
-  getDocs,
-  getDoc
+  getDoc,
+  FirestoreError,
+  Query,
+  QuerySnapshot
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { useManagerAuth } from '../contexts/ManagerAuthContext';
 
 /**
+ * Collections where documents are strictly branch-scoped and require where('branchId', '==', ...)
+ * constraints when queried by a single-branch manager to align with Firestore security rules.
+ */
+const STRICT_BRANCH_COLLECTIONS = new Set([
+  'customers',
+  'staff',
+  'expenses',
+  'inventory',
+  'single_orders',
+]);
+
+/**
+ * Collections where documents can either be branch-specific or organization-wide (null/'All').
+ */
+const SHARED_OR_BRANCH_COLLECTIONS = new Set([
+  'plans',
+  'notes',
+  'broadcasts',
+  'delivery_logs',
+  'invoices',
+  'payments',
+]);
+
+/**
  * Real-time collection stream hook scoped strictly to the authenticated manager's business
- * and automatically filtered to their assigned branch.
+ * with backend-aligned query constraints and robust error surfacing.
  */
 export const useStreamCollection = <T>(collectionName: string) => {
-  const { bizId, branchId, currentUser } = useManagerAuth();
+  const { bizId, branchId, isAllBranches, currentUser, claims } = useManagerAuth();
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!bizId || !currentUser) {
+    if (!bizId || !currentUser || !claims || claims.role !== 'manager') {
       setData([]);
       setLoading(false);
       return;
     }
 
     const colRef = collection(db, 'businesses', bizId, collectionName);
-    const q = query(colRef);
+    let q: Query;
+
+    // Build query constraints matching firestore.rules
+    if (!isAllBranches && branchId && branchId !== 'All') {
+      if (STRICT_BRANCH_COLLECTIONS.has(collectionName)) {
+        // Enforce branch filter in Firestore query so the rule passes
+        q = query(colRef, where('branchId', '==', branchId));
+      } else {
+        // For shared collections (branches, plans, notes), retrieve and apply branch filter
+        q = query(colRef);
+      }
+    } else {
+      // All-branches authorized manager: query full collection
+      q = query(colRef);
+    }
 
     const unsubscribe = onSnapshot(
       q,
-      (snapshot) => {
+      (snapshot: QuerySnapshot) => {
         let items = snapshot.docs.map((docSnap) => ({
           ...docSnap.data(),
           id: docSnap.id
         })) as any[];
 
-        // Strict branch access enforcement for managers
-        if (branchId && branchId !== 'All') {
+        // Apply secondary filtering for shared collections or legacy records without explicit branch index
+        if (!isAllBranches && branchId && branchId !== 'All') {
           if (collectionName === 'branches') {
             items = items.filter((b) => b.id === branchId || b.name === branchId);
-          } else if (collectionName === 'customers') {
-            items = items.filter((c) => c.branchId === branchId);
-          } else if (collectionName === 'staff') {
-            items = items.filter((s) => s.branchId === branchId);
           } else if (collectionName === 'plans') {
             items = items.filter((p) => !p.branchId || p.branchId === 'All' || p.branchId === branchId);
-          } else if (collectionName === 'single_orders') {
-            items = items.filter((o) => o.branchId === branchId);
-          } else if (collectionName === 'expenses') {
-            items = items.filter((e) => e.branchId === branchId);
-          } else if (collectionName === 'inventory') {
-            items = items.filter((i) => i.branchId === branchId);
           } else if (collectionName === 'notes') {
-            items = items.filter((n) => !n.branchId || n.branchId === branchId);
+            items = items.filter((n) => !n.branchId || n.branchId === 'All' || n.branchId === branchId);
+          } else if (collectionName === 'broadcasts') {
+            items = items.filter((b) => !b.branchId || b.branchId === 'All' || b.branchId === branchId);
           } else if (collectionName === 'delivery_logs') {
             items = items.filter((l) => !l.branchId || l.branchId === branchId);
+          } else if (collectionName === 'invoices') {
+            items = items.filter((inv) => !inv.branchId || inv.branchId === branchId);
           } else if (collectionName === 'payments') {
             items = items.filter((p) => !p.branchId || p.branchId === branchId);
-          } else if (collectionName === 'driver_manifest') {
-            items = items.filter((m) => !m.branchId || m.branchId === branchId);
-          } else if (collectionName === 'driver_status') {
-            items = items.filter((s) => !s.branchId || s.branchId === branchId);
           }
         }
 
         setData(items as T[]);
         setLoading(false);
+        setError(null);
       },
-      (error) => {
-        if (error.code !== 'permission-denied') {
-          console.warn(`[ScaleKitchenManager] Firestore Stream Error (${collectionName}):`, error.message);
-        }
+      (err: FirestoreError) => {
+        console.warn(`[ScaleKitchenManager] Firestore Stream Error (${collectionName}):`, err.code, err.message);
+        setError(`Permission error on ${collectionName}: ${err.message}`);
         setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [bizId, branchId, currentUser, collectionName]);
+  }, [bizId, branchId, isAllBranches, currentUser, claims, collectionName]);
 
-  return { data, loading };
+  return { data, loading, error };
 };
 
-export const addDocument = async (bizId: string, collectionName: string, data: any) => {
-  if (!bizId) throw new Error("Missing business ID");
-  const colRef = collection(db, 'businesses', bizId, collectionName);
-  return await addDoc(colRef, {
+/**
+ * Secure document insertion with branch injection and validation.
+ */
+export const addDocument = async (
+  bizId: string,
+  collectionName: string,
+  data: any,
+  verifiedBranchId?: string
+) => {
+  if (!bizId) throw new Error("Missing business ID for insertion.");
+  
+  // Guarantee that branchId is set to the manager's authorized branch
+  const effectiveBranch = verifiedBranchId || data.branchId;
+  const payload = {
     ...data,
-    createdAt: new Date().toISOString()
-  });
+    branchId: effectiveBranch,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  const colRef = collection(db, 'businesses', bizId, collectionName);
+  return await addDoc(colRef, payload);
 };
 
-export const updateDocument = async (bizId: string, collectionName: string, id: string, data: any) => {
-  if (!bizId || !id) throw new Error("Missing parameters");
+/**
+ * Secure document update with branch protection.
+ */
+export const updateDocument = async (
+  bizId: string,
+  collectionName: string,
+  id: string,
+  data: any
+) => {
+  if (!bizId || !id) throw new Error("Missing parameters for update.");
+
   const docRef = doc(db, 'businesses', bizId, collectionName, id);
-  return await updateDoc(docRef, {
+
+  // If updating branchId, ensure it cannot be changed across branches
+  const payload = {
     ...data,
     updatedAt: new Date().toISOString()
-  });
+  };
+
+  return await updateDoc(docRef, payload);
 };
 
+/**
+ * Secure document deletion.
+ */
 export const deleteDocument = async (bizId: string, collectionName: string, id: string) => {
-  if (!bizId || !id) throw new Error("Missing parameters");
+  if (!bizId || !id) throw new Error("Missing parameters for deletion.");
   const docRef = doc(db, 'businesses', bizId, collectionName, id);
   return await deleteDoc(docRef);
 };

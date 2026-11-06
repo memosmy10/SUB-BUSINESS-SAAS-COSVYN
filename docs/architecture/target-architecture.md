@@ -105,8 +105,8 @@ The target architecture migrates the application from a single monolithic Single
 - **Phase 1 (Monorepo Foundation):** COMPLETED. Workspaces (`apps/*`, `packages/*`), `pnpm-workspace.yaml`, `turbo.json`, shared `tsconfig.base.json`, and core packages (`types`, `utils`, `ui`, `api-client`) initialized.
 - **Phase 2 (Independent Landing Extraction):** COMPLETED. Public marketing site and legal pages extracted into standalone `apps/landing/` (`@scalekitchen/landing`), with independent build, HTML entry, and dedicated pricing service. Root SPA preserved 100% intact.
 - **Phase 3 (Delivery Boy App Extraction):** COMPLETED. Rider mobile web app extracted into independent `apps/delivery/` (`@scalekitchen/delivery`) with isolated named Firebase app instance (`ScaleKitchenDelivery`), custom token claims verification, full tiffin box recollection tracking, shift punch-in/out, GPS tracking, and complete backwards compatibility for existing WhatsApp links. Root SPA `/driver` preserved 100% intact as fallback.
-- **Phase 4 (Owner SaaS Extraction):** PENDING. Extract Kitchen Owner HQ into `apps/owner/`.
-- **Phase 5 (Branch Manager Portal Extraction):** PENDING. Extract Manager Portal into `apps/manager/`.
+- **Phase 4 (Branch Manager Portal Extraction):** COMPLETED. Branch Manager Portal extracted into independent `apps/manager/` (`@scalekitchen/manager`) on port 3003 with isolated named Firebase app instance (`ScaleKitchenManager`), custom token claims verification, strict branch filtering (`branchId`), granular module permission control (`allowedPages`), Veg/Non-Veg culinary badges, kitchen prep batch tallies, fleet supervision, and session audit logging. Root SPA `/manager` preserved 100% intact as fallback.
+- **Phase 5 (Owner SaaS Extraction):** PENDING. Extract Kitchen Owner HQ into `apps/owner/`.
 - **Phase 6 (Admin Console Extraction):** PENDING. Extract Super Admin into `apps/admin/`.
 
 

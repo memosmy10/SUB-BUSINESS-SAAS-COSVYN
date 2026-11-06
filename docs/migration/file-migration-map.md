@@ -30,7 +30,7 @@ This document details the planned migration path for every source file when Phas
 | `/pages/Settings.tsx` | `packages/ui/src/pages/Settings.tsx` | Shared | Imported by `apps/owner` and `apps/manager`. |
 | `/pages/Profile.tsx` | `packages/ui/src/pages/Profile.tsx` | Shared | Imported by `apps/owner` and `apps/manager`. |
 | `/pages/DriverPortal.tsx` | `apps/delivery/src/App.tsx` | Extracted (Dual) | Standalone rider web app extracted. Original root page & /driver route preserved 100% intact as fallback. |
-| `/pages/ManagerPortal.tsx` | `apps/manager/src/pages/ManagerPortal.tsx` | Move | Branch manager portal shell. |
+| `/pages/ManagerPortal.tsx` | `apps/manager/src/App.tsx` | Extracted (Dual) | Standalone manager app extracted. Original root page & /manager route preserved 100% intact as fallback. |
 | `/layouts/AdminLayout.tsx` | `apps/admin/src/layouts/AdminLayout.tsx` | Move | Admin layout shell. |
 | `/pages/admin/*` | `apps/admin/src/pages/*` | Move | Super admin operational pages. |
 | `/components/*` | `packages/ui/src/components/*` | Move | Shared UI modals, charts, and widgets. |

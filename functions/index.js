@@ -143,12 +143,191 @@ exports.scheduledFirestoreExport = onSchedule(
  * Verifies driver phone + PIN, enforces lockout (5 failures -> 15 min lock),
  * and issues a Firebase Custom Token with claims: { role: 'driver', bizId, staffId, branchId }
  */
+/**
+ * driverLogin
+ * Verifies driver email + password (or legacy phone + PIN), enforces lockout (5 failures -> 15 min lock),
+ * and issues a Firebase Custom Token with claims: { role: 'driver', bizId, staffId, branchId }
+ */
 exports.driverLogin = onCall({ cors: true }, async (request) => {
-  const { phone, pin } = request.data || {};
+  const { email, password, phone, pin, bizId: reqBizId } = request.data || {};
 
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+  const cleanPassword = password ? String(password) : '';
+
+  const db = admin.firestore();
+  const now = Date.now();
+
+  // === 1. EMAIL + PASSWORD LOGIN FLOW ===
+  if (cleanEmail) {
+    if (!cleanEmail.includes('@')) {
+      throw new HttpsError('invalid-argument', 'Valid driver email is required.');
+    }
+    if (!cleanPassword) {
+      throw new HttpsError('invalid-argument', 'Password is required.');
+    }
+
+    const safeEmailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    const rateLimitRef = db.collection('auth_rate_limits').doc(`driver_email_${safeEmailKey}`);
+    const rateLimitSnap = await rateLimitRef.get();
+    const rateLimitData = rateLimitSnap.exists ? rateLimitSnap.data() : { attempts: 0, lockedUntil: null };
+
+    // Check lockout
+    if (rateLimitData.lockedUntil && Number(rateLimitData.lockedUntil) > now) {
+      const remainingMinutes = Math.max(1, Math.ceil((Number(rateLimitData.lockedUntil) - now) / 60000));
+      throw new HttpsError(
+        'resource-exhausted',
+        `Account temporarily locked due to 5 consecutive failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`
+      );
+    }
+
+    const recordFailedAttempt = async () => {
+      const attempts = (rateLimitData.attempts || 0) + 1;
+      const isLocked = attempts >= 5;
+      const lockedUntil = isLocked ? now + (15 * 60 * 1000) : null;
+
+      await rateLimitRef.set({
+        attempts: isLocked ? 0 : attempts,
+        lockedUntil,
+        lastFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+        email: cleanEmail
+      }, { merge: true });
+
+      if (isLocked) {
+        throw new HttpsError(
+          'resource-exhausted',
+          'Account locked for 15 minutes due to 5 consecutive failed login attempts.'
+        );
+      }
+      const remaining = 5 - attempts;
+      throw new HttpsError(
+        'unauthenticated',
+        `Invalid email or password. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout)`
+      );
+    };
+
+    let driverDoc = null;
+    let resolvedBizId = reqBizId ? String(reqBizId).trim() : '';
+
+    // Step A: Check driver_auth_lookup_email/{cleanEmail}
+    const emailLookupRef = db.collection('driver_auth_lookup_email').doc(cleanEmail);
+    const emailLookupSnap = await emailLookupRef.get();
+    if (emailLookupSnap.exists) {
+      driverDoc = emailLookupSnap.data();
+      if (!resolvedBizId && driverDoc.bizId) {
+        resolvedBizId = driverDoc.bizId;
+      }
+    } else {
+      // Step B: Search within specified business or across collectionGroup('staff')
+      if (resolvedBizId) {
+        const staffSnap = await db.collection('businesses')
+          .doc(resolvedBizId)
+          .collection('staff')
+          .where('email', '==', cleanEmail)
+          .limit(1)
+          .get();
+        if (!staffSnap.empty) {
+          const docSnap = staffSnap.docs[0];
+          driverDoc = { id: docSnap.id, staffId: docSnap.id, ...docSnap.data() };
+        }
+      } else {
+        const groupSnap = await db.collectionGroup('staff')
+          .where('email', '==', cleanEmail)
+          .limit(2)
+          .get();
+        if (!groupSnap.empty) {
+          if (groupSnap.size > 1) {
+            throw new HttpsError(
+              'failed-precondition',
+              'Multiple kitchen accounts found for this email. Please specify your Kitchen / Business ID to sign in.'
+            );
+          }
+          const docSnap = groupSnap.docs[0];
+          driverDoc = { id: docSnap.id, staffId: docSnap.id, ...docSnap.data() };
+          if (docSnap.ref.parent && docSnap.ref.parent.parent) {
+            resolvedBizId = docSnap.ref.parent.parent.id;
+          }
+        }
+      }
+    }
+
+    if (!driverDoc || !resolvedBizId) {
+      await recordFailedAttempt();
+    }
+
+    // Verify Password with bcrypt against passwordHash
+    let isMatch = false;
+    if (driverDoc && driverDoc.passwordHash) {
+      try {
+        isMatch = bcrypt.compareSync(cleanPassword, driverDoc.passwordHash);
+      } catch (bcryptErr) {
+        console.error('[driverLogin] bcrypt compare error:', bcryptErr);
+        isMatch = false;
+      }
+    }
+
+    if (!isMatch) {
+      await recordFailedAttempt();
+    }
+
+    // Enforce active / status validation
+    if (driverDoc.active === false || driverDoc.status === 'Inactive' || driverDoc.isDeleted) {
+      throw new HttpsError('permission-denied', 'This delivery partner account has been deactivated. Please contact your kitchen manager.');
+    }
+
+    // Verify subscription status of business
+    const bizSnap = await db.collection('businesses').doc(resolvedBizId).get();
+    if (!bizSnap.exists) {
+      throw new HttpsError('not-found', 'Associated kitchen was not found.');
+    }
+    const bizData = bizSnap.data();
+    if (bizData.planStatus === 'Expired') {
+      throw new HttpsError('permission-denied', 'Kitchen subscription has expired. Please contact the kitchen owner.');
+    }
+
+    // Clear rate limit
+    await rateLimitRef.set({
+      attempts: 0,
+      lockedUntil: null,
+      lastSuccessAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    const staffId = driverDoc.staffId || driverDoc.id || 'driver-1';
+    const branchId = driverDoc.branchId || '';
+    const name = driverDoc.name || 'Delivery Partner';
+
+    const uid = `driver_${resolvedBizId}_${staffId}`;
+    const claims = {
+      role: 'driver',
+      bizId: resolvedBizId,
+      staffId,
+      branchId
+    };
+
+    let customToken;
+    try {
+      customToken = await admin.auth().createCustomToken(uid, claims);
+    } catch (tokenErr) {
+      console.error('[driverLogin] createCustomToken error:', tokenErr);
+      throw new HttpsError('internal', 'Failed to generate authentication token. Please try again.');
+    }
+
+    return {
+      token: customToken,
+      driver: {
+        name,
+        bizId: resolvedBizId,
+        staffId,
+        branchId,
+        email: cleanEmail,
+        mobile: driverDoc.mobile || ''
+      }
+    };
+  }
+
+  // === 2. LEGACY PHONE + PIN FLOW (Preserved for compatibility) ===
   const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
   if (!cleanPhone || cleanPhone.length !== 10) {
-    throw new HttpsError('invalid-argument', 'Valid 10-digit mobile number is required.');
+    throw new HttpsError('invalid-argument', 'Valid driver email or 10-digit mobile number is required.');
   }
 
   const cleanPin = String(pin || '').trim();
@@ -156,8 +335,6 @@ exports.driverLogin = onCall({ cors: true }, async (request) => {
     throw new HttpsError('invalid-argument', 'PIN must be between 4 and 6 digits.');
   }
 
-  const db = admin.firestore();
-  const now = Date.now();
   const rateLimitRef = db.collection('auth_rate_limits').doc(`driver_${cleanPhone}`);
   const rateLimitSnap = await rateLimitRef.get();
   const rateLimitData = rateLimitSnap.exists ? rateLimitSnap.data() : { attempts: 0, lockedUntil: null };
@@ -565,6 +742,118 @@ exports.setDriverPin = onCall({ cors: true }, async (request) => {
     pin: cleanPin,
     updatedAt: nowIso
   });
+
+  await batch.commit();
+
+  return { success: true, staffId: targetStaffId };
+});
+
+/**
+ * setDriverPassword
+ * Callable function used by kitchen owners and branch managers when creating or updating
+ * a delivery partner account with Email + Password.
+ * Securely hashes the password with bcrypt and writes ONLY passwordHash to Firestore.
+ * Updates businesses/{bizId}/staff/{staffId} and driver_auth_lookup_email/{email}.
+ */
+exports.setDriverPassword = onCall({ cors: true }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required to set delivery partner password.');
+  }
+
+  const { bizId, staffId, email, password, name, branchId, mobile, vehicleNumber, additionalData } = request.data || {};
+
+  if (!bizId) {
+    throw new HttpsError('invalid-argument', 'Business ID is required.');
+  }
+
+  const callerUid = request.auth.uid;
+  const callerClaims = request.auth.token || {};
+  const isOwner = callerUid === bizId;
+  const isManager = callerClaims.role === 'manager' && 
+                    callerClaims.bizId === bizId && 
+                    (callerClaims.allBranches === true || !branchId || callerClaims.branchId === branchId);
+  const isAdmin = callerClaims.admin === true || 
+                  callerClaims.email === 'memosmy10@gmail.com' || 
+                  ['cosvynsolutions@gmail.com', 'admin@scalekitchen.in'].includes(callerClaims.email);
+
+  if (!isOwner && !isManager && !isAdmin) {
+    throw new HttpsError('permission-denied', 'Only kitchen owners or authorized branch managers can manage delivery partner credentials.');
+  }
+
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new HttpsError('invalid-argument', 'A valid email address is required for the delivery partner.');
+  }
+
+  const cleanPassword = String(password || '');
+  if (!cleanPassword || cleanPassword.length < 6) {
+    throw new HttpsError('invalid-argument', 'Password must be at least 6 characters.');
+  }
+
+  const db = admin.firestore();
+
+  // Reject an email that already belongs to a rider of ANOTHER business
+  const existingLookup = await db.collection('driver_auth_lookup_email').doc(cleanEmail).get();
+  if (existingLookup.exists) {
+    const existingData = existingLookup.data();
+    if (existingData.bizId && existingData.bizId !== bizId) {
+      throw new HttpsError('already-exists', 'This email is already registered with another kitchen.');
+    }
+  }
+
+  const passwordHash = bcrypt.hashSync(cleanPassword, 10);
+  const targetStaffId = staffId || db.collection('businesses').doc(bizId).collection('staff').doc().id;
+  const nowIso = new Date().toISOString();
+
+  // Check if staff doc exists and had an older email
+  const staffRef = db.collection('businesses').doc(bizId).collection('staff').doc(targetStaffId);
+  const oldStaffSnap = await staffRef.get();
+  if (oldStaffSnap.exists) {
+    const oldEmail = oldStaffSnap.data().email;
+    const cleanOldEmail = String(oldEmail || '').trim().toLowerCase();
+    if (cleanOldEmail && cleanOldEmail !== cleanEmail) {
+      await db.collection('driver_auth_lookup_email').doc(cleanOldEmail).delete().catch(() => {});
+    }
+  }
+
+  const batch = db.batch();
+
+  const isStaffActive = additionalData?.status !== 'Inactive' && additionalData?.active !== false;
+  const staffStatus = additionalData?.status || (isStaffActive ? 'Offline' : 'Inactive');
+  const targetBranch = branchId || (isManager ? callerClaims.branchId : '') || '';
+
+  // 1. Staff subcollection doc: write passwordHash, remove any plaintext password or pin
+  const staffPayload = {
+    ...(additionalData || {}),
+    name: name || (oldStaffSnap.exists ? oldStaffSnap.data().name : '') || 'Delivery Partner',
+    email: cleanEmail,
+    role: 'driver',
+    branchId: targetBranch,
+    mobile: mobile ? String(mobile).replace(/\D/g, '').slice(-10) : (oldStaffSnap.exists ? oldStaffSnap.data().mobile : ''),
+    vehicleNumber: vehicleNumber || additionalData?.vehicleNumber || (oldStaffSnap.exists ? oldStaffSnap.data().vehicleNumber : '') || '',
+    passwordHash,
+    active: isStaffActive,
+    status: staffStatus,
+    updatedAt: nowIso,
+    password: admin.firestore.FieldValue.delete(),
+    pin: admin.firestore.FieldValue.delete()
+  };
+  batch.set(staffRef, staffPayload, { merge: true });
+
+  // 2. driver_auth_lookup_email/{cleanEmail}
+  const lookupRef = db.collection('driver_auth_lookup_email').doc(cleanEmail);
+  batch.set(lookupRef, {
+    bizId,
+    staffId: targetStaffId,
+    name: staffPayload.name,
+    email: cleanEmail,
+    role: 'driver',
+    passwordHash,
+    branchId: targetBranch,
+    active: isStaffActive,
+    status: staffStatus,
+    updatedAt: nowIso
+  }, { merge: true });
 
   await batch.commit();
 

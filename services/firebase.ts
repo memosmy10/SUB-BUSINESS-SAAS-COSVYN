@@ -61,6 +61,11 @@ export const setDriverPinCallable = httpsCallable<
   { success: boolean; staffId: string }
 >(functions, 'setDriverPin');
 
+export const setDriverPasswordCallable = httpsCallable<
+  { bizId: string; staffId?: string; email: string; password: string; name?: string; branchId?: string; mobile?: string; vehicleNumber?: string; additionalData?: any },
+  { success: boolean; staffId: string }
+>(functions, 'setDriverPassword');
+
 export const setManagerPasswordCallable = httpsCallable<
   { bizId: string; managerId?: string; password: string; managerData: any },
   { success: boolean; managerId: string }

@@ -4,7 +4,7 @@ import {
   AlertCircle, AlertTriangle, Navigation, ArrowRight, RefreshCw, 
   ChevronRight, Calendar, User, Shield, Info, Battery, Compass,
   Sparkles, Check, X, RotateCcw, Package, HelpCircle, ExternalLink, Play, Star,
-  Lock, Key, Eye, EyeOff, LogOut
+  Lock, Key, Eye, EyeOff, LogOut, Mail
 } from 'lucide-react';
 import { 
   collection, doc, updateDoc, setDoc, getDoc, onSnapshot 
@@ -256,12 +256,13 @@ export const App: React.FC = () => {
   const isDriverLoggedIn = Boolean(safeStorageGet('driver_is_logged_in') === 'true' && isSessionValid);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [emailInput, setEmailInput] = useState<string>(() => safeStorageGet('driver_email') || '');
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [phoneInput, setPhoneInput] = useState<string>(initialPhone);
-  const [pinInput, setPinInput] = useState<string>('');
-  const [showPin, setShowPin] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
 
-  // If driver has an active authenticated session, close login modal; otherwise prompt for 4-digit PIN
+  // If driver has an active authenticated session, close login modal; otherwise prompt for Email + Password
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(() => {
     if (initialBiz === 'demo') return false;
     if (initialBoy && isDriverLoggedIn) return false;
@@ -1243,19 +1244,18 @@ export const App: React.FC = () => {
     }
   };
 
-  // Server-Verified Login Handler
-  const handleVerifyLogin = async (mobileOverride?: string) => {
-    const rawMobile = mobileOverride || phoneInput;
-    const digits = (rawMobile || '').replace(/\D/g, '').slice(-10);
-    const pin = (pinInput || '').trim();
+  // Server-Verified Login Handler (Email + Password)
+  const handleVerifyLogin = async () => {
+    const cleanEmail = (emailInput || '').trim().toLowerCase();
+    const cleanPassword = (passwordInput || '');
 
-    if (!digits || digits.length !== 10) {
-      setLoginError('Please enter a valid 10-digit mobile number.');
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setLoginError('Please enter a valid delivery partner email.');
       return;
     }
 
-    if (!pin || pin.length < 4 || pin.length > 6) {
-      setLoginError('PIN must be 4-6 digits.');
+    if (!cleanPassword || cleanPassword.length < 6) {
+      setLoginError('Password must be at least 6 characters.');
       return;
     }
 
@@ -1263,10 +1263,11 @@ export const App: React.FC = () => {
     setLoginError(null);
 
     try {
-      // Direct call to driverLogin Cloud Function (Preserves contract)
+      // Direct call to driverLogin Cloud Function with Email + Password
       const result = await driverLoginCallable({
-        phone: digits,
-        pin: pin
+        email: cleanEmail,
+        password: cleanPassword,
+        bizId: bizId || undefined
       });
 
       if (result?.data?.token) {
@@ -1278,13 +1279,15 @@ export const App: React.FC = () => {
         const businessId = driverInfo.bizId;
         const staffId = driverInfo.staffId;
         const branchId = driverInfo.branchId || '';
+        const driverMobile = driverInfo.mobile || '';
 
         safeStorageSet('driver_is_logged_in', 'true');
         safeStorageSet('driver_session_expires', String(Date.now() + 7 * 24 * 60 * 60 * 1000));
-        safeStorageSet('driver_session_token', btoa(`${digits}:${staffId}:${Date.now()}`));
+        safeStorageSet('driver_session_token', btoa(`${cleanEmail}:${staffId}:${Date.now()}`));
         setDriverDisplayName(name);
         safeStorageSet('driver_name', name);
-        safeStorageSet('driver_phone', digits);
+        safeStorageSet('driver_email', cleanEmail);
+        if (driverMobile) safeStorageSet('driver_phone', driverMobile);
         safeStorageSet('driver_failed_attempts', '0');
         safeStorageSet('driver_lockout_until', '0');
 
@@ -1299,7 +1302,7 @@ export const App: React.FC = () => {
         if (branchId) safeStorageSet('driver_branch_id', branchId);
 
         setLoginModalOpen(false);
-        setPinInput('');
+        setPasswordInput('');
         setVerifying(false);
         showToast(`Welcome back, ${name}! Ready for today's deliveries.`);
       }
@@ -1351,7 +1354,7 @@ export const App: React.FC = () => {
       setBizId('');
       setSelectedBoyId('');
       setDriverDisplayName('');
-      setPinInput('');
+      setPasswordInput('');
       setLoginModalOpen(true);
       showToast("Logged out successfully.");
     }
@@ -1368,7 +1371,7 @@ export const App: React.FC = () => {
           <div>
             <h2 className="text-xl font-bold font-display tracking-tight text-white">Delivery Partner Login</h2>
             <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-              Enter your registered mobile number and 4-digit security PIN to access today's delivery route.
+              Enter your registered Email and Password to access today's meal delivery route.
             </p>
           </div>
 
@@ -1393,20 +1396,20 @@ export const App: React.FC = () => {
           >
             <div>
               <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                Registered Mobile Number
+                Driver Email Address
               </label>
               <div className="relative">
-                <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
                 <input
                   required
-                  type="tel"
-                  placeholder="e.g. 9876543210"
-                  value={phoneInput}
+                  type="email"
+                  placeholder="e.g. rider@kitchen.com"
+                  value={emailInput}
                   onChange={(e) => {
-                    setPhoneInput(e.target.value);
+                    setEmailInput(e.target.value);
                     setLoginError(null);
                   }}
-                  className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
+                  className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs outline-none focus:ring-2 focus:ring-amber-400"
                 />
               </div>
             </div>
@@ -1414,33 +1417,29 @@ export const App: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[11px] font-semibold text-slate-300">
-                  4-Digit Access PIN
+                  Password
                 </label>
-                <span className="text-[10px] text-amber-400 font-medium">Set by Kitchen Manager</span>
+                <span className="text-[10px] text-amber-400 font-medium">Min 6 characters</span>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
                 <input
                   required
-                  type={showPin ? "text" : "password"}
-                  maxLength={4}
-                  inputMode="numeric"
-                  pattern="[0-9]{4}"
-                  placeholder="••••"
-                  value={pinInput}
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={passwordInput}
                   onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
-                    setPinInput(digits);
+                    setPasswordInput(e.target.value);
                     setLoginError(null);
                   }}
-                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-sm font-mono tracking-widest text-center font-bold outline-none focus:ring-2 focus:ring-amber-400"
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs outline-none focus:ring-2 focus:ring-amber-400"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPin(!showPin)}
+                  onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                 >
-                  {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
             </div>
@@ -1457,7 +1456,7 @@ export const App: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <span>Verify & Access Route</span>
+                  <span>Sign In & Access Route</span>
                   <ArrowRight size={14} />
                 </>
               )}
@@ -2255,15 +2254,15 @@ export const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Rider Switcher / PIN Login Modal */}
+      {/* Delivery Partner Email + Password Login Modal */}
       {loginModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
-          <div className="glass-card bg-slate-900 border border-white/20 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-left">
+          <div className="glass-card bg-slate-900 border border-white/20 rounded-3xl p-6 sm:p-7 max-w-sm w-full space-y-4 shadow-2xl text-left">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-bold font-display text-base text-white">Delivery Partner Login</h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Enter your registered phone & 4-digit PIN
+                  Sign in with your kitchen email & password
                 </p>
               </div>
               {selectedBoyId && isDriverLoggedIn && (
@@ -2293,58 +2292,72 @@ export const App: React.FC = () => {
                 e.preventDefault();
                 handleVerifyLogin();
               }}
-              className="space-y-3 pt-1"
+              className="space-y-3.5 pt-1"
             >
+              {/* Optional Kitchen / Business ID */}
+              {!bizId && (
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                    Kitchen / Business ID (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. MyKitchen or leave blank"
+                    value={bizId}
+                    onChange={(e) => setBizId(e.target.value.trim())}
+                    className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+              )}
+
+              {/* Email Address */}
               <div>
                 <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                  Registered Mobile Number
+                  Driver Email Address
                 </label>
                 <div className="relative">
-                  <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                   <input
                     required
-                    type="tel"
-                    placeholder="e.g. 9876543210"
-                    value={phoneInput}
+                    type="email"
+                    placeholder="e.g. rider@kitchen.com"
+                    value={emailInput}
                     onChange={(e) => {
-                      setPhoneInput(e.target.value);
+                      setEmailInput(e.target.value);
                       setLoginError(null);
                     }}
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs font-mono outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs outline-none focus:ring-2 focus:ring-amber-400"
                   />
                 </div>
               </div>
 
+              {/* Password */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[11px] font-semibold text-slate-300">
-                    4-Digit Security PIN
+                    Password
                   </label>
-                  <span className="text-[10px] text-amber-400 font-medium">Provided by Kitchen Owner</span>
+                  <span className="text-[10px] text-amber-400 font-medium">Min 6 characters</span>
                 </div>
                 <div className="relative">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                   <input
                     required
-                    type={showPin ? "text" : "password"}
-                    maxLength={4}
-                    inputMode="numeric"
-                    pattern="[0-9]{4}"
-                    placeholder="••••"
-                    value={pinInput}
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={passwordInput}
                     onChange={(e) => {
-                      const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
-                      setPinInput(digits);
+                      setPasswordInput(e.target.value);
                       setLoginError(null);
                     }}
-                    className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-sm font-mono tracking-widest text-center font-bold outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-slate-500 text-xs outline-none focus:ring-2 focus:ring-amber-400"
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPin(!showPin)}
+                    onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                   >
-                    {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
               </div>
@@ -2352,63 +2365,26 @@ export const App: React.FC = () => {
               <button
                 type="submit"
                 disabled={verifying}
-                className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 mt-1"
+                className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 mt-2"
               >
                 {verifying ? (
                   <>
                     <RefreshCw size={13} className="animate-spin text-slate-950" />
-                    <span>Verifying PIN...</span>
+                    <span>Verifying Credentials...</span>
                   </>
                 ) : (
                   <>
-                    <span>Verify & Access Route</span>
+                    <span>Sign In & Access Route</span>
                     <ArrowRight size={13} />
                   </>
                 )}
               </button>
             </form>
 
-            {allStaff.length > 0 && (
-              <>
-                <div className="relative flex py-1 items-center">
-                  <div className="flex-grow border-t border-white/10"></div>
-                  <span className="flex-shrink mx-2 text-[10px] text-slate-400 uppercase font-semibold">Or Select Profile</span>
-                  <div className="flex-grow border-t border-white/10"></div>
-                </div>
-
-                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                  {allStaff.map(boy => (
-                    <button
-                      key={boy.id}
-                      type="button"
-                      onClick={() => {
-                        setPhoneInput(boy.mobile || '');
-                        setLoginError(null);
-                        showToast(`Selected ${boy.name}. Please enter your 4-digit PIN.`);
-                      }}
-                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
-                        selectedBoyId === boy.id 
-                          ? 'bg-amber-500/20 border-amber-500/50 text-white' 
-                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-bold text-xs text-white">{boy.name}</div>
-                        <div className="text-[11px] text-slate-400 font-mono">{boy.mobile || 'No contact number'}</div>
-                      </div>
-                      <Key size={14} className="text-amber-400" />
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {allStaff.length === 0 && (
-              <div className="pt-2 border-t border-white/10 text-center space-y-0.5">
-                <p className="text-[11px] font-medium text-slate-400">ScaleKitchen Delivery Partner Portal</p>
-                <p className="text-[10px] text-slate-500">Contact your kitchen owner if you need your 4-digit PIN.</p>
-              </div>
-            )}
+            <div className="pt-2 border-t border-white/10 text-center space-y-0.5">
+              <p className="text-[11px] font-medium text-slate-400">ScaleKitchen Delivery Partner Portal</p>
+              <p className="text-[10px] text-slate-500">Credentials are configured by your Kitchen Manager or Owner.</p>
+            </div>
           </div>
         </div>
       )}

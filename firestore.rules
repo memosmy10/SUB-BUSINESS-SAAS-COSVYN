@@ -104,6 +104,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Driver Auth Lookup by Email: riders can GET their own record, but NO listing
+    match /driver_auth_lookup_email/{email} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
     // Free Trial Claim Registry (server-side only)
     match /trial_claims/{claimKey} {
       allow read, write: if false;

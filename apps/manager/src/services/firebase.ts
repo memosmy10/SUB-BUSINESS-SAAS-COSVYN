@@ -92,6 +92,21 @@ export const managerLoginCallable = httpsCallable<
   ManagerLoginResponse
 >(functions, 'managerLogin');
 
+export const setDriverPasswordCallable = httpsCallable<
+  {
+    bizId: string;
+    staffId?: string;
+    email: string;
+    password: string;
+    name: string;
+    branchId?: string;
+    mobile?: string;
+    vehicleNumber?: string;
+    additionalData?: Record<string, any>;
+  },
+  { success: boolean; staffId: string }
+>(functions, 'setDriverPassword');
+
 // Helper to inspect custom token claims for tenant isolation
 export interface ManagerClaims {
   role?: string;

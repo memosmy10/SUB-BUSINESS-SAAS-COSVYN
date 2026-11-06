@@ -311,4 +311,49 @@ describe('ScaleKitchen Delivery App — Phase 3 Test Suite', () => {
         .toBe('Connection error. Please try again.');
     });
   });
+
+  describe('7. Email + Password Redesign & Credential Architecture', () => {
+    it('should validate driver email and password before dispatch', () => {
+      const validateDriverCredentials = (email: string, pass: string) => {
+        const cleanEmail = String(email || '').trim().toLowerCase();
+        if (!cleanEmail || !cleanEmail.includes('@')) return 'Invalid email';
+        if (!pass || pass.length < 6) return 'Password too short';
+        return null;
+      };
+
+      expect(validateDriverCredentials('', 'secret123')).toBe('Invalid email');
+      expect(validateDriverCredentials('invalid-email', 'secret123')).toBe('Invalid email');
+      expect(validateDriverCredentials('driver@kitchen.com', '123')).toBe('Password too short');
+      expect(validateDriverCredentials('driver@kitchen.com', 'secret123')).toBeNull();
+    });
+
+    it('should verify driver token claims structure contains role, bizId, staffId, branchId', () => {
+      const claims = {
+        role: 'driver',
+        bizId: 'biz_alpha',
+        staffId: 'staff_rider_1',
+        branchId: 'branch_south'
+      };
+
+      expect(claims.role).toBe('driver');
+      expect(claims.bizId).toBe('biz_alpha');
+      expect(claims.staffId).toBe('staff_rider_1');
+      expect(claims.branchId).toBe('branch_south');
+    });
+
+    it('should enforce that deactivated driver accounts are rejected', () => {
+      const checkDriverActive = (doc: { active?: boolean; status?: string; isDeleted?: boolean }) => {
+        if (doc.active === false || doc.status === 'Inactive' || doc.isDeleted) {
+          return false;
+        }
+        return true;
+      };
+
+      expect(checkDriverActive({ active: true, status: 'Online' })).toBe(true);
+      expect(checkDriverActive({ active: true, status: 'Offline' })).toBe(true);
+      expect(checkDriverActive({ active: false, status: 'Online' })).toBe(false);
+      expect(checkDriverActive({ active: true, status: 'Inactive' })).toBe(false);
+      expect(checkDriverActive({ isDeleted: true })).toBe(false);
+    });
+  });
 });

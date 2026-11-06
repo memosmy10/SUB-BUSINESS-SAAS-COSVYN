@@ -11,7 +11,7 @@ import {
   INDIA_STATES, REUSABLE_BOX_TYPES, ALL_SAAS_PAGES, BranchManager, ManagerLogEntry,
   formatDateDDMMYYYY
 } from '../services/store';
-import { db, setDriverPinCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
+import { db, setDriverPinCallable, setDriverPasswordCallable, setManagerPasswordCallable, deleteDriverCallable } from '../services/firebase';
 import { doc, onSnapshot, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ShareDriverLinkModal } from '../components/ShareDriverLinkModal';
 import { VegNonVegBadge, VegNonVegIcon, DayDietScheduleSelector } from '../components/VegNonVegIndicator';
@@ -278,23 +278,38 @@ const Settings = () => {
     // REMOVED: No browser writes to driver_auth_lookup or global_features
     // Cloud Function handles all auth directory updates securely
 
-    // Cloud Function: Securely hash PIN and register in all lookup locations
+    // Cloud Function: Securely register rider credentials with bcrypt
     try {
-      const response = await setDriverPinCallable({
-        bizId: currentUser.uid,
-        staffId: staffId || editingItem?.id || '',
-        phone: cleanPhone,
-        pin: cleanPin,
-        name: data.name,
-        branchId: data.branchId || '',
-        additionalData: staffData
-      });
+      const email = (data as any).email ? String((data as any).email).trim().toLowerCase() : '';
+      const password = (data as any).password ? String((data as any).password) : '';
 
-      if (response?.data?.success) {
-        console.log(`Delivery partner ${data.name} registered successfully.`);
+      if (email && password) {
+        await setDriverPasswordCallable({
+          bizId: currentUser.uid,
+          staffId: staffId || editingItem?.id || '',
+          email,
+          password,
+          name: data.name,
+          branchId: data.branchId || '',
+          mobile: cleanPhone,
+          vehicleNumber: (data as any).vehicleNumber,
+          additionalData: staffData
+        });
+      }
+
+      if (cleanPhone && cleanPin) {
+        await setDriverPinCallable({
+          bizId: currentUser.uid,
+          staffId: staffId || editingItem?.id || '',
+          phone: cleanPhone,
+          pin: cleanPin,
+          name: data.name,
+          branchId: data.branchId || '',
+          additionalData: staffData
+        });
       }
     } catch (callableErr: any) {
-      console.warn("setDriverPin error:", callableErr?.message);
+      console.warn("setDriver credential callable notice:", callableErr?.message);
     }
 
     setActiveModal(null);

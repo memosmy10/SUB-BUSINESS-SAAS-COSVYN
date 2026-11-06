@@ -82,12 +82,13 @@ export interface DriverLoginResponse {
     bizId: string;
     staffId: string;
     branchId: string;
-    mobile: string;
+    email?: string;
+    mobile?: string;
   };
 }
 
 export const driverLoginCallable = httpsCallable<
-  { phone: string; pin: string },
+  { email?: string; password?: string; phone?: string; pin?: string; bizId?: string },
   DriverLoginResponse
 >(functions, 'driverLogin');
 

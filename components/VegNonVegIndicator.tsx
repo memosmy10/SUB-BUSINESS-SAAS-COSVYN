@@ -57,6 +57,7 @@ interface BadgeProps {
   diet: DietType | string;
   count?: number;
   showLabel?: boolean;
+  shortLabel?: boolean;
   size?: 'xs' | 'sm' | 'md';
   className?: string;
 }
@@ -65,6 +66,7 @@ export const VegNonVegBadge: React.FC<BadgeProps> = ({
   diet,
   count,
   showLabel = true,
+  shortLabel = false,
   size = 'xs',
   className = ''
 }) => {
@@ -82,6 +84,10 @@ export const VegNonVegBadge: React.FC<BadgeProps> = ({
     md: 15
   }[size];
 
+  const labelText = shortLabel 
+    ? (isVeg ? 'V' : 'NV') 
+    : (isVeg ? 'Veg' : 'Non-Veg');
+
   return (
     <span
       className={`inline-flex items-center font-bold rounded-md border tracking-tight ${
@@ -92,7 +98,7 @@ export const VegNonVegBadge: React.FC<BadgeProps> = ({
     >
       <VegNonVegIcon diet={diet} size={iconSizes} />
       {count !== undefined && <span className="font-extrabold">{count}</span>}
-      {showLabel && <span>{isVeg ? 'Veg' : 'Non-Veg'}</span>}
+      {showLabel && <span>{labelText}</span>}
     </span>
   );
 };

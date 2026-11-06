@@ -358,12 +358,12 @@ const PrepCard: React.FC<PrepCardProps> = ({ title, dateLabel, dateValue, data, 
             <span>{data.grandTotal} Boxes</span>
           </div>
           <div className="text-[11px] font-bold text-slate-500 mt-1.5 flex items-center gap-1.5">
-            <span className="text-emerald-700 font-extrabold flex items-center gap-0.5">
-              <VegNonVegIcon diet="Veg" size={10} /> Veg {data.grandTotalVeg}
+            <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+              <VegNonVegIcon diet="Veg" size={10} /> V {data.grandTotalVeg}
             </span>
             <span className="text-slate-300">•</span>
-            <span className="text-rose-700 font-extrabold flex items-center gap-0.5">
-              <VegNonVegIcon diet="Non-Veg" size={10} /> N-veg {data.grandTotalNonVeg}
+            <span className="text-rose-700 font-extrabold flex items-center gap-1">
+              <VegNonVegIcon diet="Non-Veg" size={10} /> NV {data.grandTotalNonVeg}
             </span>
           </div>
         </div>
@@ -377,10 +377,14 @@ const PrepCard: React.FC<PrepCardProps> = ({ title, dateLabel, dateValue, data, 
                <Users size={11}/> Active Customers
             </p>
             <p className="text-2xl sm:text-3xl font-black text-slate-900">{data.totalCustomers}</p>
-            <div className="text-[11px] font-bold text-slate-600 mt-1 flex items-center gap-1.5 flex-wrap">
-               <span className="text-emerald-700 font-black">Veg {data.vegCustomers}</span>
+            <div className="text-[11px] font-bold mt-1 flex items-center gap-1.5 flex-wrap">
+               <span className="text-emerald-700 font-black flex items-center gap-1">
+                 <VegNonVegIcon diet="Veg" size={9} /> V {data.vegCustomers}
+               </span>
                <span className="text-slate-300 font-normal">|</span>
-               <span className="text-rose-700 font-black">N-veg {data.nonVegCustomers}</span>
+               <span className="text-rose-700 font-black flex items-center gap-1">
+                 <VegNonVegIcon diet="Non-Veg" size={9} /> NV {data.nonVegCustomers}
+               </span>
             </div>
          </div>
 
@@ -390,10 +394,14 @@ const PrepCard: React.FC<PrepCardProps> = ({ title, dateLabel, dateValue, data, 
                <Package size={11}/> Normal Plans
             </p>
             <p className="text-2xl sm:text-3xl font-black text-blue-700">{data.totalNormalBoxes}</p>
-            <div className="text-[11px] font-bold text-blue-900 mt-1 flex items-center gap-1.5 flex-wrap">
-               <span className="text-emerald-700 font-black">Veg {data.normalVegBoxes}</span>
+            <div className="text-[11px] font-bold mt-1 flex items-center gap-1.5 flex-wrap">
+               <span className="text-emerald-700 font-black flex items-center gap-1">
+                 <VegNonVegIcon diet="Veg" size={9} /> V {data.normalVegBoxes}
+               </span>
                <span className="text-blue-300 font-normal">|</span>
-               <span className="text-rose-700 font-black">N-veg {data.normalNonVegBoxes}</span>
+               <span className="text-rose-700 font-black flex items-center gap-1">
+                 <VegNonVegIcon diet="Non-Veg" size={9} /> NV {data.normalNonVegBoxes}
+               </span>
             </div>
          </div>
 
@@ -403,10 +411,14 @@ const PrepCard: React.FC<PrepCardProps> = ({ title, dateLabel, dateValue, data, 
                <Star size={11} fill="currentColor"/> Starred Plans
             </p>
             <p className="text-2xl sm:text-3xl font-black text-amber-700">{data.totalStarredBoxes}</p>
-            <div className="text-[11px] font-bold text-amber-900 mt-1 flex items-center gap-1.5 flex-wrap">
-               <span className="text-emerald-700 font-black">Veg {data.starredVegBoxes}</span>
+            <div className="text-[11px] font-bold mt-1 flex items-center gap-1.5 flex-wrap">
+               <span className="text-emerald-700 font-black flex items-center gap-1">
+                 <VegNonVegIcon diet="Veg" size={9} /> V {data.starredVegBoxes}
+               </span>
                <span className="text-amber-300 font-normal">|</span>
-               <span className="text-rose-700 font-black">N-veg {data.starredNonVegBoxes}</span>
+               <span className="text-rose-700 font-black flex items-center gap-1">
+                 <VegNonVegIcon diet="Non-Veg" size={9} /> NV {data.starredNonVegBoxes}
+               </span>
             </div>
          </div>
       </div>
@@ -417,8 +429,10 @@ const PrepCard: React.FC<PrepCardProps> = ({ title, dateLabel, dateValue, data, 
             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
                Normal Preparation Summary
             </h4>
-            <span className="text-[10px] font-bold text-slate-400">
-               Veg {data.normalVegBoxes} • N-veg {data.normalNonVegBoxes}
+            <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1.5">
+               <span className="text-emerald-700 font-black">V {data.normalVegBoxes}</span>
+               <span className="text-slate-300">•</span>
+               <span className="text-rose-700 font-black">NV {data.normalNonVegBoxes}</span>
             </span>
          </div>
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -452,8 +466,10 @@ const PrepCard: React.FC<PrepCardProps> = ({ title, dateLabel, dateValue, data, 
             <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] flex items-center gap-2">
                <Star size={12} fill="currentColor" /> Starred Preparation Summary
             </h4>
-            <span className="text-[10px] font-bold text-amber-700">
-               Veg {data.starredVegBoxes} • N-veg {data.starredNonVegBoxes}
+            <span className="text-[10px] font-bold text-amber-700 flex items-center gap-1.5">
+               <span className="text-emerald-700 font-black">V {data.starredVegBoxes}</span>
+               <span className="text-amber-300">•</span>
+               <span className="text-rose-700 font-black">NV {data.starredNonVegBoxes}</span>
             </span>
          </div>
          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -524,7 +540,7 @@ const MealSlot: React.FC<MealSlotProps> = ({
               {type}
             </span>
             <span className="text-[10px] text-slate-400 font-semibold">
-              Veg: <strong className="text-emerald-700">{sessionData?.totalVeg || 0}</strong> • N-veg: <strong className="text-rose-700">{sessionData?.totalNonVeg || 0}</strong>
+              <strong className="text-emerald-700">V: {sessionData?.totalVeg || 0}</strong> • <strong className="text-rose-700">NV: {sessionData?.totalNonVeg || 0}</strong>
             </span>
           </div>
         </div>
@@ -537,14 +553,14 @@ const MealSlot: React.FC<MealSlotProps> = ({
         </div>
       </div>
 
-      {/* Bifurcated Veg | N-veg Columns matching Screenshot 2 Handwritten Wireframe */}
+      {/* Bifurcated V | NV Columns matching Screenshot 2 Handwritten Wireframe */}
       <div className="grid grid-cols-2 divide-x divide-slate-200/90 bg-white/80 rounded-2xl border border-slate-200/80 overflow-hidden shadow-2xs">
-        {/* VEG COLUMN */}
+        {/* VEG (V) COLUMN */}
         <div className="p-2 sm:p-2.5 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-emerald-100">
               <span className="flex items-center gap-1 text-[11px] font-black text-emerald-800">
-                <VegNonVegIcon diet="Veg" size={11} /> Veg
+                <VegNonVegIcon diet="Veg" size={11} /> V
               </span>
               <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-900">
                 {sessionData?.totalVeg || 0}
@@ -559,18 +575,18 @@ const MealSlot: React.FC<MealSlotProps> = ({
                 </div>
               ))}
               {vegEntries.length === 0 && (
-                <div className="text-[10px] text-slate-300 italic py-2 text-center">0 Veg</div>
+                <div className="text-[10px] text-slate-300 italic py-2 text-center">0 V</div>
               )}
             </div>
           </div>
         </div>
 
-        {/* NON-VEG COLUMN */}
+        {/* NON-VEG (NV) COLUMN */}
         <div className="p-2 sm:p-2.5 flex flex-col justify-between bg-rose-50/20">
           <div>
             <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-rose-100">
               <span className="flex items-center gap-1 text-[11px] font-black text-rose-800">
-                <VegNonVegIcon diet="Non-Veg" size={11} /> N-veg
+                <VegNonVegIcon diet="Non-Veg" size={11} /> NV
               </span>
               <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-rose-100 text-rose-900">
                 {sessionData?.totalNonVeg || 0}
@@ -585,7 +601,7 @@ const MealSlot: React.FC<MealSlotProps> = ({
                 </div>
               ))}
               {nonVegEntries.length === 0 && (
-                <div className="text-[10px] text-slate-300 italic py-2 text-center">0 N-veg</div>
+                <div className="text-[10px] text-slate-300 italic py-2 text-center">0 NV</div>
               )}
             </div>
           </div>
@@ -613,7 +629,7 @@ const SpecialList = ({ title, list, dateLabel }: any) => (
                 <div>
                    <div className="flex items-center gap-2 flex-wrap">
                       <h4 className="font-black text-slate-900 text-sm">{item.name}</h4>
-                      <VegNonVegBadge diet={item.diet || 'Veg'} size="xs" />
+                      <VegNonVegBadge diet={item.diet || 'Veg'} size="xs" shortLabel />
                    </div>
                    <div className="flex items-center gap-2 mt-1">
                       <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-sm uppercase ${
